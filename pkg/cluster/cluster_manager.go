@@ -31,6 +31,8 @@ type ClientSet struct {
 	config                  string
 	prometheusURL           string
 	clusterAgentGeneration  uint64
+	// kcrossFingerprint 经 kcross 隧道接入时的配置指纹，变化即重建（见 kcross_hook.go）
+	kcrossFingerprint string
 }
 
 type ClusterManager struct {
@@ -319,6 +321,23 @@ func syncClusters(cm *ClusterManager, readyCh chan<- struct{}) error {
 			cm.mu.Unlock()
 			continue
 		}
+		// kcross 隧道接入的在线门控（绑定与指纹见 kcross_hook.go）
+		if model.GetKcrossBindingByCluster(cluster.ID) != nil && !kcrossPeerOnline(cluster.ID) {
+			if currentExist {
+				cm.mu.Lock()
+				delete(cm.clusters, cluster.Name)
+				cm.mu.Unlock()
+				current.K8sClient.Stop(cluster.Name)
+			}
+			cm.mu.Lock()
+			if cluster.Enable {
+				cm.errors[cluster.Name] = "waiting for kcross peer connection"
+			} else {
+				delete(cm.errors, cluster.Name)
+			}
+			cm.mu.Unlock()
+			continue
+		}
 		clusterAgentConfigChanged := cluster.ClusterAgent && currentExist && current.clusterAgentGeneration != cm.clusterAgentManager.Generation(cluster.ID)
 		if clusterAgentConfigChanged {
 			klog.Infof("Cluster Agent transport configuration changed for cluster %s, updating", cluster.Name)
@@ -415,6 +434,12 @@ func shouldUpdateCluster(cs *ClientSet, cluster *model.Cluster) bool {
 		return true
 	}
 
+	// kcross tunnel config change (gateway/peer/capability, see kcross_hook.go)
+	if cs.kcrossFingerprint != expectedKCrossFingerprint(cluster.ID) {
+		klog.Infof("Kcross tunnel config changed for cluster %s, updating", cluster.Name)
+		return true
+	}
+
 	// k8s version change
 	// TODO: Replace direct ClientSet.Discovery() call with a small DiscoveryInterface.
 	// current code depends on *kubernetes.Clientset, which is hard to mock in tests.
@@ -437,6 +462,10 @@ func buildClientSet(cluster *model.Cluster) (*ClientSet, error) {
 }
 
 func (cm *ClusterManager) buildClientSet(cluster *model.Cluster) (*ClientSet, error) {
+	// kcross 隧道接入（绑定表命中时，见 kcross_hook.go）
+	if binding := model.GetKcrossBindingByCluster(cluster.ID); binding != nil {
+		return buildKCrossClientSet(cluster, binding)
+	}
 	if !cluster.ClusterAgent {
 		return buildClientSet(cluster)
 	}
