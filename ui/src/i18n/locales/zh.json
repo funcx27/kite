@@ -49,7 +49,9 @@
       "update": "更新",
       "viewDiff": "查看差异",
       "viewError": "查看错误",
-      "watch": "监听"
+      "watch": "监听",
+      "testing": "测试中…",
+      "unbind": "解绑"
     },
     "fields": {
       "accessModes": "Access Modes",
@@ -280,7 +282,8 @@
       "unassigned": "已取消分配",
       "updated": "{{resource}}更新成功",
       "updateExistingItem": "更新已有{{resource}}",
-      "yamlSaved": "YAML 保存成功"
+      "yamlSaved": "YAML 保存成功",
+      "saved": "设置已保存"
     },
     "tabs": {
       "containers": "容器",
@@ -801,7 +804,8 @@
       "oauth": "认证",
       "rbac": "RBAC",
       "users": "用户",
-      "apikeys": "API 密钥"
+      "apikeys": "API 密钥",
+      "kcross": "kcross 网关"
     }
   },
   "generalManagement": {
@@ -1432,6 +1436,30 @@
     },
     "placeholders": {
       "selectChart": "选择 Chart..."
+    }
+  },
+  "kcrossManagement": {
+    "title": "kcross 网关",
+    "enabled": "启用",
+    "enabledDescription": "通过 kcross 网关发现节点，集群流量经隧道接入",
+    "gatewayUrl": "网关地址",
+    "adminToken": "管理 Token",
+    "tokenKeepPlaceholder": "留空保留当前 Token",
+    "testConnection": "测试连接",
+    "discoveredPeers": "发现的节点",
+    "notConfigured": "请先配置并启用网关，才能发现节点。",
+    "peer": "节点",
+    "connectedAt": "接入时间",
+    "capabilities": "能力",
+    "prometheus": "Prometheus",
+    "bound": "已纳管",
+    "addCluster": "从节点 {{peer}} 纳管集群",
+    "kubeconfig": "Kubeconfig",
+    "kubeconfigPlaceholder": "粘贴该集群的 kubeconfig；TLS 经隧道端到端校验",
+    "messages": {
+      "testOk": "连接成功，发现 {{count}} 个节点",
+      "added": "集群已添加并绑定节点",
+      "unbound": "已解除集群与节点的绑定"
     }
   }
 }

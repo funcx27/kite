@@ -49,7 +49,9 @@
       "update": "Update",
       "viewDiff": "View Diff",
       "viewError": "View Error",
-      "watch": "Watch"
+      "watch": "Watch",
+      "testing": "Testing…",
+      "unbind": "Unbind"
     },
     "fields": {
       "accessModes": "Access Modes",
@@ -280,7 +282,8 @@
       "unassigned": "Unassigned",
       "updated": "{{resource}} updated successfully",
       "updateExistingItem": "Update existing {{resource}}",
-      "yamlSaved": "YAML saved successfully"
+      "yamlSaved": "YAML saved successfully",
+      "saved": "Settings saved"
     },
     "tabs": {
       "containers": "Containers",
@@ -790,7 +793,8 @@
       "general": "General",
       "oauth": "Authentication",
       "rbac": "RBAC",
-      "users": "User"
+      "users": "User",
+      "kcross": "kcross"
     }
   },
   "generalManagement": {
@@ -1345,6 +1349,30 @@
     },
     "placeholders": {
       "selectChart": "Select a chart..."
+    }
+  },
+  "kcrossManagement": {
+    "title": "kcross Gateway",
+    "enabled": "Enabled",
+    "enabledDescription": "Discover peers through the kcross gateway and connect clusters via tunnel",
+    "gatewayUrl": "Gateway URL",
+    "adminToken": "Admin Token",
+    "tokenKeepPlaceholder": "Leave empty to keep current token",
+    "testConnection": "Test Connection",
+    "discoveredPeers": "Discovered Peers",
+    "notConfigured": "Configure and enable the gateway first to discover peers.",
+    "peer": "Peer",
+    "connectedAt": "Connected At",
+    "capabilities": "Capabilities",
+    "prometheus": "Prometheus",
+    "bound": "Onboarded",
+    "addCluster": "Onboard Cluster from Peer {{peer}}",
+    "kubeconfig": "Kubeconfig",
+    "kubeconfigPlaceholder": "Paste the kubeconfig of this cluster; TLS stays end-to-end over the tunnel",
+    "messages": {
+      "testOk": "Connected, {{count}} peers found",
+      "added": "Cluster added and bound to peer",
+      "unbound": "Cluster unbound from peer"
     }
   }
 }
