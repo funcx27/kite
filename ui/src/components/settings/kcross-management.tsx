@@ -320,11 +320,10 @@ function AddPeerClusterDialog({
   const [name, setName] = useState('')
   const [kubeconfig, setKubeconfig] = useState('')
 
-  const submitEnabled =
-    peer !== null &&
-    name.trim() !== '' &&
-    kubeconfig.trim() !== '' &&
-    kubeconfig.includes('apiVersion')
+  const nameReady = name.trim() !== ''
+  const kubeconfigReady =
+    kubeconfig.trim() !== '' && kubeconfig.includes('apiVersion')
+  const submitEnabled = peer !== null && nameReady && kubeconfigReady
 
   return (
     <Dialog open={peer !== null} onOpenChange={onOpenChange}>
@@ -362,6 +361,20 @@ function AddPeerClusterDialog({
               value={kubeconfig}
               onChange={(e) => setKubeconfig(e.target.value)}
             />
+            {!submitEnabled && (
+              <p className="text-xs text-muted-foreground">
+                {!nameReady &&
+                  t(
+                    'kcrossManagement.hint.nameRequired',
+                    'Cluster name is required. '
+                  )}
+                {!kubeconfigReady &&
+                  t(
+                    'kcrossManagement.hint.kubeconfigRequired',
+                    'Paste a kubeconfig (must contain apiVersion) to enable Add.'
+                  )}
+              </p>
+            )}
           </div>
         </div>
         <DialogFooter>
