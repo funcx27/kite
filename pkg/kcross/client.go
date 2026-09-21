@@ -1,11 +1,10 @@
 // Package kcross 对接 kcross Gateway：集群动态发现（admin API）与
-// CONNECT 隧道 dialer（注入 rest.Config.Dial，K8s 流量经隧道直达 Peer 后端）。
+// 零凭证纳管（server URL 指向网关 http 反代，peer 侧注入 SA，kite 不持有
+// 任何集群凭证）。pkg/kcross/dialer.go 为已归档的 CONNECT 隧道方案，未接线。
 package kcross
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -35,19 +34,20 @@ type Capability struct {
 	Endpoint string `json:"endpoint,omitempty"`
 }
 
-// Peer 发现到的节点
+// Peer 发现到的节点；Gateway 为该节点归属网关的 URL
 type Peer struct {
 	ID           string       `json:"id"`
 	Status       string       `json:"status"` // online | offline
 	ConnectedAt  string       `json:"connectedAt,omitempty"`
 	Capabilities []Capability `json:"capabilities"`
+	Gateway      string       `json:"gateway"`
 }
 
-// Settings 集成配置快照；未启用时 ok=false
+// Settings 集成配置快照；Gateways 为逗号分隔的网关 URL 列表
 type Settings struct {
-	GatewayURL string
-	Token      string
-	Enabled    bool
+	Gateways []string
+	Token    string
+	Enabled  bool
 }
 
 // GetSettings 从 kcross 独立配置表读取集成配置
@@ -56,19 +56,46 @@ func GetSettings() (Settings, error) {
 	if err != nil {
 		return Settings{}, fmt.Errorf("load kcross setting: %w", err)
 	}
-	gatewayURL := strings.TrimSpace(setting.GatewayURL)
+	gateways := parseGateways(setting.GatewayURL)
 	token := strings.TrimSpace(string(setting.AdminToken))
 	return Settings{
-		GatewayURL: gatewayURL,
-		Token:      token,
-		Enabled:    setting.Enabled && gatewayURL != "" && token != "",
+		Gateways: gateways,
+		Token:    token,
+		Enabled:  setting.Enabled && len(gateways) > 0 && token != "",
 	}, nil
 }
 
-// Fingerprint dialer 相关配置的指纹；任一项变化即需重建 ClientSet
-func Fingerprint(gatewayURL, token, peerID, capability string) string {
-	sum := sha256.Sum256([]byte(strings.Join([]string{gatewayURL, token, peerID, capability}, "\x00")))
-	return hex.EncodeToString(sum[:])
+func parseGateways(raw string) []string {
+	var out []string
+	for _, g := range strings.Split(raw, ",") {
+		if g = strings.TrimSpace(g); g != "" {
+			out = append(out, strings.TrimRight(g, "/"))
+		}
+	}
+	return out
+}
+
+// BuildZeroKubeconfig 生成零凭证 kubeconfig：server 指向网关 http 反代路径，
+// 无任何用户凭证——身份由 peer 侧按网关断言注入的 SA 决定
+func BuildZeroKubeconfig(gatewayURL, peerID, capability string) string {
+	server := fmt.Sprintf("%s/proxy/%s/%s",
+		strings.TrimRight(gatewayURL, "/"), peerID, capability)
+	return fmt.Sprintf(`apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    server: %s
+  name: kcross
+contexts:
+- context:
+    cluster: kcross
+    user: kcross
+  name: kcross
+current-context: kcross
+users:
+- name: kcross
+  user: {}
+`, server)
 }
 
 // Discover 列出全部节点及能力明细（结果短暂缓存，供发现页轮询与在线判定共用）
@@ -126,10 +153,30 @@ func discoverCached(ctx context.Context, s Settings) ([]Peer, error) {
 	return peers, nil
 }
 
-// fetchPeers 回源拉取节点与能力明细
+// fetchPeers 逐网关回源拉取节点与能力明细；单网关失败不阻断其余网关，
+// 全部失败才报错
 func fetchPeers(ctx context.Context, s Settings) ([]Peer, error) {
+	peers := make([]Peer, 0)
+	var firstErr error
+	for _, gw := range s.Gateways {
+		gwPeers, err := fetchPeersFromGateway(ctx, s, gw)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		peers = append(peers, gwPeers...)
+	}
+	if len(s.Gateways) > 0 && len(peers) == 0 && firstErr != nil {
+		return nil, firstErr
+	}
+	return peers, nil
+}
+
+func fetchPeersFromGateway(ctx context.Context, s Settings, gatewayURL string) ([]Peer, error) {
 	var summaries []peerSummary
-	if err := adminCall(ctx, s, "ListPeers", map[string]any{}, &listPeersResult{Peers: &summaries}); err != nil {
+	if err := adminCall(ctx, s, gatewayURL, "ListPeers", map[string]any{}, &listPeersResult{Peers: &summaries}); err != nil {
 		return nil, fmt.Errorf("kcross ListPeers: %w", err)
 	}
 
@@ -139,13 +186,14 @@ func fetchPeers(ctx context.Context, s Settings) ([]Peer, error) {
 			ID:          sum.ID,
 			Status:      "offline",
 			ConnectedAt: sum.ConnectedAt,
+			Gateway:     gatewayURL,
 		}
 		if sum.Status == peerStatusOnline {
 			peer.Status = "online"
 		}
 
 		var detail peerDetail
-		if err := adminCall(ctx, s, "GetPeer", map[string]any{"peerId": sum.ID}, &getPeerResult{Peer: &detail}); err == nil {
+		if err := adminCall(ctx, s, gatewayURL, "GetPeer", map[string]any{"peerId": sum.ID}, &getPeerResult{Peer: &detail}); err == nil {
 			for _, c := range detail.Capabilities {
 				peer.Capabilities = append(peer.Capabilities, Capability{
 					Name:     c.Name,
@@ -161,7 +209,7 @@ func fetchPeers(ctx context.Context, s Settings) ([]Peer, error) {
 }
 
 // adminCall 调用 connect 一元 RPC（JSON over HTTP）；kcross Gateway 兼容该形态
-func adminCall(ctx context.Context, s Settings, method string, req any, out any) error {
+func adminCall(ctx context.Context, s Settings, gatewayURL, method string, req any, out any) error {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return fmt.Errorf("marshal %s request: %w", method, err)
@@ -171,7 +219,7 @@ func adminCall(ctx context.Context, s Settings, method string, req any, out any)
 	defer cancel()
 
 	httpReq, err := http.NewRequestWithContext(callCtx, http.MethodPost,
-		strings.TrimRight(s.GatewayURL, "/")+adminAPIPrefix+"kcross.v1.AdminService/"+method,
+		strings.TrimRight(gatewayURL, "/")+adminAPIPrefix+"kcross.v1.AdminService/"+method,
 		strings.NewReader(string(body)))
 	if err != nil {
 		return fmt.Errorf("build %s request: %w", method, err)

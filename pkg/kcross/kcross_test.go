@@ -151,23 +151,6 @@ func TestDialer_RejectsNonTCP(t *testing.T) {
 	}
 }
 
-func TestFingerprint_StableAndSensitive(t *testing.T) {
-	base := Fingerprint("http://gw", "tok", "peer", "cap")
-	if base != Fingerprint("http://gw", "tok", "peer", "cap") {
-		t.Fatal("fingerprint not deterministic")
-	}
-	for _, changed := range []struct{ url, tok, peer, cap string }{
-		{"http://gw2", "tok", "peer", "cap"},
-		{"http://gw", "tok2", "peer", "cap"},
-		{"http://gw", "tok", "peer2", "cap"},
-		{"http://gw", "tok", "peer", "cap2"},
-	} {
-		if Fingerprint(changed.url, changed.tok, changed.peer, changed.cap) == base {
-			t.Fatalf("fingerprint insensitive to change: %+v", changed)
-		}
-	}
-}
-
 func TestAdminCall_ParsesConnectJSON(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -187,10 +170,61 @@ func TestAdminCall_ParsesConnectJSON(t *testing.T) {
 	var out listPeersResult
 	summaries := []peerSummary{}
 	out.Peers = &summaries
-	if err := adminCall(context.Background(), Settings{GatewayURL: ts.URL, Token: "tok"}, "ListPeers", map[string]any{}, &out); err != nil {
+	if err := adminCall(context.Background(), Settings{Token: "tok"}, ts.URL, "ListPeers", map[string]any{}, &out); err != nil {
 		t.Fatalf("adminCall: %v", err)
 	}
 	if len(summaries) != 1 || summaries[0].ID != "p1" || summaries[0].Status != peerStatusOnline {
 		t.Fatalf("parsed = %+v", summaries)
+	}
+}
+
+// TestDiscoverWith_MultiGateway 多网关聚合：单网关失败不阻断其余
+func TestDiscoverWith_MultiGateway(t *testing.T) {
+	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "ListPeers") {
+			_, _ = w.Write([]byte(`{"peers":[{"id":"p-good","status":"PEER_STATUS_ONLINE","capabilities":["kubernetes"]}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"peer":{"id":"p-good","status":"PEER_STATUS_ONLINE","capabilities":[{"name":"kubernetes","kind":"CAPABILITY_KIND_HTTP_PROXY","health":"healthy","httpProxy":{"endpoint":"https://1.2.3.4:6443"}}]}}`))
+	}))
+	defer good.Close()
+	dead := "http://127.0.0.1:1"
+
+	s := Settings{Gateways: []string{dead, good.URL}, Token: "tok", Enabled: true}
+	peers, err := DiscoverWith(context.Background(), s)
+	if err != nil {
+		t.Fatalf("DiscoverWith: %v", err)
+	}
+	if len(peers) != 1 || peers[0].ID != "p-good" {
+		t.Fatalf("peers = %+v", peers)
+	}
+	if peers[0].Gateway != good.URL {
+		t.Fatalf("peer gateway = %q, want %q", peers[0].Gateway, good.URL)
+	}
+	if len(peers[0].Capabilities) != 1 || peers[0].Capabilities[0].Endpoint != "https://1.2.3.4:6443" {
+		t.Fatalf("capabilities = %+v", peers[0].Capabilities)
+	}
+}
+
+func TestDiscoverWith_AllGatewaysFail(t *testing.T) {
+	s := Settings{Gateways: []string{"http://127.0.0.1:1"}, Token: "tok", Enabled: true}
+	if _, err := DiscoverWith(context.Background(), s); err == nil {
+		t.Fatal("expected error when all gateways fail")
+	}
+}
+
+func TestBuildZeroKubeconfig(t *testing.T) {
+	yaml := BuildZeroKubeconfig("http://gw:18080", "peer-1", "kubernetes")
+	for _, want := range []string{
+		"server: http://gw:18080/proxy/peer-1/kubernetes",
+		"apiVersion: v1",
+		"user: {}",
+	} {
+		if !strings.Contains(yaml, want) {
+			t.Fatalf("kubeconfig missing %q:\n%s", want, yaml)
+		}
+	}
+	if strings.Contains(strings.Split(yaml, "users:")[1], "token") {
+		t.Fatal("zero-credential kubeconfig must not embed tokens")
 	}
 }

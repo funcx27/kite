@@ -26,7 +26,6 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
-import { Textarea } from '@/components/ui/textarea'
 
 import { Action, ActionTable } from '../action-table'
 
@@ -177,14 +176,16 @@ export function KcrossManagement() {
       <AddPeerClusterDialog
         peer={addingPeer}
         onOpenChange={(open) => !open && setAddingPeer(null)}
-        onSubmit={(name, kubeconfig) => {
+        onSubmit={(name) => {
           const peer = addingPeer
           if (!peer) return
-          createCluster({ name, config: kubeconfig })
+          // 零凭证纳管：仅起名，kubeconfig 由绑定接口生成（server 指向网关反代）
+          createCluster({ name })
             .then((created) =>
               createBinding.mutateAsync({
                 clusterId: created.id,
                 peerId: peer.id,
+                gateway: peer.gateway,
                 capability: peer.kubernetes?.name,
               })
             )
@@ -204,19 +205,19 @@ export function KcrossManagement() {
 function GatewaySettingForm({
   initial,
 }: {
-  initial: { enabled: boolean; gatewayUrl: string; adminTokenConfigured: boolean } | undefined
+  initial: { enabled: boolean; gateways: string[]; adminTokenConfigured: boolean } | undefined
 }) {
   const { t } = useTranslation()
 
   const [enabled, setEnabled] = useState(Boolean(initial?.enabled))
-  const [gatewayUrl, setGatewayUrl] = useState(initial?.gatewayUrl || '')
+  const [gateways, setGateways] = useState((initial?.gateways || []).join(','))
   const [adminToken, setAdminToken] = useState('')
   const [testing, setTesting] = useState(false)
   const [saving, setSaving] = useState(false)
 
   const payload = () => ({
     enabled,
-    gatewayUrl: gatewayUrl.trim(),
+    gateways: gateways.trim(),
     adminToken: adminToken.trim() || undefined,
   })
 
@@ -264,15 +265,21 @@ function GatewaySettingForm({
         <Switch checked={enabled} onCheckedChange={setEnabled} />
       </div>
       <div className="grid gap-2">
-        <Label htmlFor="kcross-gateway-url">
-          {t('kcrossManagement.gatewayUrl', 'Gateway URL')}
+        <Label htmlFor="kcross-gateways">
+          {t('kcrossManagement.gateways', 'Gateway URLs')}
         </Label>
         <Input
-          id="kcross-gateway-url"
-          placeholder="http://kcross-gateway:18080"
-          value={gatewayUrl}
-          onChange={(e) => setGatewayUrl(e.target.value)}
+          id="kcross-gateways"
+          placeholder="http://kcross-gateway-1:18080,http://kcross-gateway-2:18080"
+          value={gateways}
+          onChange={(e) => setGateways(e.target.value)}
         />
+        <p className="text-xs text-muted-foreground">
+          {t(
+            'kcrossManagement.gatewaysHint',
+            'Multiple gateways separated by commas'
+          )}
+        </p>
       </div>
       <div className="grid gap-2">
         <Label htmlFor="kcross-admin-token">
@@ -291,7 +298,7 @@ function GatewaySettingForm({
         />
       </div>
       <div className="flex gap-2">
-        <Button variant="outline" onClick={handleTest} disabled={testing || !gatewayUrl.trim()}>
+        <Button variant="outline" onClick={handleTest} disabled={testing || !gateways.trim()}>
           <IconRefresh className="mr-2 h-4 w-4" />
           {testing
             ? t('common.actions.testing', 'Testing…')
@@ -313,17 +320,12 @@ function AddPeerClusterDialog({
 }: {
   peer: KcrossPeer | null
   onOpenChange: (open: boolean) => void
-  onSubmit: (name: string, kubeconfig: string) => void
+  onSubmit: (name: string) => void
 }) {
   const { t } = useTranslation()
 
   const [name, setName] = useState('')
-  const [kubeconfig, setKubeconfig] = useState('')
-
-  const nameReady = name.trim() !== ''
-  const kubeconfigReady =
-    kubeconfig.trim() !== '' && kubeconfig.includes('apiVersion')
-  const submitEnabled = peer !== null && nameReady && kubeconfigReady
+  const submitEnabled = peer !== null && name.trim() !== ''
 
   return (
     <Dialog open={peer !== null} onOpenChange={onOpenChange}>
@@ -346,36 +348,12 @@ function AddPeerClusterDialog({
               onChange={(e) => setName(e.target.value)}
             />
           </div>
-          <div className="grid gap-2">
-            <Label htmlFor="kcross-kubeconfig">
-              {t('kcrossManagement.kubeconfig', 'Kubeconfig')}
-            </Label>
-            <Textarea
-              id="kcross-kubeconfig"
-              rows={10}
-              className="font-mono text-xs"
-              placeholder={t(
-                'kcrossManagement.kubeconfigPlaceholder',
-                'Paste the kubeconfig of this cluster; TLS stays end-to-end over the tunnel'
-              )}
-              value={kubeconfig}
-              onChange={(e) => setKubeconfig(e.target.value)}
-            />
-            {!submitEnabled && (
-              <p className="text-xs text-muted-foreground">
-                {!nameReady &&
-                  t(
-                    'kcrossManagement.hint.nameRequired',
-                    'Cluster name is required. '
-                  )}
-                {!kubeconfigReady &&
-                  t(
-                    'kcrossManagement.hint.kubeconfigRequired',
-                    'Paste a kubeconfig (must contain apiVersion) to enable Add.'
-                  )}
-              </p>
+          <p className="text-sm text-muted-foreground">
+            {t(
+              'kcrossManagement.zeroCredHint',
+              'No credentials needed: the cluster connects through the gateway proxy and the peer injects its service account. Effective permissions = kite RBAC ∩ peer SA RBAC.'
             )}
-          </div>
+          </p>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
@@ -383,7 +361,7 @@ function AddPeerClusterDialog({
           </Button>
           <Button
             disabled={!submitEnabled}
-            onClick={() => onSubmit(name.trim(), kubeconfig)}
+            onClick={() => onSubmit(name.trim())}
           >
             {t('common.actions.add', 'Add')}
           </Button>

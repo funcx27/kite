@@ -1442,7 +1442,6 @@
     "title": "kcross 网关",
     "enabled": "启用",
     "enabledDescription": "通过 kcross 网关发现节点，集群流量经隧道接入",
-    "gatewayUrl": "网关地址",
     "adminToken": "管理 Token",
     "tokenKeepPlaceholder": "留空保留当前 Token",
     "testConnection": "测试连接",
@@ -1454,12 +1453,13 @@
     "prometheus": "Prometheus",
     "bound": "已纳管",
     "addCluster": "从节点 {{peer}} 纳管集群",
-    "kubeconfig": "Kubeconfig",
-    "kubeconfigPlaceholder": "粘贴该集群的 kubeconfig；TLS 经隧道端到端校验",
     "messages": {
       "testOk": "连接成功，发现 {{count}} 个节点",
       "added": "集群已添加并绑定节点",
       "unbound": "已解除集群与节点的绑定"
-    }
+    },
+    "gateways": "网关地址",
+    "gatewaysHint": "多个网关用英文逗号分隔",
+    "zeroCredHint": "无需任何凭证：集群经网关代理接入，由 Peer 注入其 ServiceAccount。有效权限 = kite RBAC ∩ peer SA RBAC。"
   }
 }

@@ -31,8 +31,6 @@ type ClientSet struct {
 	config                  string
 	prometheusURL           string
 	clusterAgentGeneration  uint64
-	// kcrossFingerprint 经 kcross 隧道接入时的配置指纹，变化即重建（见 kcross_hook.go）
-	kcrossFingerprint string
 }
 
 type ClusterManager struct {
@@ -434,12 +432,6 @@ func shouldUpdateCluster(cs *ClientSet, cluster *model.Cluster) bool {
 		return true
 	}
 
-	// kcross tunnel config change (gateway/peer/capability, see kcross_hook.go)
-	if cs.kcrossFingerprint != expectedKCrossFingerprint(cluster.ID) {
-		klog.Infof("Kcross tunnel config changed for cluster %s, updating", cluster.Name)
-		return true
-	}
-
 	// k8s version change
 	// TODO: Replace direct ClientSet.Discovery() call with a small DiscoveryInterface.
 	// current code depends on *kubernetes.Clientset, which is hard to mock in tests.
@@ -462,10 +454,6 @@ func buildClientSet(cluster *model.Cluster) (*ClientSet, error) {
 }
 
 func (cm *ClusterManager) buildClientSet(cluster *model.Cluster) (*ClientSet, error) {
-	// kcross 隧道接入（绑定表命中时，见 kcross_hook.go）
-	if binding := model.GetKcrossBindingByCluster(cluster.ID); binding != nil {
-		return buildKCrossClientSet(cluster, binding)
-	}
 	if !cluster.ClusterAgent {
 		return buildClientSet(cluster)
 	}

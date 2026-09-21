@@ -1355,7 +1355,6 @@
     "title": "kcross Gateway",
     "enabled": "Enabled",
     "enabledDescription": "Discover peers through the kcross gateway and connect clusters via tunnel",
-    "gatewayUrl": "Gateway URL",
     "adminToken": "Admin Token",
     "tokenKeepPlaceholder": "Leave empty to keep current token",
     "testConnection": "Test Connection",
@@ -1367,12 +1366,13 @@
     "prometheus": "Prometheus",
     "bound": "Onboarded",
     "addCluster": "Onboard Cluster from Peer {{peer}}",
-    "kubeconfig": "Kubeconfig",
-    "kubeconfigPlaceholder": "Paste the kubeconfig of this cluster; TLS stays end-to-end over the tunnel",
     "messages": {
       "testOk": "Connected, {{count}} peers found",
       "added": "Cluster added and bound to peer",
       "unbound": "Cluster unbound from peer"
-    }
+    },
+    "gateways": "Gateway URLs",
+    "gatewaysHint": "Multiple gateways separated by commas",
+    "zeroCredHint": "No credentials needed: the cluster connects through the gateway proxy and the peer injects its service account. Effective permissions = kite RBAC ∩ peer SA RBAC."
   }
 }

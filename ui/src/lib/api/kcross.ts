@@ -4,13 +4,13 @@ import { apiClient } from '../api-client'
 
 export interface KcrossSetting {
   enabled: boolean
-  gatewayUrl: string
+  gateways: string[]
   adminTokenConfigured: boolean
 }
 
 export interface KcrossSettingUpdate {
   enabled?: boolean
-  gatewayUrl?: string
+  gateways?: string
   adminToken?: string
 }
 
@@ -26,6 +26,7 @@ export interface KcrossPeer {
   status: 'online' | 'offline'
   connectedAt?: string
   capabilities: KcrossCapability[]
+  gateway: string
   kubernetes?: KcrossCapability
   prometheus?: KcrossCapability
   bound: boolean
@@ -81,6 +82,7 @@ export const fetchKcrossBindings = (): Promise<KcrossBinding[]> =>
 export const createKcrossBinding = (payload: {
   clusterId: number
   peerId: string
+  gateway: string
   capability?: string
 }): Promise<KcrossBinding> =>
   requestJson('/admin/kcross/bindings', {
