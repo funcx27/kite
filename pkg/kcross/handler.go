@@ -29,6 +29,7 @@ func RegisterRoutes(group *gin.RouterGroup) {
 	group.GET("/discover", HandleDiscover)
 	group.GET("/bindings", HandleListBindings)
 	group.POST("/bindings", HandleCreateBinding)
+	group.GET("/peers/:peerId/pty", HandlePeerPTY)
 }
 
 // HandleGetSetting 读取集成配置（token 不回显，仅返回是否已配置）
