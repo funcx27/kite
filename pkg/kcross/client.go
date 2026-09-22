@@ -32,6 +32,9 @@ type Capability struct {
 	Kind     string `json:"kind"`
 	Health   string `json:"health"`
 	Endpoint string `json:"endpoint,omitempty"`
+	// Access 经网关的接入地址：http 能力为网关反代子路径，
+	// tcp 能力为网关端口映射（未分配时为空）
+	Access string `json:"access,omitempty"`
 }
 
 // Peer 发现到的节点；Gateway 为该节点归属网关的 URL
@@ -180,6 +183,9 @@ func fetchPeersFromGateway(ctx context.Context, s Settings, gatewayURL string) (
 		return nil, fmt.Errorf("kcross ListPeers: %w", err)
 	}
 
+	// 端口映射为 best-effort：拉取失败仅影响 tcp 能力的接入地址展示
+	mappings := fetchPortMappings(ctx, s, gatewayURL)
+
 	peers := make([]Peer, 0, len(summaries))
 	for _, sum := range summaries {
 		peer := Peer{
@@ -200,12 +206,71 @@ func fetchPeersFromGateway(ctx context.Context, s Settings, gatewayURL string) (
 					Kind:     c.ShortKind(),
 					Health:   c.Health,
 					Endpoint: c.Endpoint(),
+					Access:   accessEndpoint(gatewayURL, sum.ID, mappings, c),
 				})
 			}
 		}
 		peers = append(peers, peer)
 	}
 	return peers, nil
+}
+
+// accessEndpoint 计算能力的经网关接入地址：
+// http 能力 = 网关反代子路径；tcp 能力 = 网关端口映射地址
+func accessEndpoint(gatewayURL, peerID string, mappings []portMapping, c peerCapability) string {
+	switch c.ShortKind() {
+	case "http":
+		return strings.TrimRight(gatewayURL, "/") + "/proxy/" + peerID + "/" + c.Name
+	case "tcp":
+		for _, m := range mappings {
+			if m.PeerID == peerID && strings.EqualFold(m.Capability, c.Name) {
+				return "tcp://" + m.ListenAddr
+			}
+		}
+	}
+	return ""
+}
+
+// portMapping 网关端口映射条目（服务端无 json tag，字段大写开头）
+type portMapping struct {
+	PeerID     string
+	Capability string
+	ListenAddr string
+	Kind       string
+}
+
+// fetchPortMappings 拉取网关端口映射；失败返回空（不影响发现主流程）
+func fetchPortMappings(ctx context.Context, s Settings, gatewayURL string) []portMapping {
+	callCtx, cancel := context.WithTimeout(ctx, adminRequestTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(callCtx, http.MethodGet,
+		strings.TrimRight(gatewayURL, "/")+"/api/v1/admin/port-mappings", nil)
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("Authorization", "Bearer "+s.Token)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil
+	}
+	var result struct {
+		Mappings []portMapping `json:"mappings"`
+	}
+	if json.Unmarshal(raw, &result) != nil {
+		return nil
+	}
+	return result.Mappings
 }
 
 // adminCall 调用 connect 一元 RPC（JSON over HTTP）；kcross Gateway 兼容该形态

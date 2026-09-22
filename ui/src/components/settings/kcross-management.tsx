@@ -1,5 +1,12 @@
 import { useMemo, useState } from 'react'
-import { IconLink, IconPlug, IconRefresh, IconServer, IconTerminal } from '@tabler/icons-react'
+import {
+  IconLink,
+  IconPlug,
+  IconRefresh,
+  IconSearch,
+  IconServer,
+  IconTerminal,
+} from '@tabler/icons-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -47,6 +54,35 @@ export function KcrossManagement() {
   const [addingPeer, setAddingPeer] = useState<KcrossPeer | null>(null)
   const [detailPeer, setDetailPeer] = useState<KcrossPeer | null>(null)
   const [terminalPeer, setTerminalPeer] = useState<KcrossPeer | null>(null)
+  const [search, setSearch] = useState('')
+  const [filter, setFilter] = useState<'all' | 'unbound' | 'bound' | 'online' | 'offline'>(
+    'all'
+  )
+
+  const filteredPeers = useMemo(() => {
+    const keyword = search.trim().toLowerCase()
+    return peers.filter((peer) => {
+      if (
+        keyword &&
+        !peer.id.toLowerCase().includes(keyword) &&
+        !peer.capabilities.some((cap) => cap.name.toLowerCase().includes(keyword)) &&
+        !(peer.clusterName || '').toLowerCase().includes(keyword)
+      ) {
+        return false
+      }
+      switch (filter) {
+        case 'unbound':
+          return !peer.bound
+        case 'bound':
+          return peer.bound
+        case 'online':
+          return peer.status === 'online'
+        case 'offline':
+          return peer.status !== 'online'
+      }
+      return true
+    })
+  }, [peers, search, filter])
 
   const columns = useMemo(
     () => [
@@ -63,7 +99,14 @@ export function KcrossManagement() {
             />
             <button
               type="button"
-              className="font-medium font-mono hover:underline"
+              className={`font-mono hover:underline ${
+                peer.bound ? 'font-medium' : 'text-muted-foreground'
+              }`}
+              title={
+                peer.bound
+                  ? t('kcrossManagement.boundPeerHint', 'Onboarded from this peer')
+                  : t('kcrossManagement.unboundPeerHint', 'Discovered, not onboarded yet')
+              }
               onClick={() => setDetailPeer(peer)}
             >
               {peer.id}
@@ -112,9 +155,14 @@ export function KcrossManagement() {
         header: t('kcrossManagement.bound', 'Onboarded'),
         cell: ({ row: { original: peer } }: { row: { original: KcrossPeer } }) =>
           peer.bound ? (
-            <Badge variant="outline">{peer.clusterName || peer.clusterId}</Badge>
+            <Badge variant="secondary">{peer.clusterName || peer.clusterId}</Badge>
           ) : (
-            <span className="text-muted-foreground">-</span>
+            <Badge
+              variant="outline"
+              className="border-dashed text-muted-foreground"
+            >
+              {t('kcrossManagement.unbound', 'Unbound')}
+            </Badge>
           ),
       },
     ],
@@ -165,11 +213,48 @@ export function KcrossManagement() {
           ) : peersLoading ? (
             <p className="text-sm text-muted-foreground">Loading…</p>
           ) : (
-            <ActionTable
-              data={peers}
-              columns={columns as never[]}
-              actions={actions}
-            />
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="relative flex-1 min-w-48">
+                  <IconSearch className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder={t('kcrossManagement.searchPlaceholder', 'Search peer / capability / cluster')}
+                    className="pl-8"
+                  />
+                </div>
+                <div className="flex items-center gap-1">
+                  {(
+                    [
+                      ['all', 'filterAll'],
+                      ['unbound', 'filterUnbound'],
+                      ['bound', 'filterBound'],
+                      ['online', 'filterOnline'],
+                      ['offline', 'filterOffline'],
+                    ] as const
+                  ).map(([value, key]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setFilter(value)}
+                      className={`rounded-md px-2.5 py-1.5 text-sm transition-colors ${
+                        filter === value
+                          ? 'bg-primary text-primary-foreground'
+                          : 'bg-muted text-muted-foreground hover:bg-muted/70'
+                      }`}
+                    >
+                      {t(`kcrossManagement.${key}`, value)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <ActionTable
+                data={filteredPeers}
+                columns={columns as never[]}
+                actions={actions}
+              />
+            </div>
           )}
         </CardContent>
       </Card>
@@ -286,9 +371,14 @@ function PeerDetailDialog({
               </span>
               <span>
                 {peer.bound ? (
-                  <Badge variant="outline">{peer.clusterName || peer.clusterId}</Badge>
+                  <Badge variant="secondary">{peer.clusterName || peer.clusterId}</Badge>
                 ) : (
-                  '-'
+                  <Badge
+                    variant="outline"
+                    className="border-dashed text-muted-foreground"
+                  >
+                    {t('kcrossManagement.unbound', 'Unbound')}
+                  </Badge>
                 )}
               </span>
             </div>
@@ -324,11 +414,23 @@ function PeerDetailDialog({
                           {cap.health}
                         </Badge>
                       </TableCell>
-                      <TableCell
-                        className="max-w-48 truncate font-mono text-xs"
-                        title={cap.endpoint}
-                      >
-                        {cap.endpoint || '-'}
+                      <TableCell className="max-w-96 font-mono text-xs">
+                        {cap.access ? (
+                          <span
+                            className="block truncate"
+                            title={`${cap.access} -> ${cap.endpoint || ''}`}
+                          >
+                            {cap.access}
+                            <span className="text-muted-foreground">
+                              {' -> '}
+                              {cap.endpoint || '-'}
+                            </span>
+                          </span>
+                        ) : (
+                          <span className="block truncate" title={cap.endpoint}>
+                            {cap.endpoint || '-'}
+                          </span>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}

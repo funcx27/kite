@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { IconClearAll, IconMaximize, IconMinimize, IconPalette } from '@tabler/icons-react'
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal as XTerm } from '@xterm/xterm'
 
@@ -6,7 +7,9 @@ import '@xterm/xterm/css/xterm.css'
 
 import { useTranslation } from 'react-i18next'
 
+import { TERMINAL_THEMES, TerminalTheme } from '@/types/themes'
 import { getWebSocketUrl } from '@/lib/subpath'
+import { ConnectionIndicator } from '@/components/connection-indicator'
 
 // kcross PTY 帧首字节 = pb.Channel 枚举
 const CHANNEL_STDIN = 0
@@ -26,6 +29,16 @@ function frame(
   return out
 }
 
+function applyTheme(term: XTerm, theme: TerminalTheme) {
+  const t = TERMINAL_THEMES[theme]
+  term.options.theme = {
+    background: t.background,
+    foreground: t.foreground,
+    cursor: t.cursor,
+    selectionBackground: t.selection,
+  }
+}
+
 export function KcrossPeerTerminal({
   peerId,
   gateway,
@@ -37,30 +50,57 @@ export function KcrossPeerTerminal({
 }) {
   const { t } = useTranslation()
   const termRef = useRef<HTMLDivElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const xtermRef = useRef<XTerm | null>(null)
+  const fitRef = useRef<FitAddon | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const [connected, setConnected] = useState(false)
+  const [fullscreen, setFullscreen] = useState(false)
+  const [sessionKey, setSessionKey] = useState(0)
+  const [terminalTheme, setTerminalTheme] = useState<TerminalTheme>(() => {
+    return (localStorage.getItem('terminal-theme') as TerminalTheme) || 'classic'
+  })
+
+  // 主题循环切换，与 pod 终端共用同一份持久化主题
+  const cycleTheme = useCallback(() => {
+    setTerminalTheme((current) => {
+      const themes = Object.keys(TERMINAL_THEMES) as TerminalTheme[]
+      const next = themes[(themes.indexOf(current) + 1) % themes.length]
+      localStorage.setItem('terminal-theme', next)
+      return next
+    })
+  }, [])
+
+  // 主题变更只改 xterm options，不重建会话
+  useEffect(() => {
+    if (xtermRef.current) {
+      applyTheme(xtermRef.current, terminalTheme)
+    }
+  }, [terminalTheme])
 
   useEffect(() => {
     if (!open) return
 
     const term = new XTerm({
       cursorBlink: true,
-      fontSize: 13,
-      theme: {
-        background: '#1c1c1c',
-      },
+      fontSize: 14,
+      fontFamily: '"Maple Mono", Monaco, Menlo, "Ubuntu Mono", monospace',
     })
+    applyTheme(term, terminalTheme)
     const fitAddon = new FitAddon()
     term.loadAddon(fitAddon)
+    xtermRef.current = term
+    fitRef.current = fitAddon
     if (termRef.current) {
       term.open(termRef.current)
       fitAddon.fit()
     }
 
-    const url = getWebSocketUrl(
-      `/api/v1/admin/kcross/peers/${peerId}/pty?gateway=${encodeURIComponent(gateway)}&cols=${term.cols}&rows=${term.rows}`
+    const ws = new WebSocket(
+      getWebSocketUrl(
+        `/api/v1/admin/kcross/peers/${peerId}/pty?gateway=${encodeURIComponent(gateway)}&cols=${term.cols}&rows=${term.rows}`
+      )
     )
-    const ws = new WebSocket(url)
     ws.binaryType = 'arraybuffer'
     wsRef.current = ws
 
@@ -70,6 +110,7 @@ export function KcrossPeerTerminal({
     ws.onopen = () => {
       setConnected(true)
       term.focus()
+      fitAddon.fit()
     }
     ws.onmessage = (ev) => {
       if (!(ev.data instanceof ArrayBuffer)) return
@@ -83,8 +124,11 @@ export function KcrossPeerTerminal({
           term.write(decoder.decode(payload))
           break
         case CHANNEL_EXIT: {
-          const code = payload.length >= 4 ? new DataView(payload.buffer).getInt32(0, true) : -1
-          term.write(`\r\n\x1b[33m${t('kcrossManagement.terminalExited', 'Session exited ({{code}})', { code })}\x1b[0m\r\n`)
+          const code =
+            payload.length >= 4 ? new DataView(payload.buffer).getInt32(0, true) : -1
+          term.write(
+            `\r\n\x1b[33m${t('kcrossManagement.terminalExited', 'Session exited ({{code}})', { code })}\x1b[0m\r\n`
+          )
           ws.close()
           break
         }
@@ -95,7 +139,9 @@ export function KcrossPeerTerminal({
     }
     ws.onclose = () => {
       setConnected(false)
-      term.write(`\r\n\x1b[33m${t('kcrossManagement.terminalClosed', 'Session closed')}\x1b[0m\r\n`)
+      term.write(
+        `\r\n\x1b[33m${t('kcrossManagement.terminalClosed', 'Session closed')}\x1b[0m\r\n`
+      )
     }
 
     const onData = term.onData((data) => {
@@ -116,8 +162,8 @@ export function KcrossPeerTerminal({
     }
     const onResize = term.onResize(resize)
     const observer = new ResizeObserver(resize)
-    if (termRef.current) {
-      observer.observe(termRef.current)
+    if (containerRef.current) {
+      observer.observe(containerRef.current)
     }
 
     return () => {
@@ -126,21 +172,73 @@ export function KcrossPeerTerminal({
       onResize.dispose()
       ws.close()
       term.dispose()
+      xtermRef.current = null
       wsRef.current = null
     }
-  }, [open, peerId, gateway, t])
+  }, [open, peerId, gateway, sessionKey, t])
+
+  const clearTerminal = useCallback(() => {
+    xtermRef.current?.clear()
+    xtermRef.current?.focus()
+  }, [])
 
   return (
-    <div className="space-y-2">
+    <div
+      ref={containerRef}
+      className={
+        fullscreen
+          ? 'fixed inset-0 z-50 flex flex-col gap-2 bg-background p-2'
+          : 'flex flex-col gap-2'
+      }
+    >
+      <div className="flex items-center justify-between">
+        <ConnectionIndicator
+          isConnected={connected}
+          onReconnect={connected ? undefined : () => setSessionKey((k) => k + 1)}
+        />
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            title={t('kcrossManagement.cycleTheme', 'Cycle theme')}
+            onClick={cycleTheme}
+            className="rounded p-1.5 hover:bg-muted"
+          >
+            <IconPalette className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            title={t('kcrossManagement.clearTerminal', 'Clear')}
+            onClick={clearTerminal}
+            className="rounded p-1.5 hover:bg-muted"
+          >
+            <IconClearAll className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            title={
+              fullscreen
+                ? t('common.actions.exitFullscreen', 'Exit fullscreen')
+                : t('common.actions.fullscreen', 'Fullscreen')
+            }
+            onClick={() => setFullscreen((v) => !v)}
+            className="rounded p-1.5 hover:bg-muted"
+          >
+            {fullscreen ? (
+              <IconMinimize className="h-4 w-4" />
+            ) : (
+              <IconMaximize className="h-4 w-4" />
+            )}
+          </button>
+        </div>
+      </div>
       <div
         ref={termRef}
-        className="h-96 overflow-hidden rounded-md border bg-[#1c1c1c] p-1"
+        className={
+          fullscreen
+            ? 'min-h-0 flex-1 overflow-hidden rounded-md border bg-[#1c1c1c] p-1'
+            : 'h-96 overflow-hidden rounded-md border bg-[#1c1c1c] p-1'
+        }
       />
-      <p className="text-xs text-muted-foreground">
-        {connected
-          ? t('kcrossManagement.terminalConnected', 'Connected to {{peer}}', { peer: peerId })
-          : t('kcrossManagement.terminalConnecting', 'Connecting to {{peer}}…', { peer: peerId })}
-      </p>
     </div>
   )
 }

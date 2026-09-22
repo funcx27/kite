@@ -19,6 +19,8 @@ export interface KcrossCapability {
   kind: string
   health: string
   endpoint?: string
+  /** 经网关的接入地址：http=反代子路径，tcp=网关端口映射 */
+  access?: string
 }
 
 export interface KcrossPeer {
