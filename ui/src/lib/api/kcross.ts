@@ -90,11 +90,6 @@ export const createKcrossBinding = (payload: {
     body: JSON.stringify(payload),
   })
 
-export const deleteKcrossBinding = (clusterId: number): Promise<void> =>
-  requestJson(`/admin/kcross/bindings/${clusterId}`, {
-    method: 'DELETE',
-  })
-
 export const useKcrossSetting = () =>
   useQuery({
     queryKey: ['kcross-setting'],
@@ -131,14 +126,6 @@ export const useCreateKcrossBinding = () => {
   const invalidate = useInvalidateKcross()
   return useMutation({
     mutationFn: createKcrossBinding,
-    onSuccess: invalidate,
-  })
-}
-
-export const useDeleteKcrossBinding = () => {
-  const invalidate = useInvalidateKcross()
-  return useMutation({
-    mutationFn: deleteKcrossBinding,
     onSuccess: invalidate,
   })
 }

@@ -1452,11 +1452,17 @@
     "capabilities": "能力",
     "prometheus": "Prometheus",
     "bound": "已纳管",
+    "peerDetail": "节点 {{peer}}",
+    "peerStatus": "状态",
+    "gateway": "网关",
+    "capName": "名称",
+    "capKind": "类型",
+    "capHealth": "健康",
+    "capEndpoint": "端点",
     "addCluster": "从节点 {{peer}} 纳管集群",
     "messages": {
       "testOk": "连接成功，发现 {{count}} 个节点",
-      "added": "集群已添加并绑定节点",
-      "unbound": "已解除集群与节点的绑定"
+      "added": "集群已添加并绑定节点"
     },
     "gateways": "网关地址",
     "gatewaysHint": "多个网关用英文逗号分隔",

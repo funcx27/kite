@@ -1365,11 +1365,17 @@
     "capabilities": "Capabilities",
     "prometheus": "Prometheus",
     "bound": "Onboarded",
+    "peerDetail": "Peer {{peer}}",
+    "peerStatus": "Status",
+    "gateway": "Gateway",
+    "capName": "Name",
+    "capKind": "Kind",
+    "capHealth": "Health",
+    "capEndpoint": "Endpoint",
     "addCluster": "Onboard Cluster from Peer {{peer}}",
     "messages": {
       "testOk": "Connected, {{count}} peers found",
-      "added": "Cluster added and bound to peer",
-      "unbound": "Cluster unbound from peer"
+      "added": "Cluster added and bound to peer"
     },
     "gateways": "Gateway URLs",
     "gatewaysHint": "Multiple gateways separated by commas",

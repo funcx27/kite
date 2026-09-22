@@ -9,7 +9,6 @@ import {
   updateKcrossSetting,
   testKcrossSetting,
   useCreateKcrossBinding,
-  useDeleteKcrossBinding,
   useKcrossPeers,
   useKcrossSetting,
 } from '@/lib/api/kcross'
@@ -26,6 +25,14 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 
 import { Action, ActionTable } from '../action-table'
 
@@ -35,9 +42,9 @@ export function KcrossManagement() {
   const settingReady = Boolean(setting?.enabled)
   const { data: peers = [], isLoading: peersLoading } = useKcrossPeers(settingReady)
   const createBinding = useCreateKcrossBinding()
-  const deleteBinding = useDeleteKcrossBinding()
 
   const [addingPeer, setAddingPeer] = useState<KcrossPeer | null>(null)
+  const [detailPeer, setDetailPeer] = useState<KcrossPeer | null>(null)
 
   const columns = useMemo(
     () => [
@@ -52,7 +59,13 @@ export function KcrossManagement() {
               }`}
               title={peer.status}
             />
-            <span className="font-medium font-mono">{peer.id}</span>
+            <button
+              type="button"
+              className="font-medium font-mono hover:underline"
+              onClick={() => setDetailPeer(peer)}
+            >
+              {peer.id}
+            </button>
           </div>
         ),
       },
@@ -112,20 +125,6 @@ export function KcrossManagement() {
       onClick: (peer) => setAddingPeer(peer),
       shouldDisable: (peer) => peer.bound || !peer.kubernetes,
     },
-    {
-      label: t('common.actions.unbind', 'Unbind'),
-      onClick: (peer) => {
-        if (!peer.clusterId) return
-        deleteBinding.mutate(peer.clusterId, {
-          onSuccess: () =>
-            toast.success(
-              t('kcrossManagement.messages.unbound', 'Cluster unbound from peer')
-            ),
-          onError: (err: Error) => toast.error(err.message),
-        })
-      },
-      shouldDisable: (peer) => !peer.bound,
-    },
   ]
 
   return (
@@ -173,6 +172,11 @@ export function KcrossManagement() {
         </CardContent>
       </Card>
 
+      <PeerDetailDialog
+        peer={detailPeer}
+        onOpenChange={(open) => !open && setDetailPeer(null)}
+      />
+
       <AddPeerClusterDialog
         peer={addingPeer}
         onOpenChange={(open) => !open && setAddingPeer(null)}
@@ -199,6 +203,105 @@ export function KcrossManagement() {
         }}
       />
     </div>
+  )
+}
+
+function PeerDetailDialog({
+  peer,
+  onOpenChange,
+}: {
+  peer: KcrossPeer | null
+  onOpenChange: (open: boolean) => void
+}) {
+  const { t } = useTranslation()
+
+  return (
+    <Dialog open={peer !== null} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle>
+            {t('kcrossManagement.peerDetail', 'Peer {{peer}}', {
+              peer: peer?.id ?? '',
+            })}
+          </DialogTitle>
+        </DialogHeader>
+        {peer && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-[auto_1fr] items-center gap-x-6 gap-y-2 text-sm">
+              <span className="text-muted-foreground">
+                {t('kcrossManagement.peerStatus', 'Status')}
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span
+                  className={`inline-block h-2 w-2 rounded-full ${
+                    peer.status === 'online' ? 'bg-green-500' : 'bg-red-500'
+                  }`}
+                />
+                {peer.status}
+              </span>
+              <span className="text-muted-foreground">
+                {t('kcrossManagement.connectedAt', 'Connected At')}
+              </span>
+              <span>
+                {peer.connectedAt ? new Date(peer.connectedAt).toLocaleString() : '-'}
+              </span>
+              <span className="text-muted-foreground">
+                {t('kcrossManagement.gateway', 'Gateway')}
+              </span>
+              <span className="break-all font-mono text-xs">{peer.gateway}</span>
+              <span className="text-muted-foreground">
+                {t('kcrossManagement.bound', 'Onboarded')}
+              </span>
+              <span>
+                {peer.bound ? (
+                  <Badge variant="outline">{peer.clusterName || peer.clusterId}</Badge>
+                ) : (
+                  '-'
+                )}
+              </span>
+            </div>
+            <div className="rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>{t('kcrossManagement.capName', 'Name')}</TableHead>
+                    <TableHead>{t('kcrossManagement.capKind', 'Kind')}</TableHead>
+                    <TableHead>{t('kcrossManagement.capHealth', 'Health')}</TableHead>
+                    <TableHead>{t('kcrossManagement.capEndpoint', 'Endpoint')}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {peer.capabilities.map((cap) => (
+                    <TableRow key={cap.name}>
+                      <TableCell className="font-mono">{cap.name}</TableCell>
+                      <TableCell>{cap.kind}</TableCell>
+                      <TableCell>
+                        <Badge variant={cap.health === 'healthy' ? 'secondary' : 'destructive'}>
+                          {cap.health}
+                        </Badge>
+                      </TableCell>
+                      <TableCell
+                        className="max-w-48 truncate font-mono text-xs"
+                        title={cap.endpoint}
+                      >
+                        {cap.endpoint || '-'}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {peer.capabilities.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={4} className="text-muted-foreground">
+                        -
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   )
 }
 
