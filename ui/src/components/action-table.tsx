@@ -27,6 +27,8 @@ interface ActionTableProps<T> {
   data: T[]
   columns: ColumnDef<T>[]
   actions: Action<T>[]
+  /** 操作列内、菜单按钮之前渲染的内容（如状态徽标） */
+  actionCellPrefix?: (item: T) => React.ReactNode
 }
 
 export interface Action<T> {
@@ -40,6 +42,7 @@ export function ActionTable<T>({
   data,
   columns,
   actions,
+  actionCellPrefix,
 }: ActionTableProps<T>) {
   const { t } = useTranslation()
   const tableColumns = useMemo(() => {
@@ -48,7 +51,14 @@ export function ActionTable<T>({
         id: 'actions',
         header: t('common.fields.actions'),
         cell: ({ row }) => (
-          <div className="text-right">
+          <div
+            className={
+              actionCellPrefix
+                ? 'flex items-center justify-end gap-2'
+                : 'text-right'
+            }
+          >
+            {actionCellPrefix?.(row.original)}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button

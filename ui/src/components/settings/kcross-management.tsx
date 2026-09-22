@@ -146,21 +146,6 @@ export function KcrossManagement() {
             '-'
           ),
       },
-      {
-        id: 'bound',
-        header: t('kcrossManagement.bound', 'Onboarded'),
-        cell: ({ row: { original: peer } }: { row: { original: KcrossPeer } }) =>
-          peer.bound ? (
-            <Badge variant="secondary">{peer.clusterName || peer.clusterId}</Badge>
-          ) : (
-            <Badge
-              variant="outline"
-              className="border-dashed text-muted-foreground"
-            >
-              {t('kcrossManagement.unbound', 'Unbound')}
-            </Badge>
-          ),
-      },
     ],
     [t]
   )
@@ -254,6 +239,18 @@ export function KcrossManagement() {
                 data={filteredPeers}
                 columns={columns as never[]}
                 actions={actions}
+                actionCellPrefix={(peer) =>
+                  peer.bound ? (
+                    <Badge variant="secondary">{peer.clusterName || peer.clusterId}</Badge>
+                  ) : (
+                    <Badge
+                      variant="outline"
+                      className="border-dashed text-muted-foreground"
+                    >
+                      {t('kcrossManagement.unbound', 'Unbound')}
+                    </Badge>
+                  )
+                }
               />
             </div>
           )}
