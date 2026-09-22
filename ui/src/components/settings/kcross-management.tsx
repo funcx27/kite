@@ -321,24 +321,21 @@ function PeerDetailDialog({
     <Dialog open={peer !== null} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <div className="flex items-center justify-between pr-8">
-            <DialogTitle>
-              {t('kcrossManagement.peerDetail', 'Peer {{peer}}', {
-                peer: peer?.id ?? '',
-              })}
-            </DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            {t('kcrossManagement.peerDetail', 'Peer {{peer}}', {
+              peer: peer?.id ?? '',
+            })}
             {peer?.status === 'online' && onTerminal && (
               <button
                 type="button"
                 title={t('kcrossManagement.openTerminal', 'Open Terminal')}
                 onClick={onTerminal}
-                className="flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
               >
-                <IconTerminal className="h-3.5 w-3.5" />
-                {t('kcrossManagement.openTerminal', 'Terminal')}
+                <IconTerminal className="h-4 w-4" />
               </button>
             )}
-          </div>
+          </DialogTitle>
         </DialogHeader>
         {peer && (
           <div className="space-y-4">
