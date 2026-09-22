@@ -32,14 +32,6 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
 
 import { Action, ActionTable } from '../action-table'
 import { KcrossPeerTerminal } from './kcross-peer-terminal'
@@ -334,7 +326,7 @@ function PeerDetailDialog({
 
   return (
     <Dialog open={peer !== null} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl">
+      <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>
             {t('kcrossManagement.peerDetail', 'Peer {{peer}}', {
@@ -394,55 +386,35 @@ function PeerDetailDialog({
                 {t('kcrossManagement.openTerminal', 'Open Terminal')}
               </Button>
             )}
-            <div className="rounded-md border">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>{t('kcrossManagement.capName', 'Name')}</TableHead>
-                    <TableHead>{t('kcrossManagement.capKind', 'Kind')}</TableHead>
-                    <TableHead>{t('kcrossManagement.capHealth', 'Health')}</TableHead>
-                    <TableHead>{t('kcrossManagement.capEndpoint', 'Endpoint')}</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {peer.capabilities.map((cap) => (
-                    <TableRow key={cap.name}>
-                      <TableCell className="font-mono">{cap.name}</TableCell>
-                      <TableCell>{cap.kind}</TableCell>
-                      <TableCell>
-                        <Badge variant={cap.health === 'healthy' ? 'secondary' : 'destructive'}>
-                          {cap.health}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="max-w-96 font-mono text-xs">
-                        {cap.access ? (
-                          <span
-                            className="block truncate"
-                            title={`${cap.access} -> ${cap.endpoint || ''}`}
-                          >
-                            {cap.access}
-                            <span className="text-muted-foreground">
-                              {' -> '}
-                              {cap.endpoint || '-'}
-                            </span>
-                          </span>
-                        ) : (
-                          <span className="block truncate" title={cap.endpoint}>
-                            {cap.endpoint || '-'}
-                          </span>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                  {peer.capabilities.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={4} className="text-muted-foreground">
-                        -
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
+            <div className="space-y-2">
+              <Label>{t('kcrossManagement.capabilities', 'Capabilities')}</Label>
+              {peer.capabilities.map((cap) => (
+                <div key={cap.name} className="space-y-1.5 rounded-md border p-2.5">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-sm font-medium">{cap.name}</span>
+                    <Badge variant="outline">{cap.kind}</Badge>
+                    <Badge variant={cap.health === 'healthy' ? 'secondary' : 'destructive'}>
+                      {cap.health}
+                    </Badge>
+                  </div>
+                  <div className="break-all font-mono text-xs leading-5">
+                    {cap.access ? (
+                      <>
+                        <span>{cap.access}</span>
+                        <span className="text-muted-foreground">
+                          {'  ->  '}
+                          {cap.endpoint || '-'}
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-muted-foreground">{cap.endpoint || '-'}</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {peer.capabilities.length === 0 && (
+                <p className="text-sm text-muted-foreground">-</p>
+              )}
             </div>
           </div>
         )}

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { IconClearAll, IconMaximize, IconMinimize, IconPalette } from '@tabler/icons-react'
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal as XTerm } from '@xterm/xterm'
@@ -182,12 +183,14 @@ export function KcrossPeerTerminal({
     xtermRef.current?.focus()
   }, [])
 
-  return (
+  const content = (
     <div
       ref={containerRef}
       className={
         fullscreen
-          ? 'fixed inset-0 z-50 flex flex-col gap-2 bg-background p-2'
+          ? // Dialog 内容容器带 transform，fixed 在其内部会被当作
+            // 相对对话框定位；全屏必须 portal 到 body 才能真正铺满
+            'fixed inset-0 z-[100] flex flex-col gap-2 bg-background p-2'
           : 'flex flex-col gap-2'
       }
     >
@@ -241,4 +244,7 @@ export function KcrossPeerTerminal({
       />
     </div>
   )
+
+  // 全屏层 portal 到 body，脱离 Dialog 的 transform 包含块
+  return fullscreen ? createPortal(content, document.body) : content
 }
