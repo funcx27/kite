@@ -6,12 +6,13 @@ import {
   IconRefresh,
   IconSearch,
   IconServer,
+  IconTrash,
 } from '@tabler/icons-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
-import { createCluster } from '@/lib/api'
+import { createCluster, deleteCluster } from '@/lib/api'
 import { Cluster } from '@/types/api'
 import { fetchClusterList, updateCluster } from '@/lib/api/admin'
 import {
@@ -37,6 +38,7 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 
 import { ClusterDialog } from './cluster-dialog'
+import { DeleteConfirmationDialog } from '@/components/delete-confirmation-dialog'
 import { ActionTable } from '../action-table'
 import { KcrossPeerTerminal } from './kcross-peer-terminal'
 
@@ -61,6 +63,7 @@ export function KcrossManagement() {
   )
   const [editingCluster, setEditingCluster] = useState<Cluster | null>(null)
   const [editOpen, setEditOpen] = useState(false)
+  const [deletingCluster, setDeletingCluster] = useState<Cluster | null>(null)
   const queryClient = useQueryClient()
 
   // 已纳管徽标点击：拉取集群完整配置并打开编辑弹窗（复用集群管理的编辑框）
@@ -78,6 +81,18 @@ export function KcrossManagement() {
     } catch (err) {
       toast.error((err as Error).message)
     }
+  }
+
+  const handleDeleteCluster = () => {
+    if (!deletingCluster) return
+    deleteCluster(deletingCluster.id)
+      .then(() => {
+        queryClient.invalidateQueries({ queryKey: ['clusters'] })
+        queryClient.invalidateQueries({ queryKey: ['kcross-peers'] })
+        toast.success(t('kcrossManagement.messages.deleted', 'Cluster removed'))
+        setDeletingCluster(null)
+      })
+      .catch((err: Error) => toast.error(err.message))
   }
 
   const handleEditSubmit = (clusterData: Parameters<typeof updateCluster>[1]) => {
@@ -264,21 +279,36 @@ export function KcrossManagement() {
                 columns={columns as never[]}
                 actions={[]}
                 actionCellPrefix={(peer) => {
-                  // 已纳管显示集群名（点击编辑集群）；未纳管直接给纳管按钮（状态即操作）
+                  // 已纳管显示集群名（点击编辑）+ 删除按钮；未纳管直接给纳管按钮（状态即操作）
                   if (peer.bound) {
                     return (
-                      <button
-                        type="button"
-                        title={t('kcrossManagement.editCluster', 'Edit cluster config')}
-                        onClick={() => openClusterEdit(peer)}
-                      >
-                        <Badge
-                          variant="secondary"
-                          className="cursor-pointer hover:bg-secondary/70"
+                      <>
+                        <button
+                          type="button"
+                          title={t('kcrossManagement.editCluster', 'Edit cluster config')}
+                          onClick={() => openClusterEdit(peer)}
                         >
-                          {peer.clusterName || peer.clusterId}
-                        </Badge>
-                      </button>
+                          <Badge
+                            variant="secondary"
+                            className="cursor-pointer hover:bg-secondary/70"
+                          >
+                            {peer.clusterName || peer.clusterId}
+                          </Badge>
+                        </button>
+                        <button
+                          type="button"
+                          title={t('common.actions.delete', 'Delete')}
+                          onClick={() =>
+                            setDeletingCluster({
+                              id: peer.clusterId,
+                              name: peer.clusterName || String(peer.clusterId),
+                            } as Cluster)
+                          }
+                          className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-destructive"
+                        >
+                          <IconTrash className="h-4 w-4" />
+                        </button>
+                      </>
                     )
                   }
                   const cap = peerKubernetesCap(peer)
@@ -331,6 +361,18 @@ export function KcrossManagement() {
         onOpenChange={setEditOpen}
         cluster={editingCluster}
         onSubmit={handleEditSubmit}
+      />
+
+      <DeleteConfirmationDialog
+        open={!!deletingCluster}
+        onOpenChange={() => setDeletingCluster(null)}
+        onConfirm={handleDeleteCluster}
+        resourceName={deletingCluster?.name || ''}
+        resourceType="cluster"
+        additionalNote={t(
+          'clusterManagement.deleteConfirmation',
+          'This action will only remove the current cluster configuration in kite and will not delete any cluster resources.'
+        )}
       />
 
       <AddPeerClusterDialog

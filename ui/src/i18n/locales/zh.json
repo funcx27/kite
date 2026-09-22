@@ -1483,7 +1483,8 @@
     "addCluster": "从节点 {{peer}} 纳管集群",
     "messages": {
       "testOk": "连接成功，发现 {{count}} 个节点",
-      "added": "集群已添加并绑定节点"
+      "added": "集群已添加并绑定节点",
+      "deleted": "集群已移除"
     },
     "gateways": "网关地址",
     "gatewaysHint": "多个网关用英文逗号分隔",

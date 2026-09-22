@@ -1396,7 +1396,8 @@
     "addCluster": "Onboard Cluster from Peer {{peer}}",
     "messages": {
       "testOk": "Connected, {{count}} peers found",
-      "added": "Cluster added and bound to peer"
+      "added": "Cluster added and bound to peer",
+      "deleted": "Cluster removed"
     },
     "gateways": "Gateway URLs",
     "gatewaysHint": "Multiple gateways separated by commas",
