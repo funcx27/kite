@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react'
+import { TerminalSquare } from 'lucide-react'
 import {
   IconLink,
   IconPlug,
   IconRefresh,
   IconSearch,
   IconServer,
-  IconTerminal,
 } from '@tabler/icons-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -332,7 +332,7 @@ function PeerDetailDialog({
                 onClick={onTerminal}
                 className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
               >
-                <IconTerminal className="h-4 w-4" />
+                <TerminalSquare className="h-4 w-4" />
               </button>
             )}
           </DialogTitle>
