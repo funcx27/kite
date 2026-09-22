@@ -1367,6 +1367,8 @@
     "bound": "Onboarded",
     "actionUncapable": "Cannot onboard (no kubernetes capability)",
     "onboard": "Onboard",
+    "editCluster": "Edit cluster config",
+    "clusterMissing": "Cluster no longer exists",
     "unbound": "Unbound",
     "boundPeerHint": "Onboarded from this peer",
     "unboundPeerHint": "Discovered, not onboarded yet",

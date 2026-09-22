@@ -1454,6 +1454,8 @@
     "bound": "已纳管",
     "actionUncapable": "无法纳管（无 kubernetes 能力）",
     "onboard": "纳管",
+    "editCluster": "编辑集群配置",
+    "clusterMissing": "集群已不存在",
     "unbound": "未纳管",
     "boundPeerHint": "已从该节点纳管集群",
     "unboundPeerHint": "已发现，尚未纳管",

@@ -7,10 +7,13 @@ import {
   IconSearch,
   IconServer,
 } from '@tabler/icons-react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { createCluster } from '@/lib/api'
+import { Cluster } from '@/types/api'
+import { fetchClusterList, updateCluster } from '@/lib/api/admin'
 import {
   KcrossPeer,
   updateKcrossSetting,
@@ -33,6 +36,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 
+import { ClusterDialog } from './cluster-dialog'
 import { ActionTable } from '../action-table'
 import { KcrossPeerTerminal } from './kcross-peer-terminal'
 
@@ -55,6 +59,38 @@ export function KcrossManagement() {
   const [filter, setFilter] = useState<'all' | 'unbound' | 'bound' | 'online' | 'offline'>(
     'all'
   )
+  const [editingCluster, setEditingCluster] = useState<Cluster | null>(null)
+  const [editOpen, setEditOpen] = useState(false)
+  const queryClient = useQueryClient()
+
+  // 已纳管徽标点击：拉取集群完整配置并打开编辑弹窗（复用集群管理的编辑框）
+  const openClusterEdit = async (peer: KcrossPeer) => {
+    if (!peer.clusterId) return
+    try {
+      const list = await fetchClusterList()
+      const cluster = list.find((c) => c.id === peer.clusterId)
+      if (!cluster) {
+        toast.error(t('kcrossManagement.clusterMissing', 'Cluster no longer exists'))
+        return
+      }
+      setEditingCluster(cluster)
+      setEditOpen(true)
+    } catch (err) {
+      toast.error((err as Error).message)
+    }
+  }
+
+  const handleEditSubmit = (clusterData: Parameters<typeof updateCluster>[1]) => {
+    if (!editingCluster) return
+    updateCluster(editingCluster.id, clusterData)
+      .then(() => {
+        queryClient.invalidateQueries({ queryKey: ['clusters'] })
+        queryClient.invalidateQueries({ queryKey: ['kcross-peers'] })
+        toast.success(t('common.messages.saved', 'Settings saved'))
+        setEditOpen(false)
+      })
+      .catch((err: Error) => toast.error(err.message))
+  }
 
   const filteredPeers = useMemo(() => {
     const keyword = search.trim().toLowerCase()
@@ -228,12 +264,21 @@ export function KcrossManagement() {
                 columns={columns as never[]}
                 actions={[]}
                 actionCellPrefix={(peer) => {
-                  // 已纳管显示集群名；未纳管直接给纳管按钮（状态即操作）
+                  // 已纳管显示集群名（点击编辑集群）；未纳管直接给纳管按钮（状态即操作）
                   if (peer.bound) {
                     return (
-                      <Badge variant="secondary">
-                        {peer.clusterName || peer.clusterId}
-                      </Badge>
+                      <button
+                        type="button"
+                        title={t('kcrossManagement.editCluster', 'Edit cluster config')}
+                        onClick={() => openClusterEdit(peer)}
+                      >
+                        <Badge
+                          variant="secondary"
+                          className="cursor-pointer hover:bg-secondary/70"
+                        >
+                          {peer.clusterName || peer.clusterId}
+                        </Badge>
+                      </button>
                     )
                   }
                   const cap = peerKubernetesCap(peer)
@@ -280,6 +325,13 @@ export function KcrossManagement() {
           onClose={() => setTerminalPeer(null)}
         />
       )}
+
+      <ClusterDialog
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        cluster={editingCluster}
+        onSubmit={handleEditSubmit}
+      />
 
       <AddPeerClusterDialog
         peer={addingPeer}
