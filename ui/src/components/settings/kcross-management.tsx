@@ -5,6 +5,7 @@ import {
   IconRefresh,
   IconSearch,
   IconServer,
+  IconTerminal,
 } from '@tabler/icons-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -260,6 +261,12 @@ export function KcrossManagement() {
       <PeerDetailDialog
         peer={detailPeer}
         onOpenChange={(open) => !open && setDetailPeer(null)}
+        onTerminal={() => {
+          if (detailPeer) {
+            setTerminalPeer(detailPeer)
+            setDetailPeer(null)
+          }
+        }}
       />
 
       {terminalPeer && (
@@ -302,9 +309,11 @@ export function KcrossManagement() {
 function PeerDetailDialog({
   peer,
   onOpenChange,
+  onTerminal,
 }: {
   peer: KcrossPeer | null
   onOpenChange: (open: boolean) => void
+  onTerminal?: () => void
 }) {
   const { t } = useTranslation()
 
@@ -312,11 +321,24 @@ function PeerDetailDialog({
     <Dialog open={peer !== null} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>
-            {t('kcrossManagement.peerDetail', 'Peer {{peer}}', {
-              peer: peer?.id ?? '',
-            })}
-          </DialogTitle>
+          <div className="flex items-center justify-between pr-8">
+            <DialogTitle>
+              {t('kcrossManagement.peerDetail', 'Peer {{peer}}', {
+                peer: peer?.id ?? '',
+              })}
+            </DialogTitle>
+            {peer?.status === 'online' && onTerminal && (
+              <button
+                type="button"
+                title={t('kcrossManagement.openTerminal', 'Open Terminal')}
+                onClick={onTerminal}
+                className="flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                <IconTerminal className="h-3.5 w-3.5" />
+                {t('kcrossManagement.openTerminal', 'Terminal')}
+              </button>
+            )}
+          </div>
         </DialogHeader>
         {peer && (
           <div className="space-y-4">
