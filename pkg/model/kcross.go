@@ -6,9 +6,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// ErrKcrossBindingNotFound 删除绑定时集群无绑定
-var ErrKcrossBindingNotFound = errors.New("kcross binding not found")
-
 // KcrossSetting kcross Gateway 集成配置（单行表，ID 恒为 1）。
 // 独立于 GeneralSetting，避免侵入上游既有模型
 type KcrossSetting struct {
@@ -87,18 +84,6 @@ func UpsertKcrossBinding(clusterID uint, peerID, capability string) (*KcrossBind
 	binding.PeerID = peerID
 	binding.Capability = capability
 	return binding, nil
-}
-
-// DeleteKcrossBinding 删除集群绑定；无绑定时报 not found
-func DeleteKcrossBinding(clusterID uint) error {
-	result := DB.Where("cluster_id = ?", clusterID).Delete(&KcrossBinding{})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return ErrKcrossBindingNotFound
-	}
-	return nil
 }
 
 // ListKcrossBindings 全量绑定（发现页与集群列表徽标用）

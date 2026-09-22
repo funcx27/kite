@@ -3,7 +3,6 @@ package kcross
 import (
 	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -30,7 +29,6 @@ func RegisterRoutes(group *gin.RouterGroup) {
 	group.GET("/discover", HandleDiscover)
 	group.GET("/bindings", HandleListBindings)
 	group.POST("/bindings", HandleCreateBinding)
-	group.DELETE("/bindings/:clusterId", HandleDeleteBinding)
 }
 
 // HandleGetSetting 读取集成配置（token 不回显，仅返回是否已配置）
@@ -276,23 +274,4 @@ func HandleCreateBinding(c *gin.Context) {
 	}
 	triggerClusterSync()
 	c.JSON(http.StatusCreated, binding)
-}
-
-// HandleDeleteBinding 解除集群绑定
-func HandleDeleteBinding(c *gin.Context) {
-	clusterID, err := strconv.ParseUint(c.Param("clusterId"), 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cluster id"})
-		return
-	}
-	if err := model.DeleteKcrossBinding(uint(clusterID)); err != nil {
-		if errors.Is(err, model.ErrKcrossBindingNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	triggerClusterSync()
-	c.JSON(http.StatusOK, gin.H{"message": "binding deleted"})
 }
