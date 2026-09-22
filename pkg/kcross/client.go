@@ -75,10 +75,10 @@ func parseGateways(raw string) []string {
 	return out
 }
 
-// BuildZeroKubeconfig 生成零凭证 kubeconfig：server 指向网关 http 反代路径，
-// 无任何用户凭证——身份由 peer 侧按网关断言注入的 SA 决定
+// BuildZeroKubeconfig 生成零凭证 kubeconfig：server 指向网关 http 反代
+// 子路径，无任何用户凭证——身份由 peer 侧按网关断言注入的 SA 决定
 func BuildZeroKubeconfig(gatewayURL, peerID, capability string) string {
-	server := fmt.Sprintf("%s/proxy/%s/%s",
+	serverURL := fmt.Sprintf("%s/proxy/%s/%s",
 		strings.TrimRight(gatewayURL, "/"), peerID, capability)
 	return fmt.Sprintf(`apiVersion: v1
 kind: Config
@@ -95,7 +95,7 @@ current-context: kcross
 users:
 - name: kcross
   user: {}
-`, server)
+`, serverURL)
 }
 
 // Discover 列出全部节点及能力明细（结果短暂缓存，供发现页轮询与在线判定共用）
