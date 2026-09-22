@@ -1,6 +1,7 @@
 package kcross
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -273,6 +274,36 @@ func HandleCreateBinding(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	// peer 暴露 prometheus 能力时，集群监控自动走网关反代（引用为
+	// 网关相对路径，上游地址变化无需更新 kite）
+	if promCap := peerPrometheusEndpoint(c.Request.Context(), req.PeerID); promCap != "" {
+		promURL := strings.TrimRight(gateway, "/") + "/proxy/" + req.PeerID + "/" + promCap
+		if err := model.UpdateCluster(cluster, map[string]interface{}{"prometheus_url": promURL}); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "bind ok but set prometheus url: " + err.Error()})
+			return
+		}
+	}
 	triggerClusterSync()
 	c.JSON(http.StatusCreated, binding)
+}
+
+// peerPrometheusEndpoint 返回节点 prometheus 能力名（前缀匹配，兼容
+// prometheus-a 之类的命名）；未暴露时为空
+func peerPrometheusEndpoint(ctx context.Context, peerID string) string {
+	peers, err := Discover(ctx)
+	if err != nil {
+		return ""
+	}
+	for _, p := range peers {
+		if p.ID != peerID {
+			continue
+		}
+		for _, cap := range p.Capabilities {
+			if strings.HasPrefix(cap.Name, DefaultPrometheusCapability) {
+				return cap.Name
+			}
+		}
+	}
+	return ""
 }
