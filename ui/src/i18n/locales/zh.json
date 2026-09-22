@@ -1459,6 +1459,12 @@
     "capKind": "类型",
     "capHealth": "健康",
     "capEndpoint": "端点",
+    "openTerminal": "打开终端",
+    "terminalTitle": "终端 — {{peer}}",
+    "terminalConnected": "已连接 {{peer}}",
+    "terminalConnecting": "正在连接 {{peer}}…",
+    "terminalClosed": "会话已关闭",
+    "terminalExited": "会话已退出（退出码 {{code}}）",
     "addCluster": "从节点 {{peer}} 纳管集群",
     "messages": {
       "testOk": "连接成功，发现 {{count}} 个节点",

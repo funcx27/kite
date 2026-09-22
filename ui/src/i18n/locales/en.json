@@ -1372,6 +1372,12 @@
     "capKind": "Kind",
     "capHealth": "Health",
     "capEndpoint": "Endpoint",
+    "openTerminal": "Open Terminal",
+    "terminalTitle": "Terminal — {{peer}}",
+    "terminalConnected": "Connected to {{peer}}",
+    "terminalConnecting": "Connecting to {{peer}}…",
+    "terminalClosed": "Session closed",
+    "terminalExited": "Session exited ({{code}})",
     "addCluster": "Onboard Cluster from Peer {{peer}}",
     "messages": {
       "testOk": "Connected, {{count}} peers found",
