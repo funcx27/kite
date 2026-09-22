@@ -1,16 +1,18 @@
 import { useState } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { useTerminal } from '@/contexts/terminal-context'
-import { Plus, Settings, TerminalSquare } from 'lucide-react'
+import { Plus, Server, Settings, TerminalSquare } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 
 import { useIsMobile } from '@/hooks/use-mobile'
+import { useKcrossPeers, useKcrossSetting } from '@/lib/api/kcross'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 
 import { CreateResourceDialog } from './create-resource-dialog'
 import { DynamicBreadcrumb } from './dynamic-breadcrumb'
+import { KcrossPeerTerminal } from './settings/kcross-peer-terminal'
 import { LanguageToggle } from './language-toggle'
 import { ModeToggle } from './mode-toggle'
 import { Search } from './search'
@@ -22,8 +24,20 @@ export function SiteHeader() {
   const { user, capabilities } = useAuth()
   const { toggleTerminal, isOpen } = useTerminal()
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
+  const [peerTerminal, setPeerTerminal] = useState<{
+    id: string
+    gateway: string
+  } | null>(null)
   const isAdmin = user?.isAdmin() ?? false
   const kubectlEnabled = capabilities.kubectlEnabled
+
+  // kcross 节点终端：仅管理员且集成启用时展示
+  const { data: kcrossSetting } = useKcrossSetting(isAdmin)
+  const kcrossEnabled = kcrossSetting?.enabled ?? false
+  const { data: kcrossPeers = [] } = useKcrossPeers(kcrossEnabled)
+  const onlinePeers = kcrossPeers
+    .filter((p) => p.status === 'online')
+    .map((p) => ({ id: p.id, gateway: p.gateway }))
 
   return (
     <>
@@ -56,6 +70,25 @@ export function SiteHeader() {
                 <TerminalSquare className="h-5 w-5" />
               </button>
             )}
+            {isAdmin && kcrossEnabled && (
+              <button
+                onClick={() => setPeerTerminal(onlinePeers[0] ?? null)}
+                disabled={onlinePeers.length === 0}
+                title={
+                  onlinePeers.length > 0
+                    ? 'Peer Terminal'
+                    : 'Peer Terminal (no online peers)'
+                }
+                aria-label="Peer Terminal"
+                className={`flex items-center justify-center rounded-sm p-1 transition-colors ${
+                  peerTerminal
+                    ? 'text-green-500 hover:text-green-600'
+                    : 'text-muted-foreground hover:text-foreground disabled:opacity-40'
+                }`}
+              >
+                <Server className="h-5 w-5" />
+              </button>
+            )}
             {!isMobile && (
               <>
                 <Separator
@@ -86,6 +119,16 @@ export function SiteHeader() {
         <CreateResourceDialog
           open={createDialogOpen}
           onOpenChange={setCreateDialogOpen}
+        />
+      ) : null}
+
+      {peerTerminal ? (
+        <KcrossPeerTerminal
+          peerId={peerTerminal.id}
+          gateway={peerTerminal.gateway}
+          peers={onlinePeers}
+          onPeerChange={setPeerTerminal}
+          onClose={() => setPeerTerminal(null)}
         />
       ) : null}
     </>

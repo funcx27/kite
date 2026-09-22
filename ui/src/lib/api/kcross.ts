@@ -92,10 +92,11 @@ export const createKcrossBinding = (payload: {
     body: JSON.stringify(payload),
   })
 
-export const useKcrossSetting = () =>
+export const useKcrossSetting = (enabled = true) =>
   useQuery({
     queryKey: ['kcross-setting'],
     queryFn: fetchKcrossSetting,
+    enabled,
     retry: false,
   })
 

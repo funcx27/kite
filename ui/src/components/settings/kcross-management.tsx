@@ -5,7 +5,6 @@ import {
   IconRefresh,
   IconSearch,
   IconServer,
-  IconTerminal,
 } from '@tabler/icons-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -35,6 +34,11 @@ import { Switch } from '@/components/ui/switch'
 
 import { Action, ActionTable } from '../action-table'
 import { KcrossPeerTerminal } from './kcross-peer-terminal'
+
+// kubernetes 能力前缀匹配：兼容 kubernetes-acluster 等多集群命名
+function peerKubernetesCap(peer: KcrossPeer) {
+  return peer.capabilities.find((cap) => cap.name.startsWith('kubernetes'))
+}
 
 export function KcrossManagement() {
   const { t } = useTranslation()
@@ -163,9 +167,14 @@ export function KcrossManagement() {
 
   const actions: Action<KcrossPeer>[] = [
     {
+      // kubernetes-* 前缀兼容多集群能力命名（kubernetes-acluster 等）
       label: t('common.actions.add', 'Add'),
+      dynamicLabel: (peer) =>
+        peerKubernetesCap(peer)
+          ? t('common.actions.add', 'Add')
+          : t('kcrossManagement.actionUncapable', 'Cannot onboard (no kubernetes capability)'),
       onClick: (peer) => setAddingPeer(peer),
-      shouldDisable: (peer) => peer.bound || !peer.kubernetes,
+      shouldDisable: (peer) => peer.bound || !peerKubernetesCap(peer),
     },
   ]
 
@@ -254,12 +263,6 @@ export function KcrossManagement() {
       <PeerDetailDialog
         peer={detailPeer}
         onOpenChange={(open) => !open && setDetailPeer(null)}
-        onTerminal={() => {
-          if (detailPeer) {
-            setTerminalPeer(detailPeer)
-            setDetailPeer(null)
-          }
-        }}
       />
 
       {terminalPeer && (
@@ -283,7 +286,7 @@ export function KcrossManagement() {
                 clusterId: created.id,
                 peerId: peer.id,
                 gateway: peer.gateway,
-                capability: peer.kubernetes?.name,
+                capability: peerKubernetesCap(peer)?.name,
               })
             )
             .then(() => {
@@ -302,11 +305,9 @@ export function KcrossManagement() {
 function PeerDetailDialog({
   peer,
   onOpenChange,
-  onTerminal,
 }: {
   peer: KcrossPeer | null
   onOpenChange: (open: boolean) => void
-  onTerminal?: () => void
 }) {
   const { t } = useTranslation()
 
@@ -360,18 +361,6 @@ function PeerDetailDialog({
                 )}
               </span>
             </div>
-            {peer.status === 'online' && (
-              <Button
-                variant="outline"
-                onClick={() => {
-                  onOpenChange(false)
-                  onTerminal?.()
-                }}
-              >
-                <IconTerminal className="mr-2 h-4 w-4" />
-                {t('kcrossManagement.openTerminal', 'Open Terminal')}
-              </Button>
-            )}
             <div className="space-y-2">
               <Label>{t('kcrossManagement.capabilities', 'Capabilities')}</Label>
               {peer.capabilities.map((cap) => (

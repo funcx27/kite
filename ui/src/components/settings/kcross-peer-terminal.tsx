@@ -49,10 +49,15 @@ function applyTheme(term: XTerm, theme: TerminalTheme) {
 export function KcrossPeerTerminal({
   peerId,
   gateway,
+  peers,
+  onPeerChange,
   onClose,
 }: {
   peerId: string
   gateway: string
+  /** 在线节点列表；非空时标题旁显示节点切换下拉 */
+  peers?: { id: string; gateway: string }[]
+  onPeerChange?: (peer: { id: string; gateway: string }) => void
   onClose: () => void
 }) {
   const { t } = useTranslation()
@@ -206,6 +211,22 @@ export function KcrossPeerTerminal({
           <span className="text-sm font-medium">
             {t('kcrossManagement.terminalTitle', 'Terminal — {{peer}}', { peer: peerId })}
           </span>
+          {peers && peers.length > 1 && onPeerChange && (
+            <select
+              value={peerId}
+              onChange={(e) => {
+                const next = peers.find((p) => p.id === e.target.value)
+                if (next) onPeerChange(next)
+              }}
+              className="h-7 rounded-md border bg-transparent px-2 text-xs"
+            >
+              {peers.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.id}
+                </option>
+              ))}
+            </select>
+          )}
           <ConnectionIndicator
             isConnected={connected}
             onReconnect={connected ? undefined : () => setSessionKey((k) => k + 1)}
