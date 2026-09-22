@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { IconClearAll, IconMaximize, IconMinimize, IconPalette } from '@tabler/icons-react'
+import {
+  IconClearAll,
+  IconMaximize,
+  IconMinimize,
+  IconPalette,
+  IconX,
+} from '@tabler/icons-react'
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal as XTerm } from '@xterm/xterm'
 
@@ -43,18 +49,16 @@ function applyTheme(term: XTerm, theme: TerminalTheme) {
 export function KcrossPeerTerminal({
   peerId,
   gateway,
-  open,
+  onClose,
 }: {
   peerId: string
   gateway: string
-  open: boolean
+  onClose: () => void
 }) {
   const { t } = useTranslation()
   const termRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const xtermRef = useRef<XTerm | null>(null)
-  const fitRef = useRef<FitAddon | null>(null)
-  const wsRef = useRef<WebSocket | null>(null)
   const [connected, setConnected] = useState(false)
   const [fullscreen, setFullscreen] = useState(false)
   const [sessionKey, setSessionKey] = useState(0)
@@ -80,8 +84,14 @@ export function KcrossPeerTerminal({
   }, [terminalTheme])
 
   useEffect(() => {
-    if (!open) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
 
+  useEffect(() => {
     const term = new XTerm({
       cursorBlink: true,
       fontSize: 14,
@@ -91,7 +101,6 @@ export function KcrossPeerTerminal({
     const fitAddon = new FitAddon()
     term.loadAddon(fitAddon)
     xtermRef.current = term
-    fitRef.current = fitAddon
     if (termRef.current) {
       term.open(termRef.current)
       fitAddon.fit()
@@ -103,7 +112,6 @@ export function KcrossPeerTerminal({
       )
     )
     ws.binaryType = 'arraybuffer'
-    wsRef.current = ws
 
     const decoder = new TextDecoder()
     const encoder = new TextEncoder()
@@ -174,31 +182,35 @@ export function KcrossPeerTerminal({
       ws.close()
       term.dispose()
       xtermRef.current = null
-      wsRef.current = null
     }
-  }, [open, peerId, gateway, sessionKey, t])
+  }, [peerId, gateway, sessionKey, t])
 
   const clearTerminal = useCallback(() => {
     xtermRef.current?.clear()
     xtermRef.current?.focus()
   }, [])
 
-  const content = (
+  // 始终 portal 到 body 的固定层：DOM 树位置恒定，xterm 不会因
+  // 尺寸/全屏切换被重建；默认接近全屏，全屏按钮仅切换几何类名
+  return createPortal(
     <div
       ref={containerRef}
       className={
         fullscreen
-          ? // Dialog 内容容器带 transform，fixed 在其内部会被当作
-            // 相对对话框定位；全屏必须 portal 到 body 才能真正铺满
-            'fixed inset-0 z-[100] flex flex-col gap-2 bg-background p-2'
-          : 'flex flex-col gap-2'
+          ? 'fixed inset-0 z-[100] flex flex-col gap-2 bg-background p-3'
+          : 'fixed inset-4 z-[100] flex flex-col gap-2 rounded-lg border bg-background p-3 shadow-lg'
       }
     >
       <div className="flex items-center justify-between">
-        <ConnectionIndicator
-          isConnected={connected}
-          onReconnect={connected ? undefined : () => setSessionKey((k) => k + 1)}
-        />
+        <div className="flex items-center gap-3">
+          <span className="text-sm font-medium">
+            {t('kcrossManagement.terminalTitle', 'Terminal — {{peer}}', { peer: peerId })}
+          </span>
+          <ConnectionIndicator
+            isConnected={connected}
+            onReconnect={connected ? undefined : () => setSessionKey((k) => k + 1)}
+          />
+        </div>
         <div className="flex items-center gap-1">
           <button
             type="button"
@@ -232,19 +244,18 @@ export function KcrossPeerTerminal({
               <IconMaximize className="h-4 w-4" />
             )}
           </button>
+          <button
+            type="button"
+            title={t('common.actions.close', 'Close')}
+            onClick={onClose}
+            className="rounded p-1.5 hover:bg-muted"
+          >
+            <IconX className="h-4 w-4" />
+          </button>
         </div>
       </div>
-      <div
-        ref={termRef}
-        className={
-          fullscreen
-            ? 'min-h-0 flex-1 overflow-hidden rounded-md border bg-[#1c1c1c] p-1'
-            : 'h-96 overflow-hidden rounded-md border bg-[#1c1c1c] p-1'
-        }
-      />
-    </div>
+      <div ref={termRef} className="min-h-0 flex-1 overflow-hidden rounded-md border bg-[#1c1c1c] p-1" />
+    </div>,
+    document.body
   )
-
-  // 全屏层 portal 到 body，脱离 Dialog 的 transform 包含块
-  return fullscreen ? createPortal(content, document.body) : content
 }

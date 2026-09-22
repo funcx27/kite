@@ -262,27 +262,13 @@ export function KcrossManagement() {
         }}
       />
 
-      <Dialog
-        open={terminalPeer !== null}
-        onOpenChange={(open) => !open && setTerminalPeer(null)}
-      >
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>
-              {t('kcrossManagement.terminalTitle', 'Terminal — {{peer}}', {
-                peer: terminalPeer?.id ?? '',
-              })}
-            </DialogTitle>
-          </DialogHeader>
-          {terminalPeer && (
-            <KcrossPeerTerminal
-              peerId={terminalPeer.id}
-              gateway={terminalPeer.gateway}
-              open={terminalPeer !== null}
-            />
-          )}
-        </DialogContent>
-      </Dialog>
+      {terminalPeer && (
+        <KcrossPeerTerminal
+          peerId={terminalPeer.id}
+          gateway={terminalPeer.gateway}
+          onClose={() => setTerminalPeer(null)}
+        />
+      )}
 
       <AddPeerClusterDialog
         peer={addingPeer}
