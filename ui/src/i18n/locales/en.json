@@ -1366,6 +1366,7 @@
     "prometheus": "Prometheus",
     "bound": "Onboarded",
     "actionUncapable": "Cannot onboard (no kubernetes capability)",
+    "onboard": "Onboard",
     "unbound": "Unbound",
     "boundPeerHint": "Onboarded from this peer",
     "unboundPeerHint": "Discovered, not onboarded yet",

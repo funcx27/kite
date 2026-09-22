@@ -33,7 +33,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 
-import { Action, ActionTable } from '../action-table'
+import { ActionTable } from '../action-table'
 import { KcrossPeerTerminal } from './kcross-peer-terminal'
 
 // kubernetes 能力前缀匹配：兼容 kubernetes-acluster 等多集群命名
@@ -151,19 +151,6 @@ export function KcrossManagement() {
     [t]
   )
 
-  const actions: Action<KcrossPeer>[] = [
-    {
-      // kubernetes-* 前缀兼容多集群能力命名（kubernetes-acluster 等）
-      label: t('common.actions.add', 'Add'),
-      dynamicLabel: (peer) =>
-        peerKubernetesCap(peer)
-          ? t('common.actions.add', 'Add')
-          : t('kcrossManagement.actionUncapable', 'Cannot onboard (no kubernetes capability)'),
-      onClick: (peer) => setAddingPeer(peer),
-      shouldDisable: (peer) => peer.bound || !peerKubernetesCap(peer),
-    },
-  ]
-
   return (
     <div className="space-y-6">
       <Card>
@@ -239,19 +226,36 @@ export function KcrossManagement() {
               <ActionTable
                 data={filteredPeers}
                 columns={columns as never[]}
-                actions={actions}
-                actionCellPrefix={(peer) =>
-                  peer.bound ? (
-                    <Badge variant="secondary">{peer.clusterName || peer.clusterId}</Badge>
-                  ) : (
-                    <Badge
+                actions={[]}
+                actionCellPrefix={(peer) => {
+                  // 已纳管显示集群名；未纳管直接给纳管按钮（状态即操作）
+                  if (peer.bound) {
+                    return (
+                      <Badge variant="secondary">
+                        {peer.clusterName || peer.clusterId}
+                      </Badge>
+                    )
+                  }
+                  const cap = peerKubernetesCap(peer)
+                  return (
+                    <Button
                       variant="outline"
-                      className="border-dashed text-muted-foreground"
+                      size="sm"
+                      disabled={!cap}
+                      title={
+                        cap
+                          ? undefined
+                          : t(
+                              'kcrossManagement.actionUncapable',
+                              'Cannot onboard (no kubernetes capability)'
+                            )
+                      }
+                      onClick={() => setAddingPeer(peer)}
                     >
-                      {t('kcrossManagement.unbound', 'Unbound')}
-                    </Badge>
+                      {t('kcrossManagement.onboard', 'Onboard')}
+                    </Button>
                   )
-                }
+                }}
               />
             </div>
           )}
