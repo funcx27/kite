@@ -114,6 +114,12 @@ export default defineConfig(({ command }) => ({
   server: {
     watch: {
       ignored: ['**/.vscode/**'],
+      // Polling on this setup (WSL2 + dedicated ext4 mount): inotify events
+      // can fire before the write flushes, and the watcher then reads and
+      // caches an empty file — the module silently exports nothing until the
+      // dev server restarts.
+      usePolling: true,
+      interval: 300,
     },
     proxy: {
       [devSubPath + '/api/']: {

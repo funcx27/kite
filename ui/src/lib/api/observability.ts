@@ -4,8 +4,8 @@ import { useQuery } from '@tanstack/react-query'
 import { OverviewData, PodMetrics, ResourceUsageHistory } from '@/types/api'
 import { useCluster } from '@/hooks/use-cluster'
 
-import { API_BASE_URL } from '../api-client'
-import { appendCurrentClusterParam } from '../current-cluster'
+import { API_BASE_URL, apiClient } from '../api-client'
+import { appendCurrentClusterParam, clusterHeader } from '../current-cluster'
 import { getWebSocketUrl } from '../subpath'
 import useWebSocket, { WebSocketMessage } from '../useWebSocket'
 import { fetchAPI } from './shared'
@@ -59,7 +59,8 @@ export const fetchPodMetrics = (
   podName: string,
   duration: string,
   container?: string,
-  labelSelector?: string
+  labelSelector?: string,
+  cluster?: string
 ): Promise<PodMetrics> => {
   let endpoint = `/prometheus/pods/${namespace}/${podName}/metrics?duration=${duration}`
   if (container) {
@@ -68,7 +69,12 @@ export const fetchPodMetrics = (
   if (labelSelector) {
     endpoint += `&labelSelector=${encodeURIComponent(labelSelector)}`
   }
-  return fetchAPI<PodMetrics>(endpoint)
+  // The cluster rides the header (the backend prefers it over the query
+  // param and apiClient would otherwise attach the global cluster).
+  return apiClient.get<PodMetrics>(
+    endpoint,
+    cluster ? { headers: clusterHeader(cluster) } : undefined
+  )
 }
 
 export const usePodMetrics = (
@@ -80,6 +86,7 @@ export const usePodMetrics = (
     container?: string
     refreshInterval?: number
     labelSelector?: string
+    cluster?: string
   }
 ) => {
   return useQuery({
@@ -90,6 +97,7 @@ export const usePodMetrics = (
       duration,
       options?.container,
       options?.labelSelector,
+      options?.cluster,
     ],
     queryFn: () =>
       fetchPodMetrics(
@@ -97,7 +105,8 @@ export const usePodMetrics = (
         podName,
         duration,
         options?.container,
-        options?.labelSelector
+        options?.labelSelector,
+        options?.cluster
       ),
     enabled: !!namespace && !!podName,
     staleTime: options?.staleTime || 10000, // 10 seconds cache
@@ -454,6 +463,7 @@ export const useLogsWebSocket = (
     sinceSeconds?: number
     enabled?: boolean
     labelSelector?: string
+    cluster?: string
     onNewLog?: (log: string) => void
     onClear?: () => void
   }
@@ -486,7 +496,7 @@ export const useLogsWebSocket = (
       params.append('labelSelector', options.labelSelector)
     }
 
-    appendCurrentClusterParam(params, currentCluster)
+    appendCurrentClusterParam(params, options?.cluster ?? currentCluster)
 
     const wsPath = `/api/v1/logs/${namespace}/${podName}/ws?${params.toString()}`
     return getWebSocketUrl(wsPath)
@@ -500,6 +510,7 @@ export const useLogsWebSocket = (
     options?.sinceSeconds,
     options?.enabled,
     options?.labelSelector,
+    options?.cluster,
     currentCluster,
   ])
 

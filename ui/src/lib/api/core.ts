@@ -31,6 +31,7 @@ import { useCluster } from '@/hooks/use-cluster'
 import { API_BASE_URL, apiClient } from '../api-client'
 import {
   appendCurrentClusterParam,
+  clusterHeader,
   withCurrentClusterPath,
 } from '../current-cluster'
 import { withSubPath } from '../subpath'
@@ -604,10 +605,15 @@ export const restartWorkload = async (
 export const createResource = async <T extends ResourceType>(
   resource: T,
   namespace: string | undefined,
-  body: ResourceTypeMap[T]
+  body: ResourceTypeMap[T],
+  opts?: { cluster?: string }
 ): Promise<ResourceTypeMap[T]> => {
   const endpoint = `/${resource}/${namespace || '_all'}`
-  return await apiClient.post<ResourceTypeMap[T]>(`${endpoint}`, body)
+  return await apiClient.post<ResourceTypeMap[T]>(
+    `${endpoint}`,
+    body,
+    opts?.cluster ? { headers: clusterHeader(opts.cluster) } : undefined
+  )
 }
 
 export const deleteResource = async <T extends ResourceType>(

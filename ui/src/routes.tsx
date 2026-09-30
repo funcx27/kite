@@ -1,15 +1,17 @@
 import { createBrowserRouter } from 'react-router-dom'
 
 import App, { StandaloneAIChatApp } from './App'
+import { ApplicationModeRoute, HomeRoute } from './components/home-route'
 import { InitCheckRoute } from './components/init-check-route'
 import { ProtectedRoute } from './components/protected-route'
 import { getSubPath } from './lib/subpath'
+import { ApplicationDetailPage } from './pages/application-detail-page'
+import { ApplicationListPage } from './pages/application-list-page'
 import { CRListPage } from './pages/cr-list-page'
 import { HelmChartDetailPage } from './pages/helm-chart-detail-page'
 import { HelmChartListPage } from './pages/helm-chart-list-page'
 import { InitializationPage } from './pages/initialization'
 import { LoginPage } from './pages/login'
-import { Overview } from './pages/overview'
 import { ResourceDetail } from './pages/resource-detail'
 import { ResourceList } from './pages/resource-list'
 import { SettingsPage } from './pages/settings'
@@ -52,11 +54,11 @@ export const router = createBrowserRouter(
       children: [
         {
           index: true,
-          element: <Overview />,
+          element: <HomeRoute />,
         },
         {
           path: 'dashboard',
-          element: <Overview />,
+          element: <HomeRoute />,
         },
         {
           path: 'settings',
@@ -81,6 +83,25 @@ export const router = createBrowserRouter(
         {
           path: 'crds/:resource/:name',
           element: <ResourceDetail />,
+        },
+        // Application module routes stay ahead of the :resource wildcards
+        // below (design §11) and are application-mode only: the professional
+        // console does not cross-link them, so direct URLs bounce home.
+        {
+          path: 'applications',
+          element: (
+            <ApplicationModeRoute>
+              <ApplicationListPage />
+            </ApplicationModeRoute>
+          ),
+        },
+        {
+          path: 'applications/:name',
+          element: (
+            <ApplicationModeRoute>
+              <ApplicationDetailPage />
+            </ApplicationModeRoute>
+          ),
         },
         {
           path: ':resource/:name',

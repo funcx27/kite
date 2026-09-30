@@ -26,6 +26,8 @@ interface PodMonitoringProps {
   containers?: Container[]
   initContainers?: Container[]
   labelSelector?: string
+  /** Overrides the global current cluster (x-cluster-name addressing) */
+  cluster?: string
 }
 
 export function PodMonitoring({
@@ -36,6 +38,7 @@ export function PodMonitoring({
   containers: _containers = [],
   initContainers = [],
   labelSelector,
+  cluster,
 }: PodMonitoringProps) {
   const containers = useMemo(() => {
     return toSimpleContainer(initContainers, _containers)
@@ -67,6 +70,7 @@ export function PodMonitoring({
       container: selectedContainer,
       refreshInterval: refreshInterval,
       labelSelector: labelSelector,
+      cluster,
     }
   )
 

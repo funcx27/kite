@@ -18,7 +18,9 @@ import { SidebarInset, SidebarProvider } from './components/ui/sidebar'
 import { Toaster } from './components/ui/sonner'
 import { AIChatProvider } from './contexts/ai-chat-context'
 import { ClusterProvider } from './contexts/cluster-context'
+import { SpaceProvider } from './contexts/space-context'
 import { TerminalProvider, useTerminal } from './contexts/terminal-context'
+import { WorkModeProvider } from './contexts/work-mode-context'
 import { useCluster } from './hooks/use-cluster'
 
 function ClusterGate({ children }: { children: ReactNode }) {
@@ -95,11 +97,15 @@ function AppContent() {
 function AppProviders({ children }: { children: ReactNode }) {
   return (
     <TerminalProvider>
-      <ClusterProvider>
-        <GlobalSearchProvider>
-          <AIChatProvider>{children}</AIChatProvider>
-        </GlobalSearchProvider>
-      </ClusterProvider>
+      <WorkModeProvider>
+        <ClusterProvider>
+          <SpaceProvider>
+            <GlobalSearchProvider>
+              <AIChatProvider>{children}</AIChatProvider>
+            </GlobalSearchProvider>
+          </SpaceProvider>
+        </ClusterProvider>
+      </WorkModeProvider>
     </TerminalProvider>
   )
 }

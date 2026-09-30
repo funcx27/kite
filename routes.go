@@ -3,11 +3,13 @@ package main
 import (
 	"net/http"
 
+	"github.com/funcx27/kite/modules/application"
 	"github.com/gin-gonic/gin"
 	promclient "github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/zxh326/kite/pkg/ai"
 	"github.com/zxh326/kite/pkg/apikeys"
+	"github.com/zxh326/kite/pkg/applicationadapter"
 	"github.com/zxh326/kite/pkg/audit"
 	"github.com/zxh326/kite/pkg/auth"
 	"github.com/zxh326/kite/pkg/cluster"
@@ -15,6 +17,7 @@ import (
 	"github.com/zxh326/kite/pkg/images"
 	"github.com/zxh326/kite/pkg/metrics"
 	"github.com/zxh326/kite/pkg/middleware"
+	"github.com/zxh326/kite/pkg/model"
 	"github.com/zxh326/kite/pkg/proxy"
 	"github.com/zxh326/kite/pkg/rbac"
 	"github.com/zxh326/kite/pkg/resources"
@@ -147,14 +150,18 @@ func registerProtectedRoutes(r *gin.RouterGroup, authHandler *auth.AuthHandler, 
 	api.GET("/clusters", authHandler.RequireAuth(), cm.GetClusters)
 	defaultAPI := api.Group("")
 	defaultAPI.Use(authHandler.RequireAuth(), middleware.ClusterMiddleware(cm))
-	registerClusterProtectedRoutes(defaultAPI, helmChartsHandler)
-
 	clusterAPI := api.Group("/_clusters/:cluster")
 	clusterAPI.Use(authHandler.RequireAuth(), middleware.ClusterMiddleware(cm))
-	registerClusterProtectedRoutes(clusterAPI, helmChartsHandler)
+
+	appDeps := applicationadapter.NewDeps(cm)
+	if err := applicationadapter.Migrate(model.DB); err != nil {
+		panic("failed to migrate application module: " + err.Error())
+	}
+	registerClusterProtectedRoutes(defaultAPI, helmChartsHandler, appDeps)
+	registerClusterProtectedRoutes(clusterAPI, helmChartsHandler, appDeps)
 }
 
-func registerClusterProtectedRoutes(api *gin.RouterGroup, helmChartsHandler *helm.HelmChartHandler) {
+func registerClusterProtectedRoutes(api *gin.RouterGroup, helmChartsHandler *helm.HelmChartHandler, appDeps *applicationadapter.Deps) {
 	api.GET("/overview", system.GetOverview)
 
 	metricsHandler := metrics.NewHandler()
@@ -189,6 +196,8 @@ func registerClusterProtectedRoutes(api *gin.RouterGroup, helmChartsHandler *hel
 
 	api.POST("/ai/chat", ai.HandleChat)
 	api.POST("/ai/continue", ai.HandleContinue)
+
+	application.RegisterRoutes(api, appDeps)
 
 	api.Use(middleware.RBACMiddleware())
 	resources.RegisterRoutes(api)
