@@ -71,6 +71,12 @@ defaultMenus['sidebar.groups.application'].push({
   icon: getResourceIconComponent('IconPackage'),
 })
 
+defaultMenus['sidebar.groups.application'].push({
+  titleKey: 'nav.buildfleet',
+  url: '/buildfleet',
+  icon: getResourceIconComponent('IconRocket'),
+})
+
 export const SIDEBAR_CONFIG_VERSION = 4
 
 function getIconName(iconComponent: ComponentType<{ className?: string }>) {
