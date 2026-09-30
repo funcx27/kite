@@ -1,0 +1,62 @@
+# In-cluster registry for push-output verification (throwaway: emptyDir)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: registry
+  namespace: gitea
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: registry}
+  template:
+    metadata:
+      labels: {app: registry}
+    spec:
+      volumes:
+        - name: auth
+          secret:
+            secretName: registry-auth
+      containers:
+        - name: registry
+          image: registry:3
+          env:
+            - name: REGISTRY_STORAGE_DELETE_ENABLED
+              value: "true"
+            - name: REGISTRY_LOG_LEVEL
+              value: warn
+            - name: OTEL_LOG_LEVEL
+              value: none
+            - name: REGISTRY_LOG_ACCESSLOG_DISABLED
+              value: "true"
+            - name: REGISTRY_OTEL_EXPORTER_OTLP_ENDPOINT
+              value: ""
+            - name: REGISTRY_AUTH
+              value: htpasswd
+            - name: REGISTRY_AUTH_HTPASSWD_REALM
+              value: buildfleet-registry
+            - name: REGISTRY_AUTH_HTPASSWD_PATH
+              value: /auth/htpasswd
+          volumeMounts:
+            - name: auth
+              mountPath: /auth
+              readOnly: true
+          ports:
+            - containerPort: 5000
+          readinessProbe:
+            httpGet: {path: /, port: 5000}
+            initialDelaySeconds: 3
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: registry
+  namespace: gitea
+spec:
+  type: NodePort
+  selector: {app: registry}
+  ports:
+    - name: http
+      port: 5000
+      targetPort: 5000
+      nodePort: 30500

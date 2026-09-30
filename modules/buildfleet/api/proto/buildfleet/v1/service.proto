@@ -1,0 +1,151 @@
+syntax = "proto3";
+
+package buildfleet.v1;
+
+option go_package = "github.com/funcx27/kite/modules/buildfleet/api/buildfleetv1;buildfleetv1";
+
+// Build accepts a build request and streams live progress events back,
+// terminating with a result or error event.
+service BuildService {
+  rpc Build(BuildRequest) returns (stream BuildEvent);
+  // Status returns the runtime pool state and in-flight builds.
+  rpc Status(StatusRequest) returns (StatusResponse);
+  // CacheStat returns per-project cache registry usage.
+  rpc CacheStat(CacheStatRequest) returns (CacheStatResponse);
+}
+
+message BuildRequest {
+  // Build context, exactly one form.
+  oneof context {
+    // Raw tarball of the build context (server pushes it to the store).
+    bytes context_tar = 1;
+    // Digest of an already-pushed context (e.g. "sha256:...").
+    string context_digest = 2;
+    // Git repository; the server clones it caller-side.
+    GitContext git = 8;
+    // HTTP(S) file URL; the server downloads it caller-side (tar/tar.gz
+    // archive or a single file), same flow as git.
+    HTTPContext http = 12;
+  }
+  string dockerfile = 3; // path inside the context, default "Dockerfile"
+  // Inline Dockerfile content: when set, it overrides any file at
+  // dockerfile path (delivered to buildkitd out-of-band via the
+  // session; the context is not consulted for it).
+  string dockerfile_content = 11;
+  map<string, string> args = 4;
+  repeated string platforms = 5;
+  string output_ref = 6; // image ref to push; empty builds without push
+  Resources resources = 7;
+  string provider = 10; // pin to a named provider; empty = preference order
+  // Per-request credentials; resolved into the solve session, never stored
+  // on the daemon or runtime (DESIGN.md §7.1).
+  repeated Credential credentials = 9;
+}
+
+message Credential {
+  string kind = 1;     // "registry" | "git" (git kind also matches http source download hosts)
+  string match = 2;    // host (longest-prefix match), e.g. registry.local:5000
+  string username = 3;
+  string password = 4;
+}
+
+message GitContext {
+  string url = 1;       // clone URL
+  string ref = 2;       // branch / tag / commit SHA; empty = HEAD
+  string subdir = 3;    // optional context root inside the repo
+  string auth_env = 4;  // server-side env var with "user:token" (http(s))
+  string mode = 5;      // "server" (default, daemon-side fetch) | "runtime" (buildkitd fetches)
+}
+
+message HTTPContext {
+  string url = 1;       // http(s) URL of a tar/tar.gz archive or a single file
+  string auth_env = 2;  // server-side env var with "user:token" (basic auth)
+  string mode = 3;      // "server" (default, daemon-side download) | "runtime" (buildkitd downloads; credentials ride the solve session)
+}
+
+message Resources {
+  double cpu = 1;    // cores; 0 = profile default
+  string memory = 2; // quantity like "4Gi"; empty = profile default
+  string ephemeral_storage = 3; // optional, k8s only; empty = default
+}
+
+message VertexEvent {
+  string digest = 1;
+  string name = 2;
+  string status = 3; // cached | running | complete | failed
+}
+
+message LogEvent {
+  string vertex = 1; // digest of the producing step
+  bytes data = 2;    // raw log chunk
+}
+
+// BuildEvent is one streamed item. Exactly one terminal event (result or
+// error) is sent last, then the stream closes.
+message BuildEvent {
+  oneof event {
+    VertexEvent vertex = 1;
+    LogEvent log = 2;
+    BuildResult result = 3;
+    string error = 4;
+    RuntimeEvent runtime = 5; // first event per attempt: which runtime serves it
+  }
+}
+
+message RuntimeEvent {
+  string runtime_id = 1;
+  string provider = 2;  // owning provider config name
+  string addr = 3;      // buildkitd address
+  int32 attempt = 4;
+}
+
+message BuildResult {
+  string digest = 1;    // image digest
+  string image_ref = 2;
+  int32 attempts = 3;   // failover attempts used
+  string ref = 4;       // requested git ref, set when the context was git
+  string commit = 5;    // resolved git commit SHA
+  string runtime_id = 6; // container id / pod name that built the image
+  string provider = 7;   // provider that ran the build
+}
+
+message StatusRequest {}
+
+message RuntimeStatus {
+  string id = 1;         // container id / pod name
+  string state = 2;      // warm | busy | draining | failed
+  string addr = 3;       // buildkitd gRPC address
+  double cpu = 4;        // instance CPU limit
+  int64 memory_bytes = 5; // instance memory limit
+  int64 idle_seconds = 6; // since last release; 0 while busy
+  string provider = 7;   // config name of the owning provider
+}
+
+message TaskStatus {
+  string runtime_id = 1;  // busy runtime running this build
+  string source = 2;      // git URL or context digest
+  string output_ref = 3;  // push target, empty = no push
+  int64 started_unix = 4; // start time
+  int32 attempt = 5;      // failover attempt number
+}
+
+message StatusResponse {
+  repeated RuntimeStatus runtimes = 1;
+  repeated TaskStatus tasks = 2;
+}
+
+message CacheStatRequest {}
+
+message CacheProjectStat {
+  string provider = 1;
+  string project = 2;    // repo path under the cache repo prefix
+  int32 tags = 3;
+  int32 layers = 4;      // referenced digests (layers + config)
+  int64 exclusive_bytes = 5; // digests only this project references
+  int64 shared_bytes = 6;    // digests shared with other projects
+}
+
+message CacheStatResponse {
+  repeated CacheProjectStat projects = 1;
+  int64 total_bytes = 2; // deduplicated sum across all projects
+}

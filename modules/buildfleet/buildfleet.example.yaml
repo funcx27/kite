@@ -1,0 +1,71 @@
+# buildfleetd 配置示例（-config 指定）
+addr: 127.0.0.1:8484      # 监听地址
+store: /var/lib/buildfleet # ArtifactStore 目录
+# dedupeWindow: 5m         # 相同构建窗口内复用上次结果（防重复触发）；缺省 0 = 仅并发去重
+runtimes: # 命名 profile；providers[].runtime 按名引用（缺省 default）。顶层 runtime: 块等价于 runtimes.default
+  default:
+    mode: rootful                   # rootful(特权+overlayfs) | rootless(无特权,native 慢)
+    image: moby/buildkit:master
+    idleTtl: 15m                    # warm 实例空闲回收；0 关闭（建议锁 digest）
+    defaultResources: {cpu: 2, memory: 4Gi, ephemeralStorage: 20Gi} # 默认实例限制（ephemeralStorage 仅 k8s）
+    hosts: # 注入实例 /etc/hosts（docker --add-host / k8s hostAliases）
+      - {ip: 10.0.0.5, names: [git.internal.example.com]}
+    insecureRegistries: # 仅声明连接方式例外的仓库；标准 https 的无需出现
+      - http://registry.local:5000     # 明文
+      - https://self-signed.example.com   # 自签 https（跳过证书校验）
+    mirrors: # 拉取源映射：key=构建引用的 host，value=按序尝试的内网源
+      docker.io:
+        - mirror.example.com/dockerhub
+  rootless: # 集群禁 privileged 时给 k8s provider 用
+    mode: rootless
+    image: moby/buildkit:master-rootless
+    defaultResources: {cpu: 2, memory: 4Gi, ephemeralStorage: 20Gi}
+
+providers: # 列表顺序 = 供给偏好：容量够时优先用排在前面的
+  - type: k8s
+    name: prod-k8s            # 日志和 Status 接口识别用；缺省 = type，列表内唯一
+    runtime: rootless         # 引用 runtimes profile；缺省 default
+    cache:                    # 自动部署集群内缓存 registry，构建层缓存跨 pod 共享
+      enabled: true
+      # image: registry:3  # 缺省同左
+      # storageClass: openebs-lvm  # 缺省 = 集群默认 StorageClass
+      # size: 20Gi
+      gcSchedule: "0 3 * * *"   # 缓存 GC，保留每项目最新缓存链；off 关闭
+    namespace: buildkit
+    kubeconfig: ~/.kube/config     # 空 = 自动检测：集群内 ServiceAccount → 集群外 KUBECONFIG / ~/.kube/config
+    portForward: false             # daemon 无法直连 pod 网络时置 true（经 apiserver 隧道）
+    readyTimeout: 90s
+    total: {cpu: 32, memory: 64Gi} # ResourceQuota 读不到时的兜底容量
+    # podTemplate: 声明式 pod 形态（注解/标签/调度/卷等，字段名同 K8s API），
+    #              叠加在 buildfleet 自有字段之下；托管集群注入任意注解的通用入口
+    # podTemplate:
+    #   labels: {fargate: buildfleet}        # 例：AWS Fargate Profile 按标签匹配
+    #   tolerations:
+    #     - {key: spot, operator: Exists}
+    #   annotations:
+    #     k8s.aliyun.com/eci-vswitch: vsw-xxx # 任何未做成参数的云注解都从这里透传
+  - type: k8s                        # 阿里云 ECI（ASK Serverless 集群或 ACK + ECI 虚拟节点）
+    name: aliyun-eci
+    runtime: rootless                # ECI 无特权环境；rootless 镜像需 seccomp Unconfined（自动加）
+    namespace: buildkit
+    kubeconfig: bin/ask.conf
+    total: {cpu: 64, memory: 128Gi}  # ASK 无 ResourceQuota，容量/预算必须靠 total
+    readyTimeout: 180s               # ECI 冷启动 10s+，放宽就绪等待
+    startupCost: 15s                 # 冷启动惩罚：warm 排序时不优先命中贵实例
+    eci:                             # 译为 k8s.aliyun.com/eci-* 注解（spot 配对错误会在加载时报错）
+      imageCache: true               # ECI 镜像缓存，buildkit 镜像大，建议开
+      spotStrategy: SpotWithPriceLimit   # SpotAsPriceGo=跟随市场价 | SpotWithPriceLimit=限价（需下一行）
+      spotPriceLimit: "0.25,0.35"        # 每 vCPU/每 GiB 每小时最高价（元）；也可只写 "0.25"
+      # instanceTypes: [ecs.c8i.xlarge]   # 缺省不配：指定后 ECI 按 ECS 规格创建、忽略 pod
+      #                                    # requests，与池的按请求规格调度冲突；不配则按
+      #                                    # requests 精确计费（ECI 自定义规格）
+  - type: docker                   # k8s 容量不足时回落到本机 docker
+    name: local-docker
+    total: {cpu: 8, memory: 16Gi}
+    # address: tcp://192.168.1.10:2375 # 远程 docker daemon；缺省=本机 socket（含 DOCKER_HOST）
+    #                                 # 注意：远程 daemon 不支持共享 buildkitd.toml，启动时会报错拒绝
+    # tls:                             # 远程 daemon 双向 TLS 认证（需 address 为 tcp://）
+    #   ca: /etc/buildfleet/ca.pem     # 服务端 CA；缺省=系统根证书
+    #   cert: /etc/buildfleet/cert.pem # 客户端证书（cert+key 成对）
+    #   key: /etc/buildfleet/key.pem
+    #   insecureSkipVerify: false      # 自签服务端时置 true

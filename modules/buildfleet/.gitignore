@@ -1,0 +1,4 @@
+/buildfleet
+*.test
+coverage.out
+bin/

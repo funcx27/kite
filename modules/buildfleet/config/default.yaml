@@ -1,0 +1,31 @@
+# buildfleetd 内嵌默认配置（-config 文件覆盖式合并：标量/map 覆盖，providers/runtimes 整体替换）
+# buildfleetd -print-config 可打印合并后的最终配置。
+addr: 127.0.0.1:8484
+store: /tmp/buildfleet-store
+dedupeWindow: "0"           # 相同构建复用窗口；0 = 仅并发去重
+
+runtimes:                  # 非 default profile 未设置的字段从 default 继承（通常只需写差异项 mode/image）
+  default:                  # providers[].runtime 缺省引用
+    mode: rootful
+    image: moby/buildkit:master
+    idleTtl: 15m
+    defaultResources: {cpu: 2, memory: 4Gi, ephemeralStorage: 20Gi}
+  rootful: {}               # 与 default 等价的显式命名预设
+  rootless:                 # 无特权（集群禁 privileged 时用）
+    mode: rootless
+    image: moby/buildkit:master-rootless
+
+providerDefaults:            # 各类型 provider 的字段级默认；providers 条目按字段覆盖
+  docker:
+    total: {cpu: 8, memory: 16Gi}
+  k8s:
+    runtime: rootless        # k8s 默认无特权，规避禁 privileged 的环境；性能敏感显式改 rootful
+    readyTimeout: 60s
+    cache:                   # 启用 cache 时的默认参数（enabled 由各 provider 显式声明）
+      image: registry:3
+      size: 20Gi
+      gcSchedule: "0 3 * * *"
+
+providers:
+  - type: docker            # 默认仅本机 docker；k8s 见 buildfleet.example.yaml
+    name: local-docker
