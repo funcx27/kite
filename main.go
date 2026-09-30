@@ -36,7 +36,7 @@ func main() {
 
 	appCtx, cancelApp := context.WithCancel(context.Background())
 
-	cm, err := initializeApp(appCtx)
+	cm, buildfleet, err := initializeApp(appCtx)
 	if err != nil {
 		cancelApp()
 		log.Fatalf("Failed to initialize app: %v", err)
@@ -45,7 +45,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              ":" + common.Port,
-		Handler:           buildEngine(cm).Handler(),
+		Handler:           buildEngine(cm, buildfleet).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
@@ -67,6 +67,19 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
-		klog.Fatalf("Failed to shutdown server: %v", err)
+		// SSE build streams routinely outlive this budget; exiting here
+		// would skip the buildfleet drain below, so log and continue.
+		klog.Errorf("Failed to shutdown server: %v", err)
+	}
+	if buildfleet != nil {
+		// Drain runs once Shutdown has returned: streams had the shutdown
+		// budget to finish, and instances the pool already marked
+		// Draining/Failed are disposed. Fresh context: appCtx is cancelled
+		// above and the shutdown budget may be spent.
+		drainCtx, cancelDrain := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancelDrain()
+		if err := buildfleet.Close(drainCtx); err != nil {
+			klog.Errorf("Failed to drain buildfleet: %v", err)
+		}
 	}
 }
