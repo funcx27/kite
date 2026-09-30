@@ -305,6 +305,29 @@ var defaultCfg []byte
 // defaults: scalars and maps override per field/key, lists (providers)
 // replace wholesale. An empty path loads the defaults alone.
 func Load(path string) (*Config, error) {
+	if path == "" {
+		return parse(nil, "")
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("config: read %s: %w", path, err)
+	}
+	return parse(b, path)
+}
+
+// LoadFromBytes parses a config document overlaid on the embedded
+// defaults, like Load on the file's contents; empty data loads the
+// defaults alone.
+func LoadFromBytes(data []byte) (*Config, error) {
+	if len(data) == 0 {
+		return parse(nil, "")
+	}
+	return parse(data, "bytes")
+}
+
+// parse overlays one YAML document (name labels it in errors; nil skips
+// the overlay) on the embedded defaults and validates the merged result.
+func parse(overlay []byte, name string) (*Config, error) {
 	// KnownFields rejects unknown keys: a typo or a moved field (e.g.
 	// provider-level mode) must fail loudly, not silently no-op.
 	dec := yaml.NewDecoder(bytes.NewReader(defaultCfg))
@@ -313,15 +336,11 @@ func Load(path string) (*Config, error) {
 	if err := dec.Decode(&c); err != nil {
 		return nil, fmt.Errorf("config: parse embedded defaults: %w", err)
 	}
-	if path != "" {
-		b, err := os.ReadFile(path)
-		if err != nil {
-			return nil, fmt.Errorf("config: read %s: %w", path, err)
-		}
-		dec := yaml.NewDecoder(bytes.NewReader(b))
+	if overlay != nil {
+		dec := yaml.NewDecoder(bytes.NewReader(overlay))
 		dec.KnownFields(true)
 		if err := dec.Decode(&c); err != nil {
-			return nil, fmt.Errorf("config: parse %s: %w", path, err)
+			return nil, fmt.Errorf("config: parse %s: %w", name, err)
 		}
 	}
 	if len(c.Providers) == 0 {

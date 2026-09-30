@@ -39,7 +39,11 @@ Kite 宿主（主 module `github.com/zxh326/kite`）之外的独立 Go module �
 - 模块 `go.mod` 声明 `go 1.26.3`（上游为 `go 1.27.1`，迁入时因宿主工具链仅到 1.26.x、
   且 docker/docker v28.5.1 要求 go >= 1.26.3 而下调），宿主为 `go 1.26.0`：接线时需先统一工具链。
 - 接线时须在装配点原样保序初始化链：config 加载 → providers → `runtime.Pool` →
-  Reconcile 认领 → store，不得重排或拆散。
+  Reconcile 认领 → store，不得重排或拆散。该链已收编进 `app.Setup`，接线直接调用；
+  `app.Drain` 负责池排水并启动 store GC 周期回收（随 ctx 取消）。
+- 为宿主嵌入新增两处上游 0c9c922 没有的代码（守护进程行为不变）：`app` 包（`Setup`
+  保序收编 `buildfleetd` 装配链，`Drain` 池排水 + store GC 接线）；`config.LoadFromBytes`
+  （供无文件路径的嵌入方使用，与 `Load` 共用合并与 KnownFields 严格校验路径）。
 - api 层不得 import `provider/k8s`：跨层共享类型放 `runtime` 中立包，不用 k8s 的
   嵌入方不应被迫引入 client-go。
 - 与上游 0c9c922 的已知代码偏差仅一处：`provider/docker/docker.go` 的容器资源字段。
