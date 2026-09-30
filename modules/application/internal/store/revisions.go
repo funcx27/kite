@@ -6,24 +6,13 @@ import (
 	"gorm.io/gorm"
 )
 
-// AppendRevision records cfg.Manifests as the next revision of the config and
-// prunes the chain beyond MaxConfigRevisions, atomically in one transaction.
-// The prune never reclaims Rev numbers, so gaps stay stable for rollback
-// semantics.
-func AppendRevision(db *gorm.DB, cfg *AppConfig, source string, operatorID uint) error {
-	if cfg == nil || cfg.ID == 0 {
-		return fmt.Errorf("append revision: config is not persisted")
-	}
-	_, err := AppendRevisionTx(db, cfg.ID, source, cfg.Manifests, operatorID)
-	return err
-}
-
 // AppendRevisionTx is the transaction-scoped primitive: it allocates the next
 // per-config Rev (MAX+1), inserts the snapshot and prunes the chain, all
-// within the caller's transaction. Callers that must keep the config update
-// and its snapshot atomic (design §3: every DB-side change records one full
-// snapshot) pass their transaction instead of using AppendRevision.
-func AppendRevisionTx(tx *gorm.DB, appConfigID uint, source string, manifests []byte, operatorID uint) (int, error) {
+// within the caller's transaction, so the config update and its snapshot stay
+// atomic (design §3: every DB-side change records one full snapshot). refRev
+// marks the revision a derived snapshot was built from (rollback: the rev its
+// content came from); 0 when not applicable.
+func AppendRevisionTx(tx *gorm.DB, appConfigID uint, source string, manifests []byte, operatorID uint, refRev int) (int, error) {
 	var maxRev int
 	if err := tx.Model(&ConfigRevision{}).
 		Where("app_config_id = ?", appConfigID).
@@ -35,6 +24,7 @@ func AppendRevisionTx(tx *gorm.DB, appConfigID uint, source string, manifests []
 		AppConfigID: appConfigID,
 		Rev:         maxRev + 1,
 		Source:      source,
+		RefRev:      refRev,
 		Manifests:   SecretJSON(manifests),
 		OperatorID:  operatorID,
 	}

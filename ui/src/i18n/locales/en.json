@@ -49,7 +49,8 @@
       "update": "Update",
       "viewDiff": "View Diff",
       "viewError": "View Error",
-      "watch": "Watch"
+      "watch": "Watch",
+      "back": "Back"
     },
     "fields": {
       "accessModes": "Access Modes",
@@ -330,6 +331,11 @@
       "tokenUrl": "https://provider.com/oauth/token",
       "userInfoUrl": "https://provider.com/oauth/userinfo",
       "usernameClaim": "e.g., preferred_username"
+    },
+    "diff": {
+      "diffOnly": "Diff only",
+      "showAllFields": "Show all fields",
+      "computing": "Computing diff…"
     }
   },
   "globalSearch": {
@@ -1452,7 +1458,7 @@
       "podNode": "NODE",
       "terminal": "Terminal",
       "logs": "Logs",
-      "podMonitoring": "Pod Monitoring",
+      "podMonitoring": "Monitoring",
       "noPods": "No pods found",
       "unauthorized": "No permission to read this section",
       "network": "Network",
@@ -1491,11 +1497,11 @@
       "summaryPorts": "ports {{count}}",
       "summaryFiles": "{{count}} config files",
       "editConfig": "Edit Config",
+      "pendingEdits": "Has unpublished edits",
       "changePreview": "Change Preview",
       "dryRunRunning": "Server-side dry-run running...",
       "createModeHint": "Pick a target cluster to create this cluster's config (Source=render) and publish it.",
       "createModeDocs": "First publish · creates {{count}} resources (create mode: never overwrites existing objects)",
-      "changePaths": "{{count}} field-level changes",
       "noChanges": "DB config matches the cluster — change the image, edit the config, or modify other settings to publish.",
       "dryRunOk": "Server-side dry-run passed (admission / quota / schema)",
       "dryRunOkCreate": "Create mode: only creates, never overwrites · server-side dry-run passed",
@@ -1509,7 +1515,10 @@
       "confirmPublish": "Confirm Publish",
       "confirmFirstPublish": "Confirm First Publish",
       "success": "Published to {{cluster}}; anchor read back from the cluster",
-      "partialFailure": "Publish finished with {{failed}} failed document(s)"
+      "partialFailure": "Publish finished with {{failed}} failed document(s)",
+      "viewDocDiff": "Click to view the YAML diff",
+      "diffDocTitle": "Live cluster → pending publish",
+      "unchangedDocs": "{{count}} more documents re-applied without content changes"
     },
     "merge": {
       "title": "Resolve Conflict · {{cluster}}",
@@ -1563,12 +1572,20 @@
       "operator": "Operator",
       "time": "Time",
       "redacted": "redacted",
-      "rollback": "Roll back",
+      "rollback": "Roll back & publish",
+      "rollbackConfirm": "Confirm rollback",
+      "rollbackHint": "View the diff of this revision against the current config, then confirm to roll back and publish",
+      "rollbackConflict": "Cluster has manual changes conflicting with the rollback — resolve them in the merge flow first",
+      "rollbackPartial": "{{failed}} resources failed to publish",
       "empty": "No revisions yet",
-      "selectHint": "Select any two revisions to compare. Rollback only writes the revision back as the pending config — it is pushed through the deploy dialog afterwards.",
+      "selectHint": "Select any two revisions to compare. Rollback opens a diff against the current config — confirm inside to write back and publish.",
       "compare": "Compare Selected",
       "diffTitle": "Rev {{from}} → Rev {{to}}",
-      "rolledBack": "Rolled back to rev {{rev}}; publish it from the deploy dialog"
+      "rolledBack": "Rolled back to rev {{rev}} and published",
+      "rollingBack": "Rolling back & publishing…",
+      "rollbackSelfHint": "This is the current revision — nothing to roll back",
+      "rollbackIdentical": "The target revision is identical to the current config — nothing to roll back.",
+      "sourceRollbackFrom": "Rolled back from #{{rev}}"
     },
     "editors": {
       "resourceRequests": "Resource Requests",
@@ -1606,9 +1623,8 @@
       "previous": "Previous",
       "next": "Next",
       "createApp": "Create Application",
-      "saveConfig": "Save Config",
       "goPublish": "Go Publish",
-      "configSaved": "Config saved to the database (not published); publish it from the deploy dialog",
+      "invalidYaml": "Invalid YAML — please check the syntax",
       "appSaved": "Application definition updated",
       "appCreated": "Application {{name}} created (undeployed); publish it from its detail page",
       "previewMode": "Rendered preview (read-only)",

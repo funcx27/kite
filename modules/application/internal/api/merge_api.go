@@ -192,7 +192,7 @@ func (h *Handler) MergeConfig(c *gin.Context) {
 		if err := tx.Model(&store.AppConfig{}).Where("id = ?", cur.ID).Updates(updates).Error; err != nil {
 			return err
 		}
-		newRev, err = store.AppendRevisionTx(tx, cur.ID, store.RevSourceMerge, data, h.deps.OperatorID(c))
+		newRev, err = store.AppendRevisionTx(tx, cur.ID, store.RevSourceMerge, data, h.deps.OperatorID(c), 0)
 		return err
 	})
 	if txErr != nil {

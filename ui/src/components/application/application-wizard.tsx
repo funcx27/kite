@@ -10,6 +10,7 @@ import type {
   ApplicationConfig,
   ApplicationConfigFile,
   ApplicationManifest,
+  ApplicationPendingChange,
   ApplicationPortSpec,
   ApplicationSpec,
 } from '@/types/application'
@@ -17,7 +18,6 @@ import {
   createApplication,
   previewApplicationRender,
   updateApplication,
-  updateApplicationConfig,
   useApplicationConfig,
 } from '@/lib/api/applications'
 import { translateError } from '@/lib/utils'
@@ -63,8 +63,9 @@ interface ApplicationWizardProps {
   namespace?: string
   /** Called after the app definition was saved (create/draft) */
   onSaved?: (app: Application) => void
-  /** cluster mode: called after [去发布] saved the config */
-  onGoPublish?: () => void
+  /** cluster mode: hands the pending config changes to the deploy dialog;
+   *  nothing is saved here — save and publish happen on [确认发布] together. */
+  onGoPublish?: (pending: ApplicationPendingChange) => void
 }
 
 interface WizardState {
@@ -142,8 +143,9 @@ function buildSpec(state: WizardState): ApplicationSpec {
 }
 
 // Creation / editing wizard (design §11): six steps, creation only saves the
-// definition (undeployed); cluster mode edits one cluster's config via
-// {spec} (form) or {manifests} (YAML mode) under the expectedRev lock.
+// definition (undeployed); cluster mode never saves on its own — [去发布]
+// hands the edited {spec}/{manifests} plus expectedRev to the deploy dialog,
+// where 确认发布 persists the revision and applies it in one request.
 export function ApplicationWizard({
   open,
   onOpenChange,
@@ -297,7 +299,34 @@ export function ApplicationWizard({
   const finishLabel =
     mode === 'cluster' ? undefined : t('applications.wizard.createApp')
 
-  const handleFinish = async (goPublish: boolean) => {
+  // Cluster mode hands the edits to the deploy dialog without saving; a
+  // cancelled publish discards them, so no revision is created behind the
+  // user's back.
+  const goPublish = () => {
+    const validationError = validate()
+    if (validationError) {
+      setError(validationError)
+      return
+    }
+    if (!app || !cluster) return
+    // Close first: the parent clears openDialog on close, which would
+    // otherwise clobber the 'deploy' state onGoPublish is about to set.
+    onOpenChange(false)
+    if (yamlMode) {
+      let manifests: ApplicationManifest[]
+      try {
+        manifests = yaml.load(yamlContent) as ApplicationManifest[]
+      } catch {
+        setError(t('applications.wizard.invalidYaml'))
+        return
+      }
+      onGoPublish?.({ manifests, expectedRev: config?.latestRev ?? 0 })
+    } else {
+      onGoPublish?.({ spec, expectedRev: config?.latestRev ?? 0 })
+    }
+  }
+
+  const handleFinish = async () => {
     const validationError = validate()
     if (validationError) {
       setError(validationError)
@@ -306,25 +335,7 @@ export function ApplicationWizard({
     setSaving(true)
     setError('')
     try {
-      if (mode === 'cluster') {
-        if (!app || !cluster) return
-        if (yamlMode) {
-          const manifests = yaml.load(yamlContent) as ApplicationManifest[]
-          await updateApplicationConfig(app.name, cluster, {
-            manifests,
-            expectedRev: config?.latestRev ?? 0,
-          })
-        } else {
-          await updateApplicationConfig(app.name, cluster, {
-            spec,
-            expectedRev: config?.latestRev ?? 0,
-          })
-        }
-        await queryClient.invalidateQueries({ queryKey: ['applications'] })
-        toast.success(t('applications.wizard.configSaved'))
-        onOpenChange(false)
-        if (goPublish) onGoPublish?.()
-      } else if (mode === 'draft' && app) {
+      if (mode === 'draft' && app) {
         const updated = await updateApplication(app.name, {
           description: state.description,
           spec,
@@ -736,29 +747,15 @@ export function ApplicationWizard({
               </Button>
             )}
             {step === STEP_COUNT && mode === 'cluster' && (
-              <>
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={saving}
-                  onClick={() => void handleFinish(false)}
-                >
-                  {t('applications.wizard.saveConfig')}
-                </Button>
-                <Button
-                  type="button"
-                  disabled={saving}
-                  onClick={() => void handleFinish(true)}
-                >
-                  {t('applications.wizard.goPublish')}
-                </Button>
-              </>
+              <Button type="button" onClick={goPublish}>
+                {t('applications.wizard.goPublish')}
+              </Button>
             )}
             {step === STEP_COUNT && mode !== 'cluster' && (
               <Button
                 type="button"
                 disabled={saving}
-                onClick={() => void handleFinish(false)}
+                onClick={() => void handleFinish()}
               >
                 {finishLabel}
               </Button>

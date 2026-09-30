@@ -18,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/funcx27/kite/modules/application/internal/render"
+	"github.com/funcx27/kite/modules/application/internal/runtime"
 	"github.com/funcx27/kite/modules/application/internal/store"
 	"github.com/funcx27/kite/modules/application/internal/syncops"
 )
@@ -25,6 +26,14 @@ import (
 type deployRequest struct {
 	DryRun bool   `json:"dryRun"`
 	Image  string `json:"image,omitempty"`
+	// Pending config changes handed over by the wizard: {spec} (form) or
+	// {manifests} (YAML mode) are persisted as a revision and applied by this
+	// one request — save and publish is a single confirm-publish action
+	// (design §6). With {dryRun:true} they are only injected in memory for
+	// validation. {expectedRev} guards the persist against concurrent saves.
+	Spec        json.RawMessage `json:"spec,omitempty"`
+	Manifests   json.RawMessage `json:"manifests,omitempty"`
+	ExpectedRev *int            `json:"expectedRev,omitempty"`
 }
 
 type deployDocResult struct {
@@ -45,18 +54,31 @@ type deployResponse struct {
 	Drift       []syncops.DocDiff `json:"drift,omitempty"`   // diff(live, anchor): cluster-side drift
 	Pending     []syncops.DocDiff `json:"pending,omitempty"` // diff(manifests, anchor): DB-side pending
 	Change      []syncops.DocDiff `json:"change,omitempty"`  // diff(live, manifests): net change to push
-	LatestRev   int               `json:"latestRev,omitempty"`
+	// Preview carries the redacted old/new document pair per changed document
+	// so the UI can render a YAML diff of the net change (design §6).
+	Preview   []deployDocPreview `json:"preview,omitempty"`
+	LatestRev int                `json:"latestRev,omitempty"`
 }
 
-// DeployConfig pushes the stored manifests to the cluster (design §6): the
-// conflict gate first (every cluster-side drift path must be merged or
+// deployDocPreview is one changed document's before/after view. Old is the
+// normalized live object (absent for creates), new the pending manifest.
+type deployDocPreview struct {
+	Kind   string          `json:"kind"`
+	Name   string          `json:"name"`
+	Action string          `json:"action"` // create | update
+	Old    json.RawMessage `json:"old,omitempty"`
+	New    json.RawMessage `json:"new,omitempty"`
+}
+
+// DeployConfig pushes the pending manifest set to the cluster (design §6):
+// the conflict gate first (every cluster-side drift path must be merged or
 // knowingly overridden), then ensure-namespace, then per-document
 // Create/Update with per-resource RBAC, ownership-checked creates and a
 // best-effort anchor read-back. {dryRun:true} runs the whole pipeline against
 // the API server with dry-run: All and touches neither cluster state beyond
-// reads nor the database. {image} persists the image change first
-// (Source=deploy-image) and deploys it with the rest; combined with
-// {dryRun:true} the image is only injected in memory for validation.
+// reads nor the database. Pending changes ({spec}/{manifests}) and {image}
+// are persisted as a revision and applied by this same request — the save
+// never happens without the publish.
 func (h *Handler) DeployConfig(c *gin.Context) {
 	app, cfg, ok := h.findAppConfig(c)
 	if !ok {
@@ -67,59 +89,172 @@ func (h *Handler) DeployConfig(c *gin.Context) {
 		h.fail(c, http.StatusBadRequest, err, "")
 		return
 	}
+	if req.Spec != nil && req.Manifests != nil {
+		h.fail(c, http.StatusBadRequest, nil, "provide either spec or manifests, not both")
+		return
+	}
 	cli, err := h.deps.ResolveCluster(c.Request.Context(), cfg.Cluster)
 	if err != nil {
 		h.fail(c, http.StatusNotFound, nil, "cluster not found or offline: "+cfg.Cluster)
 		return
 	}
-	manifests, err := store.DecodeManifests(cfg.Manifests)
+	stored, err := store.DecodeManifests(cfg.Manifests)
 	if err != nil {
 		h.fail(c, http.StatusInternalServerError, err, "")
 		return
 	}
-	if len(manifests) == 0 {
+	if len(stored) == 0 {
 		h.fail(c, http.StatusBadRequest, nil, "config has no manifests to deploy")
 		return
 	}
 
-	latestRev := 0
-	if req.Image != "" && req.DryRun {
-		// Dry-run must validate the pending image without persisting it
-		// (design §6: dry-run touches neither cluster state nor the DB).
-		manifests, err = previewImage(manifests, app.Name, req.Image)
+	var (
+		manifests []unstructured.Unstructured
+		latestRev int
+	)
+	switch {
+	case req.Spec != nil:
+		var spec render.AppSpec
+		if err := json.Unmarshal(req.Spec, &spec); err != nil {
+			h.fail(c, http.StatusBadRequest, nil, "spec must be a valid AppSpec JSON object: "+err.Error())
+			return
+		}
+		spec.Normalize(app.Name)
+		if err := spec.Validate(); err != nil {
+			h.fail(c, http.StatusBadRequest, nil, "invalid spec: "+err.Error())
+			return
+		}
+		build := func(cur *store.AppConfig, curDocs []unstructured.Unstructured) ([]unstructured.Unstructured, error) {
+			// The workload kind is immutable while the config is anchored to
+			// cluster resources (design §7): switching Deployment↔StatefulSet
+			// would leave the old controller running as unmanaged drift.
+			if anchor, err := store.DecodeManifests(cur.LastApplied); err != nil {
+				return nil, err
+			} else if len(anchor) > 0 {
+				if wl := runtime.WorkloadOf(app.Name, curDocs); wl != nil &&
+					workloadKindOf(spec.Workload.Type) != wl.GetKind() {
+					return nil, ErrWorkloadTypeChanged
+				}
+			}
+			return render.InjectFields(app.Name, cur.Namespace, curDocs, spec)
+		}
+		if req.DryRun {
+			manifests, err = render.InjectFields(app.Name, cfg.Namespace, stored, spec)
+			if err != nil {
+				h.fail(c, http.StatusBadRequest, err, "")
+				return
+			}
+			restoreMaskedSecretValues(manifests, stored)
+		} else {
+			manifests, latestRev, err = h.persistPendingConfig(c, app, cfg, req.ExpectedRev, store.RevSourceWizard, build, req.Image)
+			if !h.failPendingPersist(c, err) {
+				return
+			}
+		}
+	case req.Manifests != nil:
+		incoming, err := store.DecodeManifests(req.Manifests)
 		if err != nil {
 			h.fail(c, http.StatusBadRequest, err, "")
 			return
 		}
-	} else if req.Image != "" {
-		manifests, latestRev, err = h.persistImage(c, app, cfg, req.Image)
-		if err != nil {
+		build := func(cur *store.AppConfig, curDocs []unstructured.Unstructured) ([]unstructured.Unstructured, error) {
+			return incoming, nil
+		}
+		if req.DryRun {
+			manifests = incoming
+			restoreMaskedSecretValues(manifests, stored)
+		} else {
+			manifests, latestRev, err = h.persistPendingConfig(c, app, cfg, req.ExpectedRev, store.RevSourceYAML, build, req.Image)
+			if !h.failPendingPersist(c, err) {
+				return
+			}
+		}
+	default:
+		if req.Image != "" && req.DryRun {
+			// Dry-run must validate the pending image without persisting it
+			// (design §6: dry-run touches neither cluster state nor the DB).
+			manifests, err = previewImage(stored, app.Name, req.Image)
+			if err != nil {
+				h.fail(c, http.StatusBadRequest, err, "")
+				return
+			}
+		} else if req.Image != "" {
+			manifests, latestRev, err = h.persistImage(c, app, cfg, req.Image)
+			if err != nil {
+				h.fail(c, http.StatusBadRequest, err, "")
+				return
+			}
+		} else {
+			manifests = stored
+		}
+	}
+	// A dialog image edit on top of a pending set rides the same request and
+	// the same revision; the non-dry-run path applied it inside the persist.
+	if req.Image != "" && (req.Spec != nil || req.Manifests != nil) && req.DryRun {
+		if err := setImageOnPending(manifests, app.Name, req.Image); err != nil {
 			h.fail(c, http.StatusBadRequest, err, "")
 			return
 		}
 	}
 
-	if !req.DryRun {
+	resp, conflicts, err := h.runPublish(c, app, cfg, cli, manifests, req.DryRun)
+	var nf *namespaceForbiddenError
+	switch {
+	case errors.As(err, &nf):
+		h.fail(c, http.StatusForbidden, err, err.Error())
+		return
+	case err != nil:
+		h.fail(c, http.StatusInternalServerError, err, "")
+		return
+	}
+	if len(conflicts) > 0 {
+		c.JSON(http.StatusConflict, gin.H{
+			"error":     "cluster has manual changes conflicting with the pending publish, merge first",
+			"conflicts": conflicts,
+		})
+		return
+	}
+	resp.LatestRev = latestRev
+	c.JSON(http.StatusOK, resp)
+}
+
+// failPendingPersist translates a persistPendingConfig failure; the bool
+// result says the caller may continue.
+func (h *Handler) failPendingPersist(c *gin.Context, err error) bool {
+	if err == nil {
+		return true
+	}
+	switch {
+	case errors.Is(err, ErrConfigModified), isConcurrentWriteError(err):
+		h.fail(c, http.StatusConflict, nil, ErrConfigModified.Error())
+	case errors.Is(err, ErrWorkloadTypeChanged):
+		h.fail(c, http.StatusBadRequest, nil, ErrWorkloadTypeChanged.Error())
+	default:
+		h.fail(c, http.StatusInternalServerError, err, "")
+	}
+	return false
+}
+
+// runPublish runs the conflict-gated apply pipeline for the pending manifest
+// set (design §6): ensure-namespace, live fetch, the gate, per-document
+// Create/Update and the anchor read-back; it ends with the drift/pending/
+// change diff groups. A gate verdict is returned as conflicts without any
+// write; with dryRun the apply only validates against the API server.
+func (h *Handler) runPublish(c *gin.Context, app *store.App, cfg *store.AppConfig, cli client.Client, manifests []unstructured.Unstructured, dryRun bool) (deployResponse, []syncops.ConflictDetail, error) {
+	if !dryRun {
 		if err := h.ensureNamespace(c, cli, cfg.Cluster, cfg.Namespace); err != nil {
-			if errorsIsNamespaceForbidden(err) {
-				h.fail(c, http.StatusForbidden, nil, err.Error())
-				return
-			}
-			h.fail(c, http.StatusInternalServerError, err, "")
-			return
+			return deployResponse{}, nil, err
 		}
 	}
 
 	anchor, err := store.DecodeManifests(cfg.LastApplied)
 	if err != nil {
-		h.fail(c, http.StatusInternalServerError, err, "")
-		return
+		return deployResponse{}, nil, err
 	}
 	templates := syncops.IdentityTemplates(manifests, anchor)
 	live, err := syncops.FetchLiveDocs(c.Request.Context(), cli, templates)
 	if err != nil {
-		h.fail(c, http.StatusInternalServerError, err, "")
-		return
+		return deployResponse{}, nil, err
 	}
 
 	// The gate and the diff groups run on normalized live objects: raw ones
@@ -134,11 +269,7 @@ func (h *Handler) DeployConfig(c *gin.Context) {
 	if len(anchor) > 0 {
 		overridden := decodeScopedPaths(cfg.OverriddenPaths)
 		if conflicts := syncops.ConflictGate(manifests, anchor, liveForDiff, overridden); len(conflicts) > 0 {
-			c.JSON(http.StatusConflict, gin.H{
-				"error":     "cluster has manual changes conflicting with the pending publish, merge first",
-				"conflicts": conflicts,
-			})
-			return
+			return deployResponse{}, conflicts, nil
 		}
 	}
 
@@ -157,12 +288,12 @@ func (h *Handler) DeployConfig(c *gin.Context) {
 			failedKeys[key] = true
 			continue
 		}
-		action, applyErr := h.applyDoc(c, cli, app.Name, cfg, doc, live[key], anchorByKey[key], req.DryRun)
+		action, applyErr := h.applyDoc(c, cli, app.Name, cfg, doc, live[key], anchorByKey[key], dryRun)
 		result.Action = action
 		if applyErr != nil {
 			result.Success, result.Error = false, applyErr.Error()
 			failedKeys[key] = true
-		} else if !req.DryRun {
+		} else if !dryRun {
 			rb, rbErr := readBack(c.Request.Context(), cli, doc)
 			if rbErr != nil {
 				anchorErr = rbErr.Error()
@@ -174,39 +305,154 @@ func (h *Handler) DeployConfig(c *gin.Context) {
 	}
 
 	allOK := len(failedKeys) == 0
-	if !req.DryRun {
+	if !dryRun {
 		if err := h.persistDeployResult(c, cfg, anchor, anchorReadBacks, failedKeys, allOK, anchorErr); err != nil {
-			h.fail(c, http.StatusInternalServerError, err, "")
-			return
+			return deployResponse{}, nil, err
 		}
 	}
 
 	drift := syncops.DiffManifests(syncops.LiveList(liveForDiff, anchor), anchor)
 	pending := syncops.DiffManifests(manifests, anchor)
 	change := syncops.DiffManifests(syncops.LiveList(liveForDiff, manifests), manifests)
-	c.JSON(http.StatusOK, deployResponse{
+	return deployResponse{
 		Success:     allOK,
-		DryRun:      req.DryRun,
+		DryRun:      dryRun,
 		Results:     results,
-		Anchored:    anchorErr == "" && !req.DryRun,
+		Anchored:    anchorErr == "" && !dryRun,
 		AnchorError: anchorErr,
 		Drift:       drift,
 		Pending:     pending,
 		Change:      change,
-		LatestRev:   latestRev,
+		Preview:     previewDocs(manifests, liveForDiff, change),
+	}, nil, nil
+}
+
+// previewDocs pairs each changed document with its normalized live (old) and
+// pending (new) view, both redacted. Documents the pending set no longer
+// declares are skipped: the apply path never deletes them, so they are not
+// part of the pushed change.
+func previewDocs(manifests []unstructured.Unstructured, live map[string]*unstructured.Unstructured, change []syncops.DocDiff) []deployDocPreview {
+	byKey := make(map[string]*unstructured.Unstructured, len(manifests))
+	for i := range manifests {
+		byKey[store.DocKeyOf(&manifests[i])] = &manifests[i]
+	}
+	out := make([]deployDocPreview, 0, len(change))
+	for i := range change {
+		key := store.DocKey(change[i].Kind, change[i].Namespace, change[i].Name)
+		p := deployDocPreview{Kind: change[i].Kind, Name: change[i].Name, Action: "update"}
+		if old := live[key]; old != nil {
+			p.Old = redactedDocRaw(old)
+		} else {
+			p.Action = "create"
+		}
+		if doc := byKey[key]; doc != nil {
+			p.New = redactedDocRaw(doc)
+		}
+		if p.Old == nil && p.New == nil {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// persistPendingConfig builds the pending manifest set from the locked config
+// row and writes it as the desired state with one revision, under the
+// optimistic rev check when expectedRev is set. The masked "***" secret
+// markers are restored from the current values, and the knowing-override
+// whitelist does not survive a wholesale rewrite.
+func (h *Handler) persistPendingConfig(
+	c *gin.Context,
+	app *store.App,
+	cfg *store.AppConfig,
+	expectedRev *int,
+	source string,
+	build func(cur *store.AppConfig, curDocs []unstructured.Unstructured) ([]unstructured.Unstructured, error),
+	image string,
+) ([]unstructured.Unstructured, int, error) {
+	var (
+		docs   []unstructured.Unstructured
+		newRev int
+	)
+	txErr := h.store.DB().Transaction(func(tx *gorm.DB) error {
+		cur, err := lockConfig(tx, cfg.ID)
+		if err != nil {
+			return err
+		}
+		if expectedRev != nil {
+			var maxRev int
+			if err := tx.Model(&store.ConfigRevision{}).
+				Where("app_config_id = ?", cur.ID).
+				Select("COALESCE(MAX(rev), 0)").
+				Scan(&maxRev).Error; err != nil {
+				return err
+			}
+			if *expectedRev != maxRev {
+				return ErrConfigModified
+			}
+		}
+		curDocs, err := store.DecodeManifests(cur.Manifests)
+		if err != nil {
+			return err
+		}
+		docs, err = build(cur, curDocs)
+		if err != nil {
+			return err
+		}
+		if image != "" {
+			if err := setImageOnPending(docs, app.Name, image); err != nil {
+				return err
+			}
+		}
+		restoreMaskedSecretValues(docs, curDocs)
+		data, err := store.EncodeManifests(docs)
+		if err != nil {
+			return err
+		}
+		if err := tx.Model(&store.AppConfig{}).Where("id = ?", cur.ID).
+			Updates(map[string]interface{}{
+				"manifests":        store.SecretJSON(data),
+				"overridden_paths": store.JSONField(nil),
+			}).Error; err != nil {
+			return err
+		}
+		cfg.OverriddenPaths = store.JSONField(nil)
+		cfg.Manifests = store.SecretJSON(data)
+		newRev, err = store.AppendRevisionTx(tx, cur.ID, source, data, h.deps.OperatorID(c), 0)
+		return err
 	})
+	if txErr != nil {
+		return nil, 0, txErr
+	}
+	h.recordAudit(c, store.HistoryEntry{
+		Cluster: cfg.Cluster, ResourceType: authzResource, ResourceName: app.Name,
+		Namespace: cfg.Namespace, Operation: "update",
+		YAML: redacted(cfg.Manifests),
+	})
+	return docs, newRev, nil
+}
+
+// setImageOnPending sets the dialog image edit onto a pending manifest set,
+// mutating the workload document in place.
+func setImageOnPending(docs []unstructured.Unstructured, appName, image string) error {
+	if strings.TrimSpace(image) == "" {
+		return nil
+	}
+	wi := render.FindWorkload(appName, docs)
+	if wi < 0 {
+		return errors.New("config has no workload document to set the image on")
+	}
+	if !setImageOnWorkload(&docs[wi], image) {
+		return errors.New("config workload has no container to set the image on")
+	}
+	return nil
 }
 
 // namespaceForbiddenError marks a failed ensure-namespace permission check so
-// the caller can answer 403 instead of 500.
+// callers answer 403 instead of 500.
 type namespaceForbiddenError struct{ msg string }
 
 func (e *namespaceForbiddenError) Error() string { return e.msg }
-
-func errorsIsNamespaceForbidden(err error) bool {
-	var nf *namespaceForbiddenError
-	return errors.As(err, &nf)
-}
 
 // ensureNamespace guarantees the config namespace exists on the cluster,
 // creating it with the space marker label when missing (design §5/§6).
@@ -421,7 +667,7 @@ func (h *Handler) persistImage(c *gin.Context, app *store.App, cfg *store.AppCon
 			Updates(map[string]interface{}{"manifests": store.SecretJSON(data)}).Error; err != nil {
 			return err
 		}
-		newRev, err = store.AppendRevisionTx(tx, cur.ID, store.RevSourceDeployImage, data, h.deps.OperatorID(c))
+		newRev, err = store.AppendRevisionTx(tx, cur.ID, store.RevSourceDeployImage, data, h.deps.OperatorID(c), 0)
 		if err != nil {
 			return err
 		}
@@ -490,6 +736,16 @@ func setImageOnWorkload(doc *unstructured.Unstructured, image string) bool {
 	}
 	container["image"] = image
 	return true
+}
+
+// redactedDocRaw masks Secret values of one document for API responses
+// (design §9); the result is the redacted JSON object itself.
+func redactedDocRaw(doc *unstructured.Unstructured) json.RawMessage {
+	data, err := json.Marshal(doc.Object)
+	if err != nil {
+		return json.RawMessage(`{}`)
+	}
+	return json.RawMessage(redactJSON(data))
 }
 
 func redactedDoc(doc *unstructured.Unstructured) string {

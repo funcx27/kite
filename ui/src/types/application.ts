@@ -131,11 +131,24 @@ export interface UpdateApplicationConfigRequest {
   expectedRev: number
 }
 
+// Wizard edits handed over to the deploy dialog: persisted as a revision and
+// applied by the same confirm-publish request — never saved on their own.
+export interface ApplicationPendingChange {
+  spec?: ApplicationSpec
+  manifests?: ApplicationManifest[]
+  expectedRev: number
+}
+
 // ── Deploy (deploy_api.go) ──
 
 export interface ApplicationDeployRequest {
   dryRun?: boolean
   image?: string
+  // Pending config changes (see ApplicationPendingChange): persisted and
+  // applied by this one request; dryRun only validates them in memory.
+  spec?: ApplicationSpec
+  manifests?: ApplicationManifest[]
+  expectedRev?: number
 }
 
 export interface ApplicationDeployDocResult {
@@ -145,6 +158,15 @@ export interface ApplicationDeployDocResult {
   action: 'create' | 'update'
   success: boolean
   error?: string
+}
+
+// One changed document's redacted before/after pair for the YAML diff popup.
+export interface ApplicationDeployDocPreview {
+  kind: string
+  name: string
+  action: 'create' | 'update'
+  old?: ApplicationManifest
+  new?: ApplicationManifest
 }
 
 export interface ApplicationDocDiff {
@@ -165,6 +187,7 @@ export interface ApplicationDeployResponse {
   drift?: ApplicationDocDiff[]
   pending?: ApplicationDocDiff[]
   change?: ApplicationDocDiff[]
+  preview?: ApplicationDeployDocPreview[]
   latestRev?: number
 }
 
@@ -275,7 +298,11 @@ export interface ApplicationStatusReport {
 export interface ApplicationRevisionSummary {
   rev: number
   source: string
+  /** The revision a derived one was built from (rollback: the source rev); 0 when n/a. */
+  refRev?: number
   operatorId: number
+  /** Resolved operator display name; absent when the user no longer exists. */
+  operatorName?: string
   createdAt: string
   redacted: boolean
 }
@@ -293,9 +320,18 @@ export interface ApplicationRevisionDetail {
   manifests: ApplicationManifest[]
 }
 
+export interface ApplicationRollbackRequest {
+  rev: number
+  // One-step rollback: persist the rollback revision and publish it through
+  // the conflict-gated pipeline in the same request.
+  deploy?: boolean
+}
+
 export interface ApplicationRollbackResponse {
   latestRev: number
   rolledBackTo: number
+  success?: boolean
+  results?: ApplicationDeployDocResult[]
 }
 
 // ── Runtime view (runtime/view.go) ──

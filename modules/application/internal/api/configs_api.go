@@ -141,7 +141,7 @@ func (h *Handler) CreateConfig(c *gin.Context) {
 		if err := tx.Create(&cfg).Error; err != nil {
 			return err
 		}
-		r, err := store.AppendRevisionTx(tx, cfg.ID, source, manifests, h.deps.OperatorID(c))
+		r, err := store.AppendRevisionTx(tx, cfg.ID, source, manifests, h.deps.OperatorID(c), 0)
 		if err != nil {
 			return err
 		}
@@ -349,7 +349,7 @@ func (h *Handler) UpdateConfig(c *gin.Context) {
 			return err
 		}
 		cur.OverriddenPaths = store.JSONField(nil)
-		newRev, err = store.AppendRevisionTx(tx, cur.ID, source, cur.Manifests, h.deps.OperatorID(c))
+		newRev, err = store.AppendRevisionTx(tx, cur.ID, source, cur.Manifests, h.deps.OperatorID(c), 0)
 		if err != nil {
 			return err
 		}

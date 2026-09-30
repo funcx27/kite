@@ -92,13 +92,16 @@ func (AppConfig) TableName() string {
 // ConfigRevision is the per-config version snapshot written on every DB-side
 // change; Rev is monotonic per AppConfig and gaps are never reused.
 type ConfigRevision struct {
-	ID          uint       `json:"id" gorm:"primarykey"`
-	AppConfigID uint       `json:"appConfigId" gorm:"not null;uniqueIndex:idx_config_revisions_config_rev,priority:1"`
-	Rev         int        `json:"rev" gorm:"not null;uniqueIndex:idx_config_revisions_config_rev,priority:2"`
-	Source      string     `json:"source" gorm:"type:varchar(20);not null"`
-	Manifests   SecretJSON `json:"manifests" gorm:"type:text"`                 // snapshot encrypted at rest (Secret values)
-	OperatorID  uint       `json:"operatorId" gorm:"not null;index;default:0"` // no FK: history survives user deletion
-	CreatedAt   time.Time  `json:"createdAt"`
+	ID          uint   `json:"id" gorm:"primarykey"`
+	AppConfigID uint   `json:"appConfigId" gorm:"not null;uniqueIndex:idx_config_revisions_config_rev,priority:1"`
+	Rev         int    `json:"rev" gorm:"not null;uniqueIndex:idx_config_revisions_config_rev,priority:2"`
+	Source      string `json:"source" gorm:"type:varchar(20);not null"`
+	// RefRev marks the revision a derived one was built from (rollback: the
+	// rev its content came from); 0 when not applicable.
+	RefRev     int        `json:"refRev" gorm:"not null;default:0"`
+	Manifests  SecretJSON `json:"manifests" gorm:"type:text"`                 // snapshot encrypted at rest (Secret values)
+	OperatorID uint       `json:"operatorId" gorm:"not null;index;default:0"` // no FK: history survives user deletion
+	CreatedAt  time.Time  `json:"createdAt"`
 }
 
 func (ConfigRevision) TableName() string {

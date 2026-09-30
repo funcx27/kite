@@ -65,6 +65,28 @@ func (d *Deps) OperatorID(c *gin.Context) uint {
 	return user.ID
 }
 
+// UserNames resolves user IDs to their display name (Name, falling back to
+// Username); unknown or deleted IDs are absent from the map.
+func (d *Deps) UserNames(ids []uint) map[uint]string {
+	out := make(map[uint]string, len(ids))
+	if len(ids) == 0 {
+		return out
+	}
+	var users []model.User
+	if err := model.DB.Where("id IN ?", ids).Find(&users).Error; err != nil {
+		klog.Errorf("Failed to resolve user names: %v", err)
+		return out
+	}
+	for _, u := range users {
+		name := u.Name
+		if name == "" {
+			name = u.Username
+		}
+		out[u.ID] = name
+	}
+	return out
+}
+
 func (d *Deps) DB() *gorm.DB {
 	return model.DB
 }

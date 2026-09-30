@@ -15,6 +15,7 @@ import type {
   ApplicationPreviewResponse,
   ApplicationRevisionDetail,
   ApplicationRevisionListResponse,
+  ApplicationRollbackRequest,
   ApplicationRollbackResponse,
   ApplicationRuntimeView,
   ApplicationStatusReport,
@@ -323,16 +324,16 @@ export const fetchApplicationRevision = (
     { method: 'GET' }
   )
 
-// Writes the revision back as the pending config (Source=rollback); the
-// cluster is only touched through the subsequent conflict-gated publish.
+// {rev, deploy:true} rolls back and publishes in one request; without deploy
+// the revision manifests only become the pending config.
 export const rollbackApplicationConfig = (
   name: string,
   cluster: string,
-  rev: number
+  req: ApplicationRollbackRequest
 ) =>
   applicationRequest<ApplicationRollbackResponse>(
     `/${encodeURIComponent(name)}/configs/${encodeURIComponent(cluster)}/rollback`,
-    { method: 'POST', body: JSON.stringify({ rev }) }
+    { method: 'POST', body: JSON.stringify(req) }
   )
 
 // ── Preview ──

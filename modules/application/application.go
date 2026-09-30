@@ -33,6 +33,9 @@ type Deps interface {
 	Authorize(c *gin.Context, resource, verb, cluster, namespace string) bool
 	// OperatorID returns the ID of the authenticated user of the request.
 	OperatorID(c *gin.Context) uint
+	// UserNames resolves user IDs to display names for history views; deleted
+	// or unknown IDs are simply absent from the map.
+	UserNames(ids []uint) map[uint]string
 	// RecordHistory persists an audit entry for a state change.
 	RecordHistory(entry HistoryEntry)
 	// DB returns the host database handle for the module's own tables.

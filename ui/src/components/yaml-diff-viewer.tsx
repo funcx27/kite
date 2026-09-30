@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import * as yaml from 'js-yaml'
 import type { editor as monacoEditor } from 'monaco-editor'
 import { useTranslation } from 'react-i18next'
@@ -44,6 +44,12 @@ interface YamlDiffViewerProps {
   title?: string
   /** Height of the diff editor */
   height?: number
+  /** Offer the diff-only view: collapsing unchanged regions is the initial
+   *  state and a header toggle switches to the full YAML. When omitted the
+   *  viewer always renders the full content (history compare behavior). */
+  hideUnchanged?: boolean
+  /** Extra header control (e.g. a confirm button for a rollback flow). */
+  action?: ReactNode
 }
 
 type DiffMode = 'previous-vs-modified' | 'current-vs-modified'
@@ -58,6 +64,8 @@ export function YamlDiffViewer({
   isRollingBack = false,
   title = 'YAML Diff',
   height = 600,
+  hideUnchanged,
+  action,
 }: YamlDiffViewerProps) {
   const { t } = useTranslation()
   const { actualTheme, colorTheme } = useAppearance()
@@ -69,9 +77,17 @@ export function YamlDiffViewer({
   )
   const editorRef = useRef<monacoEditor.IStandaloneDiffEditor | null>(null)
   const [diffMode, setDiffMode] = useState<DiffMode>('previous-vs-modified')
+  const [collapseUnchanged, setCollapseUnchanged] = useState(
+    hideUnchanged ?? false
+  )
+  // The diff (and with it the collapsed unchanged regions) is computed
+  // asynchronously by Monaco; until the first computation lands the editor
+  // would flash the full expanded documents, so it stays covered.
+  const [diffReady, setDiffReady] = useState(false)
 
   const handleEditorDidMount = (editor: monacoEditor.IStandaloneDiffEditor) => {
     editorRef.current = editor
+    editor.onDidUpdateDiff(() => setDiffReady(true))
   }
 
   // Remove status field from YAML content
@@ -125,6 +141,10 @@ export function YamlDiffViewer({
 
   const { original: leftContent, modified: rightContent } = getDiffContent()
 
+  useEffect(() => {
+    setDiffReady(false)
+  }, [leftContent, rightContent])
+
   // Handle rollback button clicks
   const handleRollbackClick = (yamlContent: string) => {
     if (onRollback) {
@@ -139,6 +159,17 @@ export function YamlDiffViewer({
           <DialogTitle className="flex items-center justify-between">
             <span className="text-lg font-bold">{title}</span>
             <div className="flex items-center gap-2 mr-4">
+              {hideUnchanged !== undefined && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCollapseUnchanged((v) => !v)}
+                >
+                  {collapseUnchanged
+                    ? t('common.diff.showAllFields')
+                    : t('common.diff.diffOnly')}
+                </Button>
+              )}
               {current && (
                 <>
                   {diffMode === 'current-vs-modified' && (
@@ -197,12 +228,19 @@ export function YamlDiffViewer({
                   </Select>
                 </>
               )}
+              {action}
             </div>
           </DialogTitle>
         </DialogHeader>
-        <div className="flex-1 min-h-0">
+        <div className="relative flex-1 min-h-0">
+          {!diffReady && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center gap-2 bg-background/70 text-sm text-muted-foreground">
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-primary" />
+              {t('common.diff.computing')}
+            </div>
+          )}
           <MonacoDiffEditor
-            key={`yaml-diff-viewer-${colorTheme}-${actualTheme}-${backgroundColor}`}
+            key={`yaml-diff-viewer-${colorTheme}-${actualTheme}-${backgroundColor}-${collapseUnchanged}`}
             height={height}
             language="yaml"
             loading={
@@ -240,6 +278,15 @@ export function YamlDiffViewer({
               renderOverviewRuler: true,
               overviewRulerBorder: true,
               overviewRulerLanes: 2,
+              hideUnchangedRegions: {
+                enabled: collapseUnchanged,
+                // Collapsed bars stay clickable per region, so a small
+                // context plus a low minimum keeps untouched YAML hidden
+                // while each hunk can still be peeked at.
+                contextLineCount: 4,
+                minimumLineCount: 8,
+                revealLineCount: 20,
+              },
             }}
             onMount={handleEditorDidMount}
             original={leftContent}

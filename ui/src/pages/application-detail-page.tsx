@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { Link, useParams } from 'react-router-dom'
 import { toast } from 'sonner'
 
+import type { ApplicationPendingChange } from '@/types/application'
 import {
   createApplicationConfig,
   fetchApplicationConfig,
@@ -45,7 +46,7 @@ type DialogName =
 
 // Application detail page (design §11): cluster-tab layout. The deploy
 // dialog is the only modify+publish entry; merge is reachable only from the
-// conflict states; history rollback writes back as pending.
+// conflict states; history rollback persists and publishes in one confirm.
 export function ApplicationDetailPage() {
   const { t } = useTranslation()
   const { name } = useParams<{ name: string }>()
@@ -59,6 +60,10 @@ export function ApplicationDetailPage() {
   const [wizardMode, setWizardMode] = useState<ApplicationWizardMode>('cluster')
   const [copyTarget, setCopyTarget] = useState('')
   const [lastAppliedYaml, setLastAppliedYaml] = useState('')
+  // Wizard edits waiting for [确认发布]: carried into the deploy dialog and
+  // only persisted together with the publish; cancelling discards them.
+  const [pendingChange, setPendingChange] =
+    useState<ApplicationPendingChange | null>(null)
   // Sticky once the first-publish flow starts: creating the cluster config
   // flips the app to "deployed" mid-flow, which must not close the dialog.
   const [firstPublishStarted, setFirstPublishStarted] = useState(false)
@@ -216,8 +221,12 @@ export function ApplicationDetailPage() {
             app={app}
             cluster={current.cluster}
             open={openDialog === 'deploy' && !firstPublishStarted}
+            pending={pendingChange ?? undefined}
             onOpenChange={(nextOpen) => {
-              if (!nextOpen) setOpenDialog(null)
+              if (!nextOpen) {
+                setOpenDialog(null)
+                setPendingChange(null)
+              }
             }}
             onEditConfig={openWizardForEdit}
             onResolveConflict={() => setOpenDialog('merge')}
@@ -251,7 +260,6 @@ export function ApplicationDetailPage() {
             onOpenChange={(nextOpen) => {
               if (!nextOpen) setOpenDialog(null)
             }}
-            onRolledBack={() => setOpenDialog('deploy')}
           />
         </>
       )}
@@ -283,7 +291,10 @@ export function ApplicationDetailPage() {
         mode={wizardMode}
         app={app}
         cluster={wizardMode === 'cluster' ? current?.cluster : undefined}
-        onGoPublish={() => setOpenDialog('deploy')}
+        onGoPublish={(pending) => {
+          setPendingChange(pending)
+          setOpenDialog('deploy')
+        }}
       />
 
       <Dialog

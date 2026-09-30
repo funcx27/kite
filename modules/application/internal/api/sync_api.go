@@ -151,7 +151,7 @@ func (h *Handler) SyncConfig(c *gin.Context) {
 		}).Error; err != nil {
 			return err
 		}
-		newRev, err = store.AppendRevisionTx(tx, cur.ID, store.RevSourceSync, data, h.deps.OperatorID(c))
+		newRev, err = store.AppendRevisionTx(tx, cur.ID, store.RevSourceSync, data, h.deps.OperatorID(c), 0)
 		return err
 	})
 	if txErr != nil {
