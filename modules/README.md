@@ -43,9 +43,10 @@ Kite 宿主（主 module `github.com/zxh326/kite`）之外的独立 Go module �
   `go 1.26.3`，两个 module 工具链一致。
 - 接线时须在装配点原样保序初始化链：config 加载 → providers → `runtime.Pool` →
   Reconcile 认领 → store，不得重排或拆散。该链已收编进 `app.Setup`，接线直接调用；
-  `app.Drain` 负责池排水并启动 store GC 周期回收（随 ctx 取消）。
+  `app.Setup` 以装配 ctx 启动 store GC 周期回收（宿主与守护进程均传入进程级长生命
+  周期 ctx，随 ctx 取消停止）；`app.Drain` 负责池排水并执行终局 GC 一趟。
 - 为宿主嵌入与接线新增三处上游 0c9c922 没有的代码（守护进程行为不变）：`app` 包
-  （`Setup` 保序收编 `buildfleetd` 装配链，`Drain` 池排水 + store GC 接线）；
+  （`Setup` 保序收编 `buildfleetd` 装配链并启动 store GC，`Drain` 池排水 + 终局 GC）；
   `config.LoadFromBytes`（供无文件路径的嵌入方使用，与 `Load` 共用合并与 KnownFields
   严格校验路径）；REST/SSE 门面 `pkg/buildfleetadapter`（`POST /builds` 以 SSE 流式
   回传构建进度，`GET /status`、`GET /cachestat` 查询，挂载于宿主 RBAC 中间件之前、

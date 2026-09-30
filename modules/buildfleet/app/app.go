@@ -105,19 +105,27 @@ func Setup(ctx context.Context, cfg *config.Config) (*App, error) {
 			k8sCacheProviders[pc.Name] = providers[i].(*k8s.Provider)
 		}
 	}
+	// Periodic store GC runs on the setup context: hosts and the daemon
+	// pass a long-lived ctx here, so recycling repeats for the process
+	// lifetime instead of only during a shutdown drain window.
+	go a.runGC(ctx)
 	if len(k8sCacheProviders) > 0 {
 		a.CacheStatFn = cacheStatFn(k8sCacheProviders)
 	}
 	return a, nil
 }
 
-// Drain disposes draining/failed pool runtimes, then starts the store GC
-// loop (one pass immediately, then per gcInterval) until ctx is done.
+// Drain disposes draining/failed pool runtimes, then runs one final store GC
+// pass bounded by ctx. Periodic recycling is already running on the Setup
+// context; this pass only covers blobs that became unreferenced at shutdown.
 func (a *App) Drain(ctx context.Context) error {
 	if err := a.Pool.Drain(ctx); err != nil {
 		return fmt.Errorf("drain pool: %w", err)
 	}
-	go a.runGC(ctx)
+	gc := store.NewGC(a.Store, gcTTL)
+	if err := gc.Run(ctx); err != nil {
+		return fmt.Errorf("store gc: %w", err)
+	}
 	return nil
 }
 
