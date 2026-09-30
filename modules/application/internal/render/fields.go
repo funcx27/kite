@@ -32,7 +32,7 @@ func ExtractFields(app string, docs []unstructured.Unstructured) AppSpec {
 			spec.Workload.Requests = extractQuantity(c, "requests")
 			spec.Workload.Limits = extractQuantity(c, "limits")
 			spec.MountPoints = extractMountPoints(c)
-			spec.ConfigFiles = extractConfigFiles(app, docs, subPathMounts(c))
+			spec.ConfigFiles = extractConfigFiles(app, docs, orderedSubPathMounts(c))
 		}
 	}
 	if spec.ConfigFiles == nil {
@@ -139,11 +139,20 @@ func extractMountPoints(container map[string]interface{}) []string {
 	return out
 }
 
-// subPathMounts maps subPath → mount point directory for the module-owned
-// config/secret volume mounts.
-func subPathMounts(container map[string]interface{}) map[string]string {
+// subPathMount is one module-owned config/secret volume mount.
+type subPathMount struct {
+	subPath string
+	dir     string
+	secret  bool
+}
+
+// orderedSubPathMounts lists the module-owned config/secret volume mounts in
+// container order. The list lives in the pod template, so ExtractFields must
+// hand it back in the original order — a reorder alone would change the
+// template hash and restart the workload on an unrelated edit.
+func orderedSubPathMounts(container map[string]interface{}) []subPathMount {
 	raw, _, _ := unstructured.NestedSlice(container, "volumeMounts")
-	out := map[string]string{}
+	var out []subPathMount
 	for _, e := range raw {
 		m, ok := store.AsMap(e)
 		if !ok {
@@ -152,18 +161,36 @@ func subPathMounts(container map[string]interface{}) map[string]string {
 		name, _ := m["name"].(string)
 		subPath, _ := m["subPath"].(string)
 		mountPath, _ := m["mountPath"].(string)
-		if (name == configVolumeName || name == secretVolumeName) && subPath != "" && mountPath != "" {
-			out[subPath] = path.Dir(mountPath)
+		if name != configVolumeName && name != secretVolumeName {
+			continue
 		}
+		if subPath == "" || mountPath == "" {
+			continue
+		}
+		out = append(out, subPathMount{subPath: subPath, dir: path.Dir(mountPath), secret: name == secretVolumeName})
+	}
+	return out
+}
+
+func subPathMounts(container map[string]interface{}) map[string]string {
+	out := map[string]string{}
+	for _, m := range orderedSubPathMounts(container) {
+		out[m.subPath] = m.dir
 	}
 	return out
 }
 
 // extractConfigFiles reads the app config map (data) and secret
 // (stringData, falling back to base64-decoded data) documents (design §9).
-// Files without a matching mount get an empty MountPath.
-func extractConfigFiles(app string, docs []unstructured.Unstructured, mounts map[string]string) []ConfigFile {
-	var out []ConfigFile
+// Mounted files follow the workload's volumeMounts order so a form round trip
+// never reorders them; files without a matching mount get an empty MountPath
+// and keep the name-sorted order.
+func extractConfigFiles(app string, docs []unstructured.Unstructured, mounts []subPathMount) []ConfigFile {
+	type fileKey struct {
+		secret bool
+		name   string
+	}
+	values := map[fileKey]string{}
 	for i := range docs {
 		d := &docs[i]
 		var secret bool
@@ -174,36 +201,44 @@ func extractConfigFiles(app string, docs []unstructured.Unstructured, mounts map
 		default:
 			continue
 		}
-		var values map[string]interface{}
+		var data map[string]interface{}
 		if secret {
-			values, _, _ = unstructured.NestedMap(d.Object, "stringData")
-			if len(values) == 0 {
-				values = decodeSecretData(d)
+			data, _, _ = unstructured.NestedMap(d.Object, "stringData")
+			if len(data) == 0 {
+				data = decodeSecretData(d)
 			}
 		} else {
-			values, _, _ = unstructured.NestedMap(d.Object, "data")
+			data, _, _ = unstructured.NestedMap(d.Object, "data")
 		}
-		for _, k := range sortedKeys(values) {
-			content, _ := values[k].(string)
-			out = append(out, ConfigFile{Name: k, MountPath: mounts[k], Content: content, Secret: secret})
+		for k, v := range data {
+			content, _ := v.(string)
+			values[fileKey{secret, k}] = content
 		}
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Secret != out[j].Secret {
-			return !out[i].Secret
+	var out []ConfigFile
+	used := map[fileKey]bool{}
+	for _, m := range mounts {
+		k := fileKey{m.secret, m.subPath}
+		content, ok := values[k]
+		if !ok || used[k] {
+			continue
 		}
-		return out[i].Name < out[j].Name
+		used[k] = true
+		out = append(out, ConfigFile{Name: m.subPath, MountPath: m.dir, Content: content, Secret: m.secret})
+	}
+	var rest []ConfigFile
+	for k, content := range values {
+		if !used[k] {
+			rest = append(rest, ConfigFile{Name: k.name, Content: content, Secret: k.secret})
+		}
+	}
+	sort.Slice(rest, func(i, j int) bool {
+		if rest[i].Secret != rest[j].Secret {
+			return !rest[i].Secret
+		}
+		return rest[i].Name < rest[j].Name
 	})
-	return out
-}
-
-func sortedKeys(m map[string]interface{}) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
+	return append(out, rest...)
 }
 
 func decodeSecretData(doc *unstructured.Unstructured) map[string]interface{} {
