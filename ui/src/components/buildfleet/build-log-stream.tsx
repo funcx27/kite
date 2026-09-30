@@ -7,13 +7,13 @@ import {
 } from '@tabler/icons-react'
 import { useTranslation } from 'react-i18next'
 
-import { startBuild } from '@/lib/api'
-import { stripAnsi } from '@/lib/ansi-parser'
 import {
   BuildRequest,
   BuildResultEvent,
   BuildVertexStatus,
 } from '@/types/buildfleet'
+import { stripAnsi } from '@/lib/ansi-parser'
+import { startBuild } from '@/lib/api'
 import {
   Collapsible,
   CollapsibleContent,
@@ -122,7 +122,8 @@ export function BuildLogStream({
     startBuild(
       session.request,
       {
-        onVertex: (event) => upsertVertex(event.digest, event.name, event.status),
+        onVertex: (event) =>
+          upsertVertex(event.digest, event.name, event.status),
         onLog: (event) => appendLog(event.vertex, event.data),
         onResult: (event) => {
           if (!cancelled) callbacksRef.current.onResult(event)
@@ -134,11 +135,7 @@ export function BuildLogStream({
       controller.signal
     )
       .catch((err: unknown) => {
-        if (
-          !cancelled &&
-          err instanceof Error &&
-          err.name !== 'AbortError'
-        ) {
+        if (!cancelled && err instanceof Error && err.name !== 'AbortError') {
           callbacksRef.current.onError(err.message)
         }
       })
@@ -169,9 +166,7 @@ export function BuildLogStream({
     <div className="flex flex-col gap-2">
       {vertices.length === 0 && (
         <p className="py-8 text-center text-sm text-muted-foreground">
-          {streaming
-            ? t('buildfleet.log.waiting')
-            : t('buildfleet.log.idle')}
+          {streaming ? t('buildfleet.log.waiting') : t('buildfleet.log.idle')}
         </p>
       )}
       {vertices.length > 0 && (
@@ -212,7 +207,9 @@ export function BuildLogStream({
                   {text && (
                     <>
                       {' · '}
-                      {t('buildfleet.log.lines', { lines: text.split('\n').length })}
+                      {t('buildfleet.log.lines', {
+                        lines: text.split('\n').length,
+                      })}
                     </>
                   )}
                 </span>

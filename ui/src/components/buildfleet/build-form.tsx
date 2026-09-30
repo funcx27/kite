@@ -208,7 +208,9 @@ export function BuildForm({ running, onSubmit }: BuildFormProps) {
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => setArgs((prev) => [...prev, { key: '', value: '' }])}
+              onClick={() =>
+                setArgs((prev) => [...prev, { key: '', value: '' }])
+              }
             >
               <IconPlus className="size-4" />
               {t('buildfleet.form.addArg')}
@@ -242,9 +244,7 @@ export function BuildForm({ running, onSubmit }: BuildFormProps) {
 
         <Button type="button" disabled={!canSubmit} onClick={handleSubmit}>
           {running && <IconLoader2 className="size-4 animate-spin" />}
-          {running
-            ? t('buildfleet.form.building')
-            : t('buildfleet.form.start')}
+          {running ? t('buildfleet.form.building') : t('buildfleet.form.start')}
         </Button>
       </CardContent>
     </Card>

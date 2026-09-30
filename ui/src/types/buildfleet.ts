@@ -1,11 +1,7 @@
 // Types mirroring pkg/buildfleetadapter/adapter.go (SSE events + status JSON).
 
 export type BuildVertexStatus =
-  | 'pending'
-  | 'running'
-  | 'complete'
-  | 'cached'
-  | 'failed'
+  'pending' | 'running' | 'complete' | 'cached' | 'failed'
 
 export interface BuildRuntimeEvent {
   runtimeId: string

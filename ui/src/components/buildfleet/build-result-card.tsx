@@ -3,12 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { BuildResultEvent } from '@/types/buildfleet'
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 
 interface BuildResultCardProps {
   result: BuildResultEvent | null
@@ -61,9 +56,7 @@ export function BuildResultCard({ result, error }: BuildResultCardProps) {
           ) : (
             <IconCircleCheck className="size-5 text-green-600" />
           )}
-          {error
-            ? t('buildfleet.result.failed')
-            : t('buildfleet.result.title')}
+          {error ? t('buildfleet.result.failed') : t('buildfleet.result.title')}
         </CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-2">

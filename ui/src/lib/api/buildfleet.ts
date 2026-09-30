@@ -1,6 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
 
-import { readAIChatSSEStream } from '@/components/ai-chat/ai-chat-stream'
 import {
   BuildErrorEvent,
   BuildLogEvent,
@@ -11,6 +10,7 @@ import {
   BuildVertexEvent,
   CacheStat,
 } from '@/types/buildfleet'
+import { readAIChatSSEStream } from '@/components/ai-chat/ai-chat-stream'
 
 import { apiClient } from '../api-client'
 import { appendCurrentClusterHeader } from '../current-cluster'
@@ -47,9 +47,7 @@ export async function startBuild(
 
   if (!response.ok) {
     const errData = await response.json().catch(() => ({}))
-    throw new Error(
-      errData.error || `HTTP error! status: ${response.status}`
-    )
+    throw new Error(errData.error || `HTTP error! status: ${response.status}`)
   }
 
   await readAIChatSSEStream(response, (eventType, data) => {

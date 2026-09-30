@@ -1,13 +1,8 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { BuildForm } from '@/components/buildfleet/build-form'
-import {
-  BuildLogStream,
-  BuildSession,
-} from '@/components/buildfleet/build-log-stream'
-import { BuildResultCard } from '@/components/buildfleet/build-result-card'
-import { BuildStatusSection } from '@/components/buildfleet/build-status-section'
+import { BuildRequest, BuildResultEvent } from '@/types/buildfleet'
+import { usePageTitle } from '@/hooks/use-page-title'
 import {
   Card,
   CardContent,
@@ -15,8 +10,13 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
-import { usePageTitle } from '@/hooks/use-page-title'
-import { BuildRequest, BuildResultEvent } from '@/types/buildfleet'
+import { BuildForm } from '@/components/buildfleet/build-form'
+import {
+  BuildLogStream,
+  BuildSession,
+} from '@/components/buildfleet/build-log-stream'
+import { BuildResultCard } from '@/components/buildfleet/build-result-card'
+import { BuildStatusSection } from '@/components/buildfleet/build-status-section'
 
 export function BuildFleetPage() {
   const { t } = useTranslation()

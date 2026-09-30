@@ -2,8 +2,8 @@ import { useMemo } from 'react'
 import { IconDatabase, IconRefresh, IconServer } from '@tabler/icons-react'
 import { useTranslation } from 'react-i18next'
 
-import { useBuildStatus, useCacheStat, noCacheRegistryError } from '@/lib/api'
 import { BuildRuntimeStatus } from '@/types/buildfleet'
+import { noCacheRegistryError, useBuildStatus, useCacheStat } from '@/lib/api'
 import { formatBytes, formatDate } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
@@ -66,8 +66,11 @@ function formatIdle(seconds: number): string {
 export function BuildStatusSection() {
   const { t } = useTranslation()
   const { data: status, refetch: refetchStatus } = useBuildStatus()
-  const { data: cacheStat, error: cacheError, refetch: refetchCache } =
-    useCacheStat()
+  const {
+    data: cacheStat,
+    error: cacheError,
+    refetch: refetchCache,
+  } = useCacheStat()
 
   const providerStats = useMemo(
     () => groupProviderCapacity(status?.runtimes ?? []),
@@ -85,7 +88,9 @@ export function BuildStatusSection() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">{t('buildfleet.status.title')}</h2>
+        <h2 className="text-lg font-semibold">
+          {t('buildfleet.status.title')}
+        </h2>
         <Button variant="outline" size="sm" onClick={refresh}>
           <IconRefresh className="size-4" />
           {t('common.actions.refresh')}
@@ -205,9 +210,7 @@ export function BuildStatusSection() {
                 </TableHeader>
                 <TableBody>
                   {cacheStat!.projects.map((project) => (
-                    <TableRow
-                      key={`${project.provider}/${project.project}`}
-                    >
+                    <TableRow key={`${project.provider}/${project.project}`}>
                       <TableCell>{project.provider}</TableCell>
                       <TableCell className="font-mono text-xs">
                         {project.project}
