@@ -45,12 +45,18 @@ Kite 宿主（主 module `github.com/zxh326/kite`）之外的独立 Go module �
   Reconcile 认领 → store，不得重排或拆散。该链已收编进 `app.Setup`，接线直接调用；
   `app.Setup` 以装配 ctx 启动 store GC 周期回收（宿主与守护进程均传入进程级长生命
   周期 ctx，随 ctx 取消停止）；`app.Drain` 负责池排水并执行终局 GC 一趟。
-- 为宿主嵌入与接线新增三处上游 0c9c922 没有的代码（守护进程行为不变）：`app` 包
-  （`Setup` 保序收编 `buildfleetd` 装配链并启动 store GC，`Drain` 池排水 + 终局 GC）；
+- 为宿主嵌入与接线新增三处上游 0c9c922 没有的代码：`app` 包（`Setup` 保序收编
+  `buildfleetd` 装配链并启动 store GC，`Drain` 池排水 + 终局 GC）；
   `config.LoadFromBytes`（供无文件路径的嵌入方使用，与 `Load` 共用合并与 KnownFields
   严格校验路径）；REST/SSE 门面 `pkg/buildfleetadapter`（`POST /builds` 以 SSE 流式
   回传构建进度，`GET /status`、`GET /cachestat` 查询，挂载于宿主 RBAC 中间件之前、
   逐请求自授权 `builds` 伪资源）。
+- 守护进程行为有一处变化：改经 `app.Setup` 装配后，`buildfleetd` 同样随装配 ctx
+  启动周期 store GC（上游 0c9c922 的独立守护进程从不运行 GC）。
+- 前端导航注册是对契约第 5 条的一处已登记偏差：菜单注册与已保存偏好迁移逻辑同在
+  `ui/src/contexts/sidebar-config-defaults.ts`，无法 fork，故就地新增 buildfleet 菜单项
+  并把 `SIDEBAR_CONFIG_VERSION` v4→v5（沿用 2bdd7c4 既有惯例，使已保存的 sidebar
+  偏好能感知新菜单项）。
 - api 层不得 import `provider/k8s`：跨层共享类型放 `runtime` 中立包，不用 k8s 的
   嵌入方不应被迫引入 client-go。
 - 与上游 0c9c922 的已知代码偏差仅一处：`provider/docker/docker.go` 的容器资源字段。

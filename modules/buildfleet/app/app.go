@@ -33,11 +33,14 @@ type App struct {
 	// CacheStatFn aggregates per-provider cache registry usage; nil when
 	// no provider enables a k8s cache registry.
 	CacheStatFn func(ctx context.Context) (map[string]*runtime.CacheStatSnapshot, error)
+
+	// gcDone closes when the periodic GC goroutine has exited.
+	gcDone chan struct{}
 }
 
 // Setup assembles providers, pool, store and fleet in daemon start order.
-// ctx bounds the reaper, reconcile, and cache-registry setup; the host owns
-// its lifetime.
+// ctx bounds the reaper, reconcile, cache-registry setup and the periodic
+// store GC; the host owns its lifetime.
 func Setup(ctx context.Context, cfg *config.Config) (*App, error) {
 	providers, err := buildProviders(cfg)
 	if err != nil {
@@ -108,19 +111,34 @@ func Setup(ctx context.Context, cfg *config.Config) (*App, error) {
 	// Periodic store GC runs on the setup context: hosts and the daemon
 	// pass a long-lived ctx here, so recycling repeats for the process
 	// lifetime instead of only during a shutdown drain window.
-	go a.runGC(ctx)
+	a.gcDone = make(chan struct{})
+	go func() {
+		defer close(a.gcDone)
+		a.runGC(ctx)
+	}()
 	if len(k8sCacheProviders) > 0 {
 		a.CacheStatFn = cacheStatFn(k8sCacheProviders)
 	}
 	return a, nil
 }
 
-// Drain disposes draining/failed pool runtimes, then runs one final store GC
-// pass bounded by ctx. Periodic recycling is already running on the Setup
-// context; this pass only covers blobs that became unreferenced at shutdown.
+// Drain disposes draining/failed pool runtimes, waits out an in-flight
+// periodic GC pass, then runs one final store GC pass — both waits bounded
+// by ctx. The Setup context is expected to be cancelled before Drain, so an
+// in-flight pass aborts within one blob and this final one covers blobs that
+// became unreferenced at shutdown.
 func (a *App) Drain(ctx context.Context) error {
 	if err := a.Pool.Drain(ctx); err != nil {
 		return fmt.Errorf("drain pool: %w", err)
+	}
+	// Serialise with the periodic pass: two concurrent walks of the blob
+	// dir turn the loser's removal into a spurious ENOENT error here.
+	if a.gcDone != nil {
+		select {
+		case <-a.gcDone:
+		case <-ctx.Done():
+			return fmt.Errorf("wait store gc: %w", ctx.Err())
+		}
 	}
 	gc := store.NewGC(a.Store, gcTTL)
 	if err := gc.Run(ctx); err != nil {
@@ -132,7 +150,9 @@ func (a *App) Drain(ctx context.Context) error {
 func (a *App) runGC(ctx context.Context) {
 	gc := store.NewGC(a.Store, gcTTL)
 	for {
-		if err := gc.Run(ctx); err != nil {
+		// A cancelled ctx aborts the pass mid-walk; that is shutdown,
+		// not a failure worth logging.
+		if err := gc.Run(ctx); err != nil && ctx.Err() == nil {
 			slog.Warn("store gc pass failed", "err", err)
 		}
 		select {
