@@ -1,8 +1,8 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import * as yaml from 'js-yaml'
 import { useTranslation } from 'react-i18next'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import type { ApplicationPendingChange } from '@/types/application'
@@ -49,13 +49,16 @@ type DialogName =
 // conflict states; history rollback persists and publishes in one confirm.
 export function ApplicationDetailPage() {
   const { t } = useTranslation()
-  const { name } = useParams<{ name: string }>()
+  const { name, cluster: clusterParam } = useParams<{
+    name: string
+    cluster: string
+  }>()
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { clusters } = useCluster()
   const { data: app, isLoading, error } = useApplication(name)
   usePageTitle(app ? `${app.namespace} / ${app.name}` : t('nav.applications'))
 
-  const [activeTab, setActiveTab] = useState<string>('')
   const [openDialog, setOpenDialog] = useState<DialogName | null>(null)
   const [wizardMode, setWizardMode] = useState<ApplicationWizardMode>('cluster')
   const [copyTarget, setCopyTarget] = useState('')
@@ -74,8 +77,26 @@ export function ApplicationDetailPage() {
   }
 
   const configs = useMemo(() => app?.configs ?? [], [app])
+  // The active cluster is a URL path segment (app → cluster → pod hierarchy),
+  // so views are shareable; a missing or stale segment falls back to the
+  // first config.
   const current =
-    configs.find((config) => config.cluster === activeTab) ?? configs[0]
+    configs.find((config) => config.cluster === clusterParam) ?? configs[0]
+
+  useEffect(() => {
+    if (configs.length === 0) return
+    if (clusterParam && configs.some((c) => c.cluster === clusterParam)) return
+    navigate(`/applications/${name}/clusters/${configs[0].cluster}`, {
+      replace: true,
+    })
+  }, [configs, clusterParam, name, navigate])
+
+  // setActiveTab moves between cluster routes; an empty value drops back to
+  // the bare app route and lets the effect above pick the first config.
+  const setActiveTab = (cluster: string) =>
+    cluster
+      ? navigate(`/applications/${name}/clusters/${cluster}`)
+      : navigate(`/applications/${name}`, { replace: true })
 
   const undeployed = configs.length === 0
   const availableCopyTargets = useMemo(

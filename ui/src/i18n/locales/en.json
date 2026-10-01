@@ -1480,7 +1480,11 @@
       "syncedBanner": "Config is consistent with the cluster, no drift.",
       "events": "⚠ Events ({{count}})",
       "eventCount": "{{count}}x",
-      "noEvents": "No warning events"
+      "noEvents": "No warning events",
+      "podFiles": "Files",
+      "podNotFound": "Pod not found or reclaimed — it may have been rescheduled.",
+      "podForceDeleteConfirm": "Confirm force delete",
+      "switchPod": "Switch pod"
     },
     "deploy": {
       "title": "Publish {{namespace}} / {{name}} to {{cluster}}?",

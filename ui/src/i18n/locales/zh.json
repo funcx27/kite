@@ -1567,7 +1567,11 @@
       "syncedBanner": "配置与集群一致，无漂移。",
       "events": "⚠ 事件（{{count}}）",
       "eventCount": "{{count}} 次",
-      "noEvents": "暂无 Warning 事件"
+      "noEvents": "暂无 Warning 事件",
+      "podFiles": "文件",
+      "podNotFound": "Pod 不存在或已被回收，可能已被重新调度。",
+      "podForceDeleteConfirm": "确认强制删除",
+      "switchPod": "切换 Pod"
     },
     "deploy": {
       "title": "发布 {{namespace}} / {{name}} 到 {{cluster}}？",

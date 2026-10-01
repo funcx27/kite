@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import type {
@@ -33,7 +34,6 @@ import {
   TableRow,
 } from '@/components/ui/table'
 
-import { PodMonitoringDialog } from './pod-monitoring-dialog'
 import { ApplicationStatusChip } from './status-badge'
 
 interface ClusterTabProps {
@@ -149,11 +149,7 @@ export function ClusterTab({
     disable: !active,
     refreshInterval: active ? 5000 : 0,
   })
-  const [podDialog, setPodDialog] = useState<{
-    open: boolean
-    pod: string
-    view?: 'terminal' | 'logs'
-  }>({ open: false, pod: '' })
+  const navigate = useNavigate()
   const [restarting, setRestarting] = useState(false)
   // Two-step restart confirm: the target ('config' or a pod name) arms on
   // the first click and auto-disarms, guarding against accidental restarts.
@@ -367,7 +363,9 @@ export function ClusterTab({
                         className="hover:underline"
                         title={(pod.images ?? []).join('\n')}
                         onClick={() =>
-                          setPodDialog({ open: true, pod: pod.name })
+                          navigate(
+                            `/applications/${app.name}/clusters/${config.cluster}/pods/${pod.name}`
+                          )
                         }
                       >
                         {pod.name}
@@ -701,19 +699,6 @@ export function ClusterTab({
           </div>
         </>
       )}
-
-      <PodMonitoringDialog
-        appName={app.name}
-        namespace={namespace}
-        cluster={config.cluster}
-        podName={podDialog.pod}
-        open={podDialog.open}
-        initialView={podDialog.view}
-        onOpenChange={(nextOpen) =>
-          setPodDialog((prev) => ({ ...prev, open: nextOpen }))
-        }
-        key={`${config.cluster}-${podDialog.pod}-${podDialog.view ?? ''}`}
-      />
     </div>
   )
 }
