@@ -46,17 +46,23 @@ type Executors interface {
 }
 
 // Deps is what the engine needs beyond the host capabilities: identity-based
-// authorization for node dispatch. Runs execute outside any request, so the
-// check goes by user id, never a gin context (design §7/§8).
+// authorization for node dispatch and audit persistence for engine-side
+// state changes (cron/webhook triggers, approval timeouts). Runs execute
+// outside any request, so checks go by user id, never a gin context
+// (design §7/§8).
 type Deps interface {
 	Executors
 	// AuthorizeUser reports whether the user may perform verb on resource
 	// in cluster/namespace, judged against the host RBAC roles.
 	AuthorizeUser(userID uint, resource, verb, cluster, namespace string) bool
+	// RecordHistory persists an audit entry for an engine-performed state
+	// change.
+	RecordHistory(entry store.HistoryEntry)
 }
 
 // Engine schedules runs. One host process owns one Engine.
 type Engine struct {
+	deps    Deps
 	runners map[string]NodeRunner
 	db      *gorm.DB
 	slots   chan struct{}
@@ -75,6 +81,11 @@ type Engine struct {
 	// the publish points never hold alongside mu.
 	subMu sync.Mutex
 	subs  map[uint]map[chan RunEvent]struct{}
+
+	// scheduler loop lifecycle (cron triggers + approval-timeout patrol,
+	// design §5.3/§7); started by Start, halted by Stop, restartable.
+	schedMu   sync.Mutex
+	schedStop chan struct{}
 }
 
 // driverHandle is one live orchestration of a run: its context, wake channel
@@ -91,6 +102,7 @@ type driverHandle struct {
 // New builds an Engine over the module tables and the injected capabilities.
 func New(db *gorm.DB, deps Deps) *Engine {
 	e := &Engine{
+		deps: deps,
 		runners: map[string]NodeRunner{
 			spec.NodeBuildImage: buildRunner{deps: deps},
 			spec.NodeDeployApp:  deployRunner{deps: deps},
@@ -117,7 +129,8 @@ func New(db *gorm.DB, deps Deps) *Engine {
 // Start resumes non-terminal runs after a restart (design §6 重启恢复):
 // running task nodes become interrupted, approval waits are preserved, then
 // every recovered run is re-driven. Succeeded nodes are never replayed —
-// state is the checkpoint.
+// state is the checkpoint. The scheduler loop (cron triggers + approval
+// timeout patrol, design §5.3/§7) starts alongside.
 func (e *Engine) Start() error {
 	var runs []store.WorkflowRun
 	if err := e.db.Where("status IN ?", []string{store.RunRunning, store.RunQueued}).Find(&runs).Error; err != nil {
@@ -149,6 +162,7 @@ func (e *Engine) Start() error {
 			go e.orchestrate(id, wfID)
 		}
 	}
+	e.startScheduler()
 	return nil
 }
 

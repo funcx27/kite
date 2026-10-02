@@ -34,8 +34,9 @@ const (
 
 // Run trigger types (design §3).
 const (
-	TriggerManual = "manual"
-	TriggerCron   = "cron"
+	TriggerManual  = "manual"
+	TriggerWebhook = "webhook"
+	TriggerCron    = "cron"
 )
 
 // MaxRunsPerWorkflow is the number of runs kept per workflow (with their

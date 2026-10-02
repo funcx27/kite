@@ -48,7 +48,11 @@ func setupAPIRouter(r *gin.RouterGroup, cm *cluster.ClusterManager, buildfleet *
 	registerAuthRoutes(r, authHandler)
 	registerUserRoutes(r, authHandler)
 	registerAdminRoutes(r, authHandler, cm, helmChartsHandler)
-	registerProtectedRoutes(r, authHandler, cm, helmChartsHandler, buildfleet, credDeps)
+	wfModule := registerProtectedRoutes(r, authHandler, cm, helmChartsHandler, buildfleet, credDeps)
+	// Public workflow webhook (design §7): the token in the path is the
+	// credential, so the route mounts outside session/RBAC middleware — the
+	// module owns the path shape.
+	wfModule.RegisterPublicRoutes(r)
 }
 
 func registerBaseRoutes(r *gin.RouterGroup) {
@@ -154,7 +158,7 @@ func registerAdminRoutes(r *gin.RouterGroup, authHandler *auth.AuthHandler, cm *
 	helmChartsHandler.RegisterAdminRoutes(adminAPI)
 }
 
-func registerProtectedRoutes(r *gin.RouterGroup, authHandler *auth.AuthHandler, cm *cluster.ClusterManager, helmChartsHandler *helm.HelmChartHandler, buildfleet *buildfleetadapter.Deps, credDeps *credentialsadapter.Deps) {
+func registerProtectedRoutes(r *gin.RouterGroup, authHandler *auth.AuthHandler, cm *cluster.ClusterManager, helmChartsHandler *helm.HelmChartHandler, buildfleet *buildfleetadapter.Deps, credDeps *credentialsadapter.Deps) *workflow.Module {
 	api := r.Group("/api/v1")
 	api.GET("/clusters", authHandler.RequireAuth(), cm.GetClusters)
 	defaultAPI := api.Group("")
@@ -190,6 +194,7 @@ func registerProtectedRoutes(r *gin.RouterGroup, authHandler *auth.AuthHandler, 
 	clusterAPI := api.Group("/_clusters/:cluster")
 	clusterAPI.Use(authHandler.RequireAuth(), middleware.ClusterMiddleware(cm))
 	registerClusterProtectedRoutes(clusterAPI, helmChartsHandler, appDeps, buildfleet, wfModule, credDeps)
+	return wfModule
 }
 
 func registerClusterProtectedRoutes(api *gin.RouterGroup, helmChartsHandler *helm.HelmChartHandler, appDeps *applicationadapter.Deps, buildfleet *buildfleetadapter.Deps, wfModule *workflow.Module, credDeps *credentialsadapter.Deps) {

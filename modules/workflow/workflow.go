@@ -92,6 +92,14 @@ func (m *Module) RegisterRoutes(api *gin.RouterGroup) {
 	applicationapi.RegisterRoutes(api, handlerDeps{m.deps}, m.store, m.engine)
 }
 
+// RegisterPublicRoutes mounts the webhook receiver on the host's public
+// router group (design §7): the token in the path is the credential, so the
+// route sits outside session and RBAC middleware — the one whitelisted host
+// touchpoint for this module's public surface.
+func (m *Module) RegisterPublicRoutes(r *gin.RouterGroup) {
+	applicationapi.RegisterPublicRoutes(r, handlerDeps{m.deps}, m.store, m.engine)
+}
+
 // Start resumes in-flight runs after a process restart (design §6 重启恢复):
 // running task nodes are marked interrupted, approval waits are preserved,
 // and every non-terminal run is re-driven. The host calls it once after

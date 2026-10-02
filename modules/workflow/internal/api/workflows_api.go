@@ -116,6 +116,11 @@ func decodeDefinition(specRaw, paramsRaw, triggersRaw json.RawMessage) ([]byte, 
 		if err := json.Unmarshal(triggersRaw, &triggers); err != nil {
 			return nil, nil, nil, fmt.Errorf("triggers must be a valid TriggerConfig JSON object: %w", err)
 		}
+		if triggers.Cron != "" {
+			if err := spec.ValidateCron(triggers.Cron); err != nil {
+				return nil, nil, nil, fmt.Errorf("triggers.cron: %w", err)
+			}
+		}
 	}
 	if problems := spec.Validate(dag, params); len(problems) > 0 {
 		return nil, nil, nil, &validationProblems{Problems: problems}
@@ -214,9 +219,14 @@ func (h *Handler) CreateWorkflow(c *gin.Context) {
 	c.JSON(http.StatusCreated, h.toWorkflowResponse(&wf, true))
 }
 
+// webhookTokenHexLen is the encoded length of the 128-bit hex webhook tokens
+// generateToken issues; the public hook endpoint prefilters on it so junk
+// requests never reach the token scan.
+const webhookTokenHexLen = 32
+
 // generateToken produces a 128-bit random hex webhook token.
 func generateToken() (string, error) {
-	b := make([]byte, 16)
+	b := make([]byte, webhookTokenHexLen/2)
 	if _, err := rand.Read(b); err != nil {
 		return "", fmt.Errorf("generate webhook token: %w", err)
 	}
@@ -413,7 +423,8 @@ func (h *Handler) GetRevision(c *gin.Context) {
 }
 
 // GetWebhookToken returns the workflow's webhook token (update permission,
-// design §10); empty until M3 first resets it through this API.
+// design §10); the value is generated at workflow creation and rotatable via
+// the reset endpoint.
 func (h *Handler) GetWebhookToken(c *gin.Context) {
 	wf, ok := h.findWorkflow(c)
 	if !ok {

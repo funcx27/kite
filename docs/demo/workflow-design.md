@@ -259,8 +259,8 @@ node: pending ──> running ──┬─> succeeded ──(下游解锁)
 ```
 
 - **手动**：`POST /workflows/:name/runs {params}`（参数按 schema 校验，必填缺失拒绝）。
-- **webhook**：公开端点 `POST /api/v1/hooks/workflows/:name`（**无会话鉴权**，挂载于 routes.go 公开组——这是宿主触点白名单内 routes.go 装配的一处合法新增）；鉴权 = `X-Kite-Token: <WebhookToken>` 头（或 `?token=`）。载荷按 github / gitea / gitlab 三家 push 事件适配（识别 `X-GitHub-Event` 等特征头），提取 repo/ref/sha 填入 `{{params.branch}}` 等预留参数与 TriggerRef；非 push 事件（PR 等）v1 忽略。token 在 UI 可见、可重置（重置即失效旧值）。
-- **cron**：模块内置调度循环（自带轻量 cron 解析，不依赖也不修改宿主 `pkg/scheduler`——其仅支持 interval/daily，扩展它反而增加宿主触点）；每分钟 tick，到点以 Triggers 中定义用参数 default 触发。cron 触发的 run 的 TriggeredBy 记录最后编辑该触发器的用户（权限以其为准）。
+- **webhook**：公开端点 `POST /api/workflow-hooks/:token`（**无会话鉴权**，挂载于 routes.go 公开组——这是宿主触点白名单内 routes.go 装配的一处合法新增）；鉴权 = 路径中的 WebhookToken，恒定时间比较，未知 token 一律 404（不暴露工作流是否存在；响应只含 run id 与序号，不暴露定义细节；token 属凭据，宿主访问日志对该路径前缀脱敏）。载荷按 github / gitea / gitlab 三家 push 事件适配（识别 `X-GitHub-Event` 等特征头），提取 repo/ref/sha 填入预留参数 `branch`/`ref`/`sha`/`repo`（schema 未声明的自动忽略）与 TriggerRef（sha 优先，缺 sha 用全 ref）；非 push 事件（PR 等）、tag push、分支删除及无法识别的载荷（含无特征头且未声明 push 的载荷）v1 一律忽略（200 `{"ignored":true}`）。token 在 UI 可见、可重置（重置即失效旧值）。
+- **cron**：模块内置调度循环（自带轻量 cron 解析，标准 5 段、本地时区，核心为可单测的纯函数 `NextFire`；不依赖也不修改宿主 `pkg/scheduler`——其仅支持 interval/daily，扩展它反而增加宿主触点）；cron 表达式保存期校验（非法即 400），运行期遇到不可触发的表达式记 warn；每分钟 tick，到点以 Triggers 中定义用参数 default 触发，`maxConcurrent` 预算照常生效；进程重启后错过的调度点**漏过即跳过**（不补跑）。同一 ticker 复用为审批超时巡检（§5.3）。cron 触发的 run 的 TriggeredBy 记录最后编辑该触发器的用户（权限以其为准）。
 - **运行身份**：run 全程以触发用户的 RBAC 身份执行（节点执行时 Authorize 检查；webhook/cron 无会话上下文，用 TriggeredBy 的用户身份）。审批人只做决定，不改变 run 的执行身份。
 
 ## 8. 权限与审计
@@ -304,7 +304,7 @@ type Credential struct {
 | `GET /runs/:id/events` | **SSE 实时流（M2b 落地形状）**：`event: node/log/run/done` + `data` JSON（形状对齐 buildfleet 接线），15s `: ping` 心跳；连接时先订阅引擎事件流、再以落库快照对齐（run 现状一帧 `run` + 全部 NodeRun 逐帧 `node`），随后消费实时事件；run 到终态发 `done` 收流；授权同 run 动作（exec）；引擎侧 per-run 订阅为带缓冲 channel、慢订阅者丢弃溢出事件（绝不反压引擎）；断线重连以 NodeRun 落库状态对齐（快照即落库值） |
 | `POST /runs/:id/cancel` · `POST /runs/:id/retry` | 取消 / 从失败节点重试（仅 failed/cancelled/interrupted 态可重试） |
 | `POST /runs/:id/nodes/:nodeId/approve` · `.../reject` | 审批动作 `{comment}`（assignees/admin） |
-| `POST /hooks/workflows/:name` | webhook 接收（公开组，token 鉴权，三家载荷适配） |
+| `POST /api/workflow-hooks/:token` | webhook 接收（公开组，路径内 token 恒定时间比较、未知 token 404，三家 push 载荷适配；非 push 忽略） |
 | `GET /workflows/:name/webhook-token` · `POST .../webhook-token/reset` | token 查看/重置（update 权限） |
 
 ## 11. 前端：目录结构独立（视觉以 demo 为准）

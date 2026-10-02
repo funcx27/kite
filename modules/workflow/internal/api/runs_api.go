@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -34,8 +33,7 @@ type runSummary struct {
 
 // TriggerRun admits a manual run (design §7): parameters are validated
 // against the current revision's schema with defaults applied, the run pins
-// the current revision and expands all NodeRun rows pending, and the engine
-// schedules it. The run executes with the trigger user's RBAC identity
+// the current revision and executes with the trigger user's RBAC identity
 // (design §7).
 func (h *Handler) TriggerRun(c *gin.Context) {
 	wf, ok := h.findWorkflow(c)
@@ -55,83 +53,34 @@ func (h *Handler) TriggerRun(c *gin.Context) {
 			return
 		}
 	}
-	paramsJSON, triggersJSON, nodeIDs, ok := h.prepareTrigger(c, wf, req.Params)
-	if !ok {
-		return
-	}
-	var runID uint
-	var runNumber int
-	err := h.store.DB().Transaction(func(tx *gorm.DB) error {
-		var txErr error
-		runID, runNumber, txErr = store.CreateRunTx(tx, wf.ID, wf.CurrentRev, paramsJSON,
-			store.TriggerManual, req.Ref, h.deps.OperatorID(c), nodeIDs)
-		return txErr
-	})
+	res, err := h.engine.TriggerRun(wf, req.Params, store.TriggerManual, req.Ref, h.deps.OperatorID(c))
 	if err != nil {
-		h.fail(c, http.StatusInternalServerError, err, "")
+		h.failTrigger(c, err)
 		return
 	}
-	if err := store.PruneRuns(h.store.DB(), wf.ID, runNumber); err != nil {
-		// The run exists; retention trimming is best-effort.
-		slog.Error("workflow: prune runs", "workflow", wf.ID, "err", err)
-	}
-	h.engine.Enqueue(runID, wf.ID, triggersJSON)
 	h.recordAudit(c, store.HistoryEntry{
 		Cluster: c.GetString(clusterNameContextKey), ResourceType: authzResource,
-		ResourceName: fmt.Sprintf("%s#%d", wf.Name, runNumber),
+		ResourceName: fmt.Sprintf("%s#%d", wf.Name, res.RunNumber),
 		Namespace:    wf.Namespace, Operation: "trigger",
-		YAML: string(paramsJSON),
+		YAML: string(res.Params),
 	})
 	c.JSON(http.StatusCreated, gin.H{
-		"id": runID, "runNumber": runNumber, "status": store.RunQueued, "revisionRev": wf.CurrentRev,
+		"id": res.RunID, "runNumber": res.RunNumber, "status": store.RunQueued, "revisionRev": wf.CurrentRev,
 	})
 }
 
-// prepareTrigger validates a manual trigger against the current revision:
-// the DAG must be runnable, manual must be enabled and the raw parameters
-// resolve against the schema. Returns the encoded values the run creation
-// transaction needs; ok=false means the response is already written.
-func (h *Handler) prepareTrigger(c *gin.Context, wf *store.Workflow, raw map[string]any) (paramsJSON, triggersJSON []byte, nodeIDs []string, ok bool) {
-	var rev store.WorkflowRevision
-	if err := h.store.DB().Where("workflow_id = ? AND rev = ?", wf.ID, wf.CurrentRev).First(&rev).Error; err != nil {
-		h.fail(c, http.StatusInternalServerError, err, "")
-		return nil, nil, nil, false
-	}
-	var dag spec.DAGSpec
-	if err := rev.Spec.Unmarshal(&dag); err != nil {
-		h.fail(c, http.StatusInternalServerError, err, "")
-		return nil, nil, nil, false
-	}
-	if len(dag.Nodes) == 0 {
+// failTrigger maps engine trigger errors onto HTTP statuses.
+func (h *Handler) failTrigger(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, engine.ErrNoNodes):
 		h.fail(c, http.StatusBadRequest, nil, "workflow has no nodes to run")
-		return nil, nil, nil, false
-	}
-	var params []spec.ParamSpec
-	if err := rev.Params.Unmarshal(&params); err != nil {
-		h.fail(c, http.StatusInternalServerError, err, "")
-		return nil, nil, nil, false
-	}
-	var triggers spec.TriggerConfig
-	_ = rev.Triggers.Unmarshal(&triggers)
-	if !triggers.ManualEnabled() {
-		h.fail(c, http.StatusConflict, nil, "manual triggers are disabled for this workflow")
-		return nil, nil, nil, false
-	}
-	resolved, err := spec.ResolveParams(params, raw)
-	if err != nil {
+	case errors.Is(err, engine.ErrTriggerDisabled):
+		h.fail(c, http.StatusConflict, nil, "this trigger surface is disabled for the workflow")
+	case errors.Is(err, engine.ErrInvalidTrigger):
 		h.fail(c, http.StatusBadRequest, err, "")
-		return nil, nil, nil, false
-	}
-	paramsJSON, err = json.Marshal(resolved)
-	if err != nil {
+	default:
 		h.fail(c, http.StatusInternalServerError, err, "")
-		return nil, nil, nil, false
 	}
-	nodeIDs = make([]string, 0, len(dag.Nodes))
-	for _, n := range dag.Nodes {
-		nodeIDs = append(nodeIDs, n.ID)
-	}
-	return paramsJSON, []byte(rev.Triggers), nodeIDs, true
 }
 
 // ListRuns returns a workflow's runs, newest first (design §10: 倒序分页).

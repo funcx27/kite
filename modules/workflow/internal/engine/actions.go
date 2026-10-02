@@ -175,7 +175,7 @@ func (e *Engine) Retry(runID uint) error {
 // to succeeded (approve) or failed with the comment as error (reject), the
 // decision record lands in Outputs, and the run driver wakes. The caller
 // (API) enforces the assignees-or-admin authorization; the conditional
-// update settles races with a concurrent decision or a cancel.
+// update settles races with a concurrent decision, cancel or timeout.
 func (e *Engine) Decide(runID uint, nodeID string, approve bool, comment string, operatorID uint) error {
 	var row store.NodeRun
 	if err := e.db.Where("run_id = ? AND node_id = ?", runID, nodeID).First(&row).Error; err != nil {
@@ -207,26 +207,47 @@ func (e *Engine) Decide(runID uint, nodeID string, approve bool, comment string,
 	if err != nil {
 		return err
 	}
+	errMsg := ""
+	if !approve {
+		errMsg = store.Truncate(comment, store.ErrorMaxBytes)
+	}
+	hit, err := e.settleApproval(runID, row, status, outputs, errMsg)
+	if err != nil {
+		return err
+	}
+	if !hit {
+		return ErrConflict
+	}
+	return nil
+}
+
+// settleApproval writes an approval's terminal state (human decision or
+// timeout expiry) via a conditional update guarded on the exact waiting
+// attempt, then publishes the transition and wakes the run driver;
+// hit=false means a concurrent actor moved the row first. The attempt guard
+// (same pattern as completeNode) keeps a timeout verdict loaded before a
+// reject→retry cycle from killing the approval's fresh re-parked attempt.
+func (e *Engine) settleApproval(runID uint, row store.NodeRun, status string, outputs []byte, errMsg string) (bool, error) {
 	updates := map[string]any{
 		"status":      status,
 		"outputs":     store.JSONField(outputs),
 		"finished_at": now(),
 	}
-	if !approve {
-		updates["error"] = store.Truncate(comment, store.ErrorMaxBytes)
+	if errMsg != "" {
+		updates["error"] = errMsg
 	}
 	res := e.db.Model(&store.NodeRun{}).
-		Where("id = ? AND status = ?", row.ID, store.NodeRunning).
+		Where("id = ? AND status = ? AND attempt = ?", row.ID, store.NodeRunning, row.Attempt).
 		Updates(updates)
 	if res.Error != nil {
-		return res.Error
+		return false, res.Error
 	}
 	if res.RowsAffected == 0 {
-		return ErrConflict
+		return false, nil
 	}
-	e.publishNode(runID, nodeID, status)
+	e.publishNode(runID, row.NodeID, status)
 	e.signal(runID)
-	return nil
+	return true, nil
 }
 
 func dagNode(dag spec.DAGSpec, id string) (spec.Node, bool) {

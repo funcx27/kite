@@ -11,7 +11,7 @@ Kite 宿主（主 module `github.com/zxh326/kite`）之外的独立 Go module �
 |------|------|----------|----------|--------------|
 | `application` | 应用发布：逻辑应用、按集群配置及其 revision 链；导出部署门面 `DeployWithImage`（身份化发布管线，冲突返回 `*ConflictError` 明细，供 workflow deploy 节点进程内复用，见 `deploy.go`） | 本仓库 `feat/application` 分支开发 | 已接线：`pkg/applicationadapter` 桥接 + `routes.go` 装配（`Deps` 含按 id 的 `AuthorizeUser`，门面与 API 共用同一套 Deps 接线） | 无（随宿主单二进制发布） |
 | `buildfleet` | 池化可复现容器构建系统（类似 docker buildx），Connect RPC + `buildfleetd` 守护进程 | `github.com/funcx27/buildfleet`，迁入 commit `0c9c922b6d354bb214414e530b848c68d40cac35`（2026-09-11） | 已接线（REST+SSE 门面 + 进程内嵌入） | `modules/buildfleet/cmd/buildfleetd` |
-| `workflow` | CI/CD 编排：DAG 工作流定义（构建镜像/审批/部署应用/通知）、revision 链与进程内调度引擎（设计文档 `docs/demo/workflow-design.md`） | 本仓库 `feat/platform` 分支开发 | 已接线：`pkg/workflowadapter` 桥接 + `routes.go` 装配（Migrate 显式触发 + 启动恢复） | 无（随宿主单二进制发布） |
+| `workflow` | CI/CD 编排：DAG 工作流定义（构建镜像/审批/部署应用/通知）、revision 链与进程内调度引擎、触发面（手动 / webhook 公开端点 `POST /api/workflow-hooks/:token`，token 恒定时间比较 + github/gitea/gitlab push 载荷适配；cron 内置每分钟调度循环，漏过即跳过；同一 ticker 复用为审批超时巡检）、从失败节点重试（设计文档 `docs/demo/workflow-design.md`） | 本仓库 `feat/platform` 分支开发 | 已接线：`pkg/workflowadapter` 桥接 + `routes.go` 装配（Migrate 显式触发 + 启动恢复；webhook 公开路由在公开区单点挂载） | 无（随宿主单二进制发布） |
 | `credentials` | 凭证中心：命名凭证（git basic auth / registry 认证）加密存储与按名解析（设计 `docs/demo/workflow-design.md` §9） | 本仓库 `feat/platform` 分支开发 | 已接线：`pkg/credentialsadapter` 桥接 + `routes.go` 装配（Migrate 显式触发）；Resolver 由 `pkg/buildfleetadapter`（REST `credentialRef`）与 `pkg/workflowadapter`（进程内构建）消费 | 无（随宿主单二进制发布） |
 
 ## 模块契约
