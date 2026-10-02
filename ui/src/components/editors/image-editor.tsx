@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
 import { Container } from 'kubernetes-types/core/v1'
+import { useTranslation } from 'react-i18next'
 
 import { formatDate } from '@/lib/utils'
 
@@ -20,6 +21,7 @@ interface ImageEditorProps {
 }
 
 export function ImageEditor({ container, onUpdate }: ImageEditorProps) {
+  const { t } = useTranslation()
   const [showTagDropdown, setShowTagDropdown] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -68,7 +70,7 @@ export function ImageEditor({ container, onUpdate }: ImageEditorProps) {
   return (
     <div className="space-y-4">
       <div className="space-y-2 relative">
-        <Label htmlFor="container-image">Container Image</Label>
+        <Label htmlFor="container-image">{t('editors.containerImage')}</Label>
         <Input
           id="container-image"
           ref={inputRef}
@@ -103,19 +105,18 @@ export function ImageEditor({ container, onUpdate }: ImageEditorProps) {
           </div>
         )}
         <p className="text-sm text-muted-foreground">
-          Specify the container image including tag (e.g., nginx:1.21,
-          node:16-alpine)
+          {t('editors.imageHint')}
         </p>
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="image-pull-policy">Image Pull Policy</Label>
+        <Label htmlFor="image-pull-policy">{t('editors.pullPolicy')}</Label>
         <Select
           value={container.imagePullPolicy || 'default'}
           onValueChange={updateImagePullPolicy}
         >
           <SelectTrigger id="image-pull-policy" className="w-full">
-            <SelectValue placeholder="Select pull policy" />
+            <SelectValue placeholder={t('editors.selectPullPolicy')} />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="default">Default</SelectItem>
@@ -125,11 +126,11 @@ export function ImageEditor({ container, onUpdate }: ImageEditorProps) {
           </SelectContent>
         </Select>
         <p className="text-sm text-muted-foreground">
-          <strong>IfNotPresent:</strong> Pull image only if not present locally
+          <strong>IfNotPresent:</strong> {t('editors.pullHintIfNotPresent')}
           <br />
-          <strong>Always:</strong> Always pull the latest image
+          <strong>Always:</strong> {t('editors.pullHintAlways')}
           <br />
-          <strong>Never:</strong> Never pull, use local image only
+          <strong>Never:</strong> {t('editors.pullHintNever')}
         </p>
       </div>
     </div>

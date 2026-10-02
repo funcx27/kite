@@ -55,6 +55,8 @@ export interface TerminalProps {
   ephemeralContainers?: EphemeralContainer[]
   attachContainerName?: string
   selectedContainerName?: string
+  /** Overrides the global current cluster (x-cluster-name addressing) */
+  cluster?: string
   /** When true, hides the internal toolbar and fills parent container */
   embedded?: boolean
 }
@@ -69,6 +71,7 @@ export function Terminal({
   ephemeralContainers,
   attachContainerName,
   selectedContainerName,
+  cluster,
   type = 'pod',
   embedded = false,
 }: TerminalProps) {
@@ -230,13 +233,23 @@ export function Terminal({
   }, [terminalTheme, handleThemeChange])
 
   const toggleFullscreen = useCallback(() => {
-    setIsFullscreen((v) => !v)
+    setIsFullscreen((v) => {
+      const next = !v
+      // Neutralize the dialog's transform while fullscreen: a transformed
+      // ancestor is the containing block for position:fixed and would confine
+      // the terminal to the dialog box. Toggling a body class instead of
+      // re-parenting keeps the xterm DOM node (and its session) intact.
+      document.body.classList.toggle('fs-escape-active', next)
+      return next
+    })
     setTimeout(() => {
       if (fitAddonRef.current) {
         fitAddonRef.current.fit()
       }
     }, 200)
   }, [])
+
+  useEffect(() => () => document.body.classList.remove('fs-escape-active'), [])
 
   const handleContainerChange = useCallback((containerName?: string) => {
     if (containerName) setSelectedContainer(containerName)
@@ -337,7 +350,7 @@ export function Terminal({
     // WebSocket connection
     setIsConnected(false)
     const clusterParams = new URLSearchParams()
-    appendCurrentClusterParam(clusterParams, currentCluster)
+    appendCurrentClusterParam(clusterParams, cluster ?? currentCluster)
     const podParams = new URLSearchParams(clusterParams)
     podParams.set('container', selectedContainer)
     if (shouldAttach) {
@@ -545,10 +558,17 @@ export function Terminal({
     )
   }
 
-  return (
+  // While fullscreen, the injected fs-escape-active rule below drops the
+  // dialog's transform so this fixed card covers the real viewport.
+  const card = (
     <Card
       className={`flex flex-col gap-0 py-2 ${isFullscreen ? 'fixed inset-0 z-50 h-[100dvh]' : 'h-full min-h-0'}`}
     >
+      <style>
+        {
+          'body.fs-escape-active [role="dialog"]{translate:none !important;transform:none !important}'
+        }
+      </style>
       <CardHeader>
         <div className="flex min-w-0 flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -757,4 +777,6 @@ export function Terminal({
       </CardContent>
     </Card>
   )
+
+  return card
 }

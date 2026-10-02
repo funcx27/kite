@@ -31,6 +31,7 @@ import { useCluster } from '@/hooks/use-cluster'
 import { API_BASE_URL, apiClient } from '../api-client'
 import {
   appendCurrentClusterParam,
+  clusterHeader,
   withCurrentClusterPath,
 } from '../current-cluster'
 import { withSubPath } from '../subpath'
@@ -604,10 +605,15 @@ export const restartWorkload = async (
 export const createResource = async <T extends ResourceType>(
   resource: T,
   namespace: string | undefined,
-  body: ResourceTypeMap[T]
+  body: ResourceTypeMap[T],
+  opts?: { cluster?: string }
 ): Promise<ResourceTypeMap[T]> => {
   const endpoint = `/${resource}/${namespace || '_all'}`
-  return await apiClient.post<ResourceTypeMap[T]>(`${endpoint}`, body)
+  return await apiClient.post<ResourceTypeMap[T]>(
+    `${endpoint}`,
+    body,
+    opts?.cluster ? { headers: clusterHeader(opts.cluster) } : undefined
+  )
 }
 
 export const deleteResource = async <T extends ResourceType>(
@@ -935,14 +941,15 @@ export const podListFiles = async (
   podName: string,
   container: string,
   path: string,
-  options?: RequestInit
+  options?: RequestInit,
+  cluster?: string
 ): Promise<FileInfo[]> => {
   const params = new URLSearchParams({
     container,
     path,
   })
   return apiClient.get<FileInfo[]>(
-    `${withCurrentClusterPath(`/pods/${namespace}/${podName}/files`)}?${params.toString()}`,
+    `${withCurrentClusterPath(`/pods/${namespace}/${podName}/files`, cluster)}?${params.toString()}`,
     options
   )
 }
@@ -951,14 +958,15 @@ export const podDownloadFile = (
   namespace: string,
   podName: string,
   container: string,
-  path: string
+  path: string,
+  cluster?: string
 ) => {
   const params = new URLSearchParams({
     container,
     path,
   })
   const url = withSubPath(
-    `${API_BASE_URL}${withCurrentClusterPath(`/pods/${namespace}/${podName}/files/download`)}?${params.toString()}`
+    `${API_BASE_URL}${withCurrentClusterPath(`/pods/${namespace}/${podName}/files/download`, cluster)}?${params.toString()}`
   )
   window.open(url, '_blank')
 }
@@ -967,14 +975,15 @@ export const podPreviewFile = (
   namespace: string,
   podName: string,
   container: string,
-  path: string
+  path: string,
+  cluster?: string
 ) => {
   const params = new URLSearchParams({
     container,
     path,
   })
   const url = withSubPath(
-    `${API_BASE_URL}${withCurrentClusterPath(`/pods/${namespace}/${podName}/files/preview`)}?${params.toString()}`
+    `${API_BASE_URL}${withCurrentClusterPath(`/pods/${namespace}/${podName}/files/preview`, cluster)}?${params.toString()}`
   )
   window.open(url, '_blank')
 }
@@ -984,7 +993,8 @@ export const podUploadFile = async (
   podName: string,
   container: string,
   path: string,
-  file: File
+  file: File,
+  cluster?: string
 ): Promise<void> => {
   const formData = new FormData()
   formData.append('file', file)
@@ -994,7 +1004,7 @@ export const podUploadFile = async (
   })
 
   await apiClient.put(
-    `${withCurrentClusterPath(`/pods/${namespace}/${podName}/files/upload`)}?${params.toString()}`,
+    `${withCurrentClusterPath(`/pods/${namespace}/${podName}/files/upload`, cluster)}?${params.toString()}`,
     formData
   )
 }
@@ -1144,11 +1154,13 @@ export const usePodFiles = (
   podName: string,
   container: string,
   path: string,
-  options?: { enabled?: boolean }
+  options?: { enabled?: boolean; cluster?: string }
 ) => {
+  const cluster = options?.cluster
   return useQuery({
-    queryKey: ['pod-files', namespace, podName, container, path],
-    queryFn: () => podListFiles(namespace, podName, container, path),
+    queryKey: ['pod-files', cluster, namespace, podName, container, path],
+    queryFn: () =>
+      podListFiles(namespace, podName, container, path, undefined, cluster),
     enabled: options?.enabled !== false,
     staleTime: 10000, // 10 seconds cache
   })

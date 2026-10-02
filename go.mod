@@ -7,6 +7,7 @@ require (
 	github.com/blang/semver/v4 v4.0.0
 	github.com/bytedance/mockey v1.4.6
 	github.com/fsnotify/fsnotify v1.10.1
+	github.com/funcx27/kite/modules/application v0.0.0-00010101000000-000000000000
 	github.com/gin-contrib/gzip v1.2.6
 	github.com/gin-gonic/gin v1.12.0
 	github.com/glebarez/sqlite v1.11.0
@@ -42,6 +43,8 @@ require (
 	sigs.k8s.io/gateway-api v1.6.1
 	sigs.k8s.io/yaml v1.6.0
 )
+
+replace github.com/funcx27/kite/modules/application => ./modules/application
 
 replace github.com/rancher/remotedialer => github.com/zxh326/remotedialer v0.0.0-20260815085230-0ff84947e93f
 

@@ -1,0 +1,222 @@
+package api
+
+import (
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/funcx27/kite/modules/application/internal/store"
+)
+
+type revisionSummary struct {
+	Rev    int    `json:"rev"`
+	Source string `json:"source"`
+	// RefRev marks the revision a derived one was built from (rollback: the
+	// rev its content came from); 0 when not applicable.
+	RefRev int `json:"refRev"`
+	// OperatorName is the operator's resolved display name; empty when the
+	// user no longer exists.
+	OperatorName string    `json:"operatorName"`
+	OperatorID   uint      `json:"operatorId"`
+	CreatedAt    time.Time `json:"createdAt"`
+	// Redacted marks revisions that contain Secret values; the single-version
+	// endpoint masks them to "***" (design §7).
+	Redacted bool `json:"redacted"`
+}
+
+// ListRevisions returns the config's revision chain, newest first
+// (design §7). Rollback targets stay stable: pruned rev numbers are never
+// reused.
+func (h *Handler) ListRevisions(c *gin.Context) {
+	_, cfg, ok := h.findAppConfig(c)
+	if !ok {
+		return
+	}
+	if !h.authorize(c, "get", cfg.Cluster, cfg.Namespace) {
+		return
+	}
+	var revs []store.ConfigRevision
+	if err := h.store.DB().Where("app_config_id = ?", cfg.ID).Order("rev DESC").Find(&revs).Error; err != nil {
+		h.fail(c, http.StatusInternalServerError, err, "")
+		return
+	}
+	ids := make([]uint, 0, len(revs))
+	seen := map[uint]bool{}
+	for _, r := range revs {
+		if r.OperatorID > 0 && !seen[r.OperatorID] {
+			seen[r.OperatorID] = true
+			ids = append(ids, r.OperatorID)
+		}
+	}
+	names := h.deps.UserNames(ids)
+	out := make([]revisionSummary, 0, len(revs))
+	for _, r := range revs {
+		out = append(out, revisionSummary{
+			Rev: r.Rev, Source: r.Source, RefRev: r.RefRev,
+			OperatorID: r.OperatorID, OperatorName: names[r.OperatorID],
+			CreatedAt: r.CreatedAt,
+			Redacted:  containsSecretDocs(store.JSONField(r.Manifests)),
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"revisions": out, "total": len(out)})
+}
+
+// GetRevision returns one revision's full manifest set with Secret
+// data/stringData values masked (design §7).
+func (h *Handler) GetRevision(c *gin.Context) {
+	_, cfg, ok := h.findAppConfig(c)
+	if !ok {
+		return
+	}
+	if !h.authorize(c, "get", cfg.Cluster, cfg.Namespace) {
+		return
+	}
+	rev, err := strconv.Atoi(c.Param("rev"))
+	if err != nil || rev < 1 {
+		h.fail(c, http.StatusBadRequest, nil, "rev must be a positive integer")
+		return
+	}
+	var row store.ConfigRevision
+	if err := h.store.DB().Where("app_config_id = ? AND rev = ?", cfg.ID, rev).First(&row).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			h.fail(c, http.StatusNotFound, nil, "revision not found")
+			return
+		}
+		h.fail(c, http.StatusInternalServerError, err, "")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"rev":        row.Rev,
+		"source":     row.Source,
+		"operatorId": row.OperatorID,
+		"createdAt":  row.CreatedAt,
+		"manifests":  json.RawMessage(redacted(store.JSONField(row.Manifests))),
+	})
+}
+
+// RollbackConfig writes an earlier revision's manifests back as the current
+// desired configuration (design §7). With {deploy:true} the same request
+// continues through the conflict-gated publish, so rollback is one
+// confirm action that both persists the revision and applies it; without it
+// the manifests stay pending for a later publish.
+func (h *Handler) RollbackConfig(c *gin.Context) {
+	app, cfg, ok := h.findAppConfig(c)
+	if !ok {
+		return
+	}
+	if !h.authorize(c, "update", cfg.Cluster, cfg.Namespace) {
+		return
+	}
+	var req struct {
+		Rev    *int `json:"rev"`
+		Deploy bool `json:"deploy"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Rev == nil {
+		h.fail(c, http.StatusBadRequest, nil, "rev is required")
+		return
+	}
+	var row store.ConfigRevision
+	if err := h.store.DB().Where("app_config_id = ? AND rev = ?", cfg.ID, *req.Rev).First(&row).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			h.fail(c, http.StatusNotFound, nil, "revision not found")
+			return
+		}
+		h.fail(c, http.StatusInternalServerError, err, "")
+		return
+	}
+	var cli client.Client
+	if req.Deploy {
+		var err error
+		cli, err = h.deps.ResolveCluster(c.Request.Context(), cfg.Cluster)
+		if err != nil {
+			h.fail(c, http.StatusNotFound, nil, "cluster not found or offline: "+cfg.Cluster)
+			return
+		}
+	}
+	data := []byte(row.Manifests)
+	previous := string(cfg.Manifests)
+	newRev := 0
+	txErr := h.store.DB().Transaction(func(tx *gorm.DB) error {
+		cur, err := lockConfig(tx, cfg.ID)
+		if err != nil {
+			return err
+		}
+		if err := tx.Model(&store.AppConfig{}).Where("id = ?", cur.ID).Updates(map[string]interface{}{
+			"manifests":        store.SecretJSON(data),
+			"overridden_paths": store.JSONField(nil),
+		}).Error; err != nil {
+			return err
+		}
+		newRev, err = store.AppendRevisionTx(tx, cur.ID, store.RevSourceRollback, data, h.deps.OperatorID(c), *req.Rev)
+		return err
+	})
+	if txErr != nil {
+		h.fail(c, http.StatusInternalServerError, txErr, "")
+		return
+	}
+	h.recordAudit(c, store.HistoryEntry{
+		Cluster: cfg.Cluster, ResourceType: authzResource, ResourceName: app.Name,
+		Namespace: cfg.Namespace, Operation: "update",
+		YAML:         redacted(data),
+		PreviousYAML: redacted(store.JSONField(previous)),
+	})
+	if !req.Deploy {
+		c.JSON(http.StatusOK, gin.H{"latestRev": newRev, "rolledBackTo": row.Rev})
+		return
+	}
+	// The rollback persists first (its revision records the intent); a gate
+	// conflict leaves it pending for the merge flow, mirroring the deploy
+	// path's image persist. The in-memory whitelist must not survive the
+	// wholesale rewrite the gate is about to read.
+	cfg.Manifests = store.SecretJSON(data)
+	cfg.OverriddenPaths = store.JSONField(nil)
+	rollbackDocs, err := store.DecodeManifests(data)
+	if err != nil {
+		h.fail(c, http.StatusInternalServerError, err, "")
+		return
+	}
+	resp, conflicts, err := h.runPublish(c, app, cfg, cli, rollbackDocs, false)
+	var nf *namespaceForbiddenError
+	switch {
+	case errors.As(err, &nf):
+		h.fail(c, http.StatusForbidden, err, err.Error())
+		return
+	case err != nil:
+		h.fail(c, http.StatusInternalServerError, err, "")
+		return
+	}
+	if len(conflicts) > 0 {
+		c.JSON(http.StatusConflict, gin.H{
+			"error":     "cluster has manual changes conflicting with the rollback, merge first",
+			"conflicts": conflicts,
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"latestRev":    newRev,
+		"rolledBackTo": row.Rev,
+		"success":      resp.Success,
+		"results":      resp.Results,
+	})
+}
+
+// containsSecretDocs reports whether the manifest set holds any Secret
+// document; undecodable data is treated as sensitive (fail closed).
+func containsSecretDocs(data store.JSONField) bool {
+	docs, err := store.DecodeManifests(data)
+	if err != nil {
+		return true
+	}
+	for i := range docs {
+		if docs[i].GetKind() == "Secret" {
+			return true
+		}
+	}
+	return false
+}

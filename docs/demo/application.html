@@ -1,0 +1,1770 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>应用模块 UI Demo · Kite</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style type="text/tailwindcss">
+  body { @apply bg-zinc-100 text-zinc-900 antialiased; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+  /* 组件类（.btn 等会设置 display）不得压过隐藏语义 */
+  .hidden { display: none !important; }
+  .add-link { @apply cursor-pointer text-xs text-zinc-400 transition-colors hover:text-zinc-600; }
+  .btn { @apply inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 disabled:opacity-50 disabled:pointer-events-none cursor-pointer; }
+  .btn-primary { @apply border-zinc-900 bg-zinc-900 text-white hover:bg-zinc-700; }
+  .btn-destructive { @apply border-red-600 bg-red-600 text-white hover:bg-red-700; }
+  .btn-ghost { @apply border-transparent bg-transparent hover:bg-zinc-100; }
+  .card { @apply rounded-xl border border-zinc-200 bg-white shadow-sm; }
+  .input { @apply h-9 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none placeholder:text-zinc-400 focus:ring-2 focus:ring-zinc-300; }
+  .label { @apply mb-1.5 block text-sm font-medium text-zinc-700; }
+  .chip { @apply inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium; }
+  .chip-green { @apply border-green-200 bg-green-50 text-green-700; }
+  .chip-amber { @apply border-amber-200 bg-amber-50 text-amber-700; }
+  .chip-red { @apply border-red-200 bg-red-50 text-red-700; }
+  .chip-zinc { @apply border-zinc-200 bg-zinc-50 text-zinc-500; }
+  .dot { @apply inline-block h-2 w-2 shrink-0 rounded-full; }
+  .th { @apply px-4 py-2.5 text-left text-xs font-medium text-zinc-500; }
+  .td { @apply px-4 py-3 text-sm text-zinc-700 align-middle; }
+  .menu { @apply absolute right-0 z-30 mt-1 w-48 origin-top-right rounded-lg border border-zinc-200 bg-white py-1 shadow-lg; }
+  .menu-item { @apply block w-full px-3 py-2 text-left text-sm text-zinc-700 hover:bg-zinc-50 cursor-pointer; }
+  .menu-item-danger { @apply text-red-600 hover:bg-red-50; }
+  .nav-item { @apply flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm text-zinc-600 hover:bg-zinc-200/60 cursor-pointer; }
+  .nav-item-active { @apply bg-white shadow-sm text-zinc-900 font-medium; }
+  .tab { @apply inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium text-zinc-500 hover:bg-zinc-100 cursor-pointer; }
+  .tab-active { @apply bg-white text-zinc-900 shadow-sm border border-zinc-200; }
+  .demo-btn { @apply rounded-lg px-3 py-1.5 text-sm font-medium text-zinc-300 hover:bg-zinc-800 hover:text-white cursor-pointer; }
+  .demo-btn-active { @apply bg-white text-zinc-900; }
+  .step-dot { @apply flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 border-zinc-300 bg-white text-xs font-semibold text-zinc-400; }
+  .step-dot-active { @apply border-zinc-900 bg-zinc-900 text-white; }
+  .step-dot-done { @apply border-green-500 bg-green-50 text-green-600; }
+  .yaml { @apply max-h-72 overflow-auto rounded-lg bg-zinc-950 p-4 font-mono text-xs leading-5 text-zinc-300; }
+  .yk { @apply text-sky-300; }
+  .ys { @apply text-emerald-300; }
+  .yc { @apply text-zinc-500; }
+  .diff-path { @apply font-mono text-xs text-zinc-500; }
+  .diff-val { @apply font-mono text-xs; }
+  .switch { @apply relative inline-flex h-5 w-9 shrink-0 items-center rounded-full bg-zinc-900 cursor-pointer; }
+  .switch-knob { @apply inline-block h-4 w-4 translate-x-4 rounded-full bg-white shadow transition; }
+  .term-cursor { animation: term-blink 1s steps(1) infinite; }
+  @keyframes term-blink { 50% { opacity: 0; } }
+  .editor-full { position: fixed; inset: 0.75rem; height: auto !important; width: auto !important; max-width: none !important; border-radius: 0.5rem; }
+</style>
+</head>
+<body>
+
+<!-- ══════════ Demo 顶部工具条 ══════════ -->
+<div class="fixed inset-x-0 top-0 z-40 flex h-12 items-center gap-2 bg-zinc-900 px-4">
+  <span class="mr-2 text-sm font-semibold text-white">应用模块 UI Demo</span>
+  <span class="mr-4 rounded border border-zinc-600 px-1.5 py-0.5 text-[10px] text-zinc-400">静态假数据 · 未接后端</span>
+  <button class="demo-btn demo-btn-active" data-view="view-list" onclick="switchView(this)">① 应用模式</button>
+  <button class="demo-btn" data-view="view-detail" onclick="switchView(this)">② 详情（Tab）</button>
+  <button class="demo-btn" data-view="view-wizard" onclick="switchView(this)">③ 向导（评审用）</button>
+  <button class="demo-btn" data-view="view-modals" onclick="switchView(this)">④ 确认弹窗</button>
+</div>
+
+<div class="pt-12">
+
+<!-- ══════════ 视图①：应用列表页 ══════════ -->
+<section id="view-list" class="flex min-h-[calc(100vh-3rem)]">
+  <!-- 侧边栏壳子 -->
+  <aside class="w-56 shrink-0 flex-col gap-4 border-r border-zinc-200 bg-zinc-50 p-3 max-md:hidden flex">
+    <div class="flex items-center gap-2 px-2 py-1">
+      <div class="flex h-7 w-7 items-center justify-center rounded-lg bg-zinc-900 text-xs font-bold text-white">K</div>
+      <span class="text-sm font-semibold">Kite</span>
+    </div>
+
+    <!-- 应用模式导航（普通用户默认） -->
+    <nav id="nav-app" class="flex flex-col gap-4">
+      <div>
+        <div class="nav-item nav-item-active"><svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/></svg>应用</div>
+      </div>
+      <div>
+        <div class="flex items-center justify-between px-2.5 pb-1">
+          <span class="text-xs font-medium text-zinc-400">空间</span>
+          <button class="text-xs text-zinc-400 hover:text-zinc-600" title="新建空间（自动打 kite.application/space 标记）" onclick="toast('演示：新建空间，自动打 kite.application/space 标记')">＋ 新建</button>
+        </div>
+        <input id="space-search" class="input mb-1 h-7 px-2 text-xs" placeholder="搜索空间…" oninput="renderSpaceNav()" />
+        <div id="nav-space-all" class="nav-item nav-item-active" onclick="pickNavSpace('')">全部空间</div>
+        <div id="space-nav-list" class="max-h-44 overflow-y-auto"></div>
+      </div>
+      <div class="mt-auto"></div>
+    </nav>
+
+    <!-- 专业模式导航（现有 k8s 资源全集） -->
+    <nav id="nav-pro" class="hidden flex-col gap-4">
+      <div>
+        <div class="px-2.5 pb-1 text-xs font-medium text-zinc-400">工作负载</div>
+        <div class="nav-item" onclick="toast('演示：专业模式 · Deployments')"><span class="dot bg-zinc-300"></span>Deployments</div>
+        <div class="nav-item" onclick="toast('演示：专业模式 · StatefulSets')"><span class="dot bg-zinc-300"></span>StatefulSets</div>
+        <div class="nav-item" onclick="toast('演示：专业模式 · Pods')"><span class="dot bg-zinc-300"></span>Pods</div>
+      </div>
+      <div>
+        <div class="px-2.5 pb-1 text-xs font-medium text-zinc-400">网络</div>
+        <div class="nav-item" onclick="toast('演示：专业模式 · Services')"><span class="dot bg-zinc-300"></span>Services</div>
+        <div class="nav-item" onclick="toast('演示：专业模式 · Ingresses')"><span class="dot bg-zinc-300"></span>Ingresses</div>
+      </div>
+      <div>
+        <div class="px-2.5 pb-1 text-xs font-medium text-zinc-400">应用</div>
+        <div class="nav-item" onclick="toast('演示：专业模式 · Helm Charts')"><span class="dot bg-zinc-300"></span>Helm Charts</div>
+        <div class="nav-item" onclick="toast('演示：专业模式 · Helm Releases')"><span class="dot bg-zinc-300"></span>Helm Releases</div>
+      </div>
+      <div class="mt-auto"></div>
+    </nav>
+
+    <button id="mode-toggle" class="w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs font-medium text-zinc-600 shadow-sm" onclick="toggleSideMode()" title="当前：应用模式">切换到专业模式</button>
+  </aside>
+
+  <!-- 主区域 -->
+  <div class="min-w-0 flex-1">
+    <header class="flex items-center justify-between border-b border-zinc-200 bg-white px-6 py-3.5">
+      <h1 class="text-base font-semibold">应用</h1>
+      <div class="flex items-center gap-3">
+        <label class="flex items-center gap-1.5 text-xs text-zinc-400 max-md:hidden">集群
+          <select id="global-cluster" class="input !h-7 !w-[9.5rem] py-0 text-xs" onchange="setGlobalCluster(this.value)">
+            <option value="prod-cluster">prod-cluster</option>
+            <option value="staging-cluster">staging-cluster</option>
+            <option value="edge-cluster" disabled>edge-cluster（离线）</option>
+          </select>
+        </label>
+        <div class="flex h-7 w-7 items-center justify-center rounded-full bg-zinc-200 text-xs font-medium text-zinc-600">管</div>
+      </div>
+    </header>
+
+    <div class="p-6">
+      <div class="mb-4 flex items-center justify-between gap-3">
+        <input class="input max-w-xs" placeholder="搜索应用…" />
+        <button class="btn btn-primary" onclick="setWizardMode('create');switchViewByName('view-wizard'); gotoStep(1)">＋ 创建应用</button>
+      </div>
+
+      <div class="card overflow-hidden">
+        <table class="w-full">
+          <thead class="border-b border-zinc-200 bg-zinc-50/60">
+            <tr>
+              <th class="th w-36">名称</th>
+              <th class="th w-24">空间</th>
+              <th class="th">描述</th>
+              <th class="th w-64">
+                <div class="flex items-center gap-1.5">集群状态
+                  <select id="cluster-filter" class="h-6 max-w-[8rem] rounded-md border border-zinc-200 bg-white px-1.5 text-xs text-zinc-600 outline-none" onchange="applyListFilter()">
+                    <option value="">全部集群</option>
+                    <option value="prod">prod</option>
+                    <option value="staging">staging</option>
+                    <option value="edge">edge</option>
+                  </select>
+                </div>
+              </th>
+              <th class="th w-40">最近发布</th>
+              <th class="th w-32 text-right">操作</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-zinc-100">
+            <tr class="hover:bg-zinc-50/60" data-clusters="prod staging" data-space="default">
+              <td class="td font-medium text-zinc-900"><a class="cursor-pointer hover:underline" onclick="gotoDetail()">my-app</a></td>
+              <td class="td"><span class="chip chip-zinc">default</span></td>
+              <td class="td">核心 API 服务</td>
+              <td class="td">
+                <div class="flex flex-wrap gap-1.5">
+                  <span class="chip chip-green cursor-pointer" title="筛选 prod-cluster" onclick="setClusterFilter('prod')"><span class="dot bg-green-500"></span>prod</span>
+                  <span class="chip chip-amber cursor-pointer" title="筛选 staging-cluster" onclick="setClusterFilter('staging')"><span class="dot bg-amber-500"></span>staging</span>
+                </div>
+              </td>
+              <td class="td text-zinc-500">2026-09-21 10:21</td>
+              <td class="td text-right">
+                <div class="inline-flex items-center gap-1">
+                  <button class="btn btn-sm" onclick="gotoDetail()">查看</button>
+                  <div class="dropdown relative inline-block">
+                    <button class="btn btn-ghost px-1.5" onclick="toggleMenu(event)">⋯</button>
+                    <div class="menu hidden">
+                      <div class="menu-item" onclick="toast('演示：编辑应用描述')">编辑描述</div>
+                      <div class="menu-item menu-item-danger" onclick="toast('演示：存在集群配置（prod、staging），无法删除——请先在各集群「下线」')">删除</div>
+                    </div>
+                  </div>
+                </div>
+              </td>
+            </tr>
+            <tr class="hover:bg-zinc-50/60" data-clusters="prod" data-space="billing">
+              <td class="td font-medium text-zinc-900"><a class="cursor-pointer hover:underline" onclick="gotoDetail()">billing-web</a></td>
+              <td class="td"><span class="chip chip-zinc">billing</span></td>
+              <td class="td">计费前端</td>
+              <td class="td">
+                <div class="flex flex-wrap gap-1.5">
+                  <span class="chip chip-green cursor-pointer" title="筛选 prod-cluster" onclick="setClusterFilter('prod')"><span class="dot bg-green-500"></span>prod</span>
+                </div>
+              </td>
+              <td class="td text-zinc-500">2026-09-19 14:02</td>
+              <td class="td text-right">
+                <div class="inline-flex items-center gap-1">
+                  <button class="btn btn-sm" onclick="gotoDetail()">查看</button>
+                  <div class="dropdown relative inline-block">
+                    <button class="btn btn-ghost px-1.5" onclick="toggleMenu(event)">⋯</button>
+                    <div class="menu hidden">
+                      <div class="menu-item" onclick="toast('演示：编辑应用描述')">编辑描述</div>
+                      <div class="menu-item menu-item-danger" onclick="toast('演示：存在集群配置（prod），无法删除——请先在集群「下线」')">删除</div>
+                    </div>
+                  </div>
+                </div>
+              </td>
+            </tr>
+            <tr class="hover:bg-zinc-50/60" data-clusters="" data-space="data">
+              <td class="td font-medium text-zinc-900"><a class="cursor-pointer hover:underline" onclick="gotoDetail()">data-worker</a></td>
+              <td class="td"><span class="chip chip-zinc">data</span></td>
+              <td class="td">离线数据同步任务</td>
+              <td class="td">
+                <span class="chip chip-zinc"><span class="dot bg-zinc-300"></span>未部署</span>
+              </td>
+              <td class="td text-zinc-400">—</td>
+              <td class="td text-right">
+                <div class="inline-flex items-center gap-1">
+                  <button class="btn btn-sm" onclick="openFirstPublish()">部署</button>
+                  <div class="dropdown relative inline-block">
+                    <button class="btn btn-ghost px-1.5" onclick="toggleMenu(event)">⋯</button>
+                    <div class="menu hidden">
+                      <div class="menu-item" onclick="toast('演示：编辑应用描述')">编辑描述</div>
+                      <div class="menu-item menu-item-danger" onclick="closeMenus();openModal('modal-delete')">删除</div>
+                    </div>
+                  </div>
+                </div>
+              </td>
+            </tr>
+            <tr id="list-empty" class="hidden"><td class="td py-10 text-center text-sm text-zinc-400" colspan="6">当前筛选条件下没有应用——调整空间 / 集群筛选，或点击右上角「＋ 创建应用」</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="mt-3 flex items-center gap-4 text-xs text-zinc-400">
+        <span class="flex items-center gap-1.5"><span class="dot bg-green-500"></span>已同步</span>
+        <span class="flex items-center gap-1.5"><span class="dot bg-amber-500"></span>有漂移</span>
+        <span class="flex items-center gap-1.5"><span class="dot bg-red-500"></span>异常</span>
+        <span class="flex items-center gap-1.5"><span class="dot bg-zinc-300"></span>未部署</span>
+        <span class="ml-auto">列表状态为各集群配置的聚合（取最差）</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ 视图②：应用详情页（集群 Tab） ══════════ -->
+<section id="view-detail" class="hidden min-h-[calc(100vh-3rem)]">
+  <header class="border-b border-zinc-200 bg-white px-6 py-3.5">
+    <div class="flex items-center justify-between">
+      <div>
+        <a class="cursor-pointer text-sm text-zinc-400 hover:text-zinc-600" onclick="switchViewByName('view-list')">← 应用</a>
+        <div class="mt-0.5 flex items-baseline gap-3">
+          <h1 class="font-mono text-base font-semibold">default / my-app</h1>
+          <span class="text-sm text-zinc-400">核心 API 服务</span>
+        </div>
+      </div>
+
+    </div>
+  </header>
+
+  <div class="p-6">
+    <!-- Tab 条 -->
+    <div class="mb-4 inline-flex gap-1 rounded-xl bg-zinc-200/50 p-1">
+      <button class="tab tab-active" data-tab="tab-prod" onclick="switchTab(this)"><span class="dot bg-green-500" id="prod-tab-dot"></span>prod-cluster</button>
+      <button class="tab" data-tab="tab-staging" onclick="switchTab(this)" id="tab-staging-btn"><span class="dot bg-amber-500" id="stg-tab-dot"></span>staging-cluster</button>
+
+    </div>
+
+    <!-- ── Tab：prod（已同步） ── -->
+    <div id="tab-prod">
+      <div id="prod-body" class="space-y-4">
+      <div class="card flex flex-wrap items-center gap-x-6 gap-y-2 px-5 py-3.5">
+        <span class="chip chip-green"><span class="dot bg-green-500"></span>2/2 Ready</span>
+        <span class="chip chip-green"><span class="dot bg-green-500"></span>已同步</span>
+        <span class="text-xs text-zinc-400">上次发布 2026-09-21 10:21 · 上次拉取 2026-09-20 18:00</span>
+        <div class="ml-auto flex items-center gap-2">
+          <button class="btn btn-primary" onclick="openDeployModal()">发布</button>
+          <button class="btn" onclick="restartApp()">重启</button>
+          <button class="btn" onclick="openOfflineModal()">下线</button>
+          <div class="dropdown relative">
+            <button class="btn btn-ghost px-2" onclick="toggleMenu(event)">⋯</button>
+            <div class="menu hidden">
+              <div class="menu-item" onclick="toast('演示：复制配置到其他集群')">复制到其他集群</div>
+              <div class="menu-item" onclick="toast('演示：查看上次发布 YAML')">查看上次发布 YAML</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="flex items-center justify-between border-b border-zinc-100 px-5 py-3">
+          <span class="card-title">Pod（2）</span>
+          <span class="text-xs text-zinc-400">自动刷新 · 5s</span>
+        </div>
+        <table class="w-full">
+          <thead><tr class="border-b border-zinc-100"><th class="th">NAME</th><th class="th">STATUS</th><th class="th">CPU / 内存</th><th class="th">RESTARTS</th><th class="th">AGE</th><th class="th">NODE</th><th class="th text-right">操作</th></tr></thead>
+          <tbody class="divide-y divide-zinc-100">
+            <tr><td class="td font-mono text-xs"><button class="hover:underline" onclick="openPod('my-app-7d9f6-abc12')">my-app-7d9f6-abc12</button></td><td class="td"><span class="chip chip-green"><span class="dot bg-green-500"></span>Running</span></td><td class="td font-mono text-xs">2m / 128Mi</td><td class="td">0</td><td class="td">3d</td><td class="td font-mono text-xs">node-1</td><td class="td text-right"><div class="inline-flex gap-1"><button class="btn btn-sm" onclick="restartPod('my-app-7d9f6-abc12')">重启</button><button class="btn btn-sm" onclick="openTerminal('my-app-7d9f6-abc12')">终端</button><button class="btn btn-sm" onclick="openLogs('my-app-7d9f6-abc12')">日志</button></div></td></tr>
+            <tr><td class="td font-mono text-xs"><button class="hover:underline" onclick="openPod('my-app-7d9f6-xyz90')">my-app-7d9f6-xyz90</button></td><td class="td"><span class="chip chip-green"><span class="dot bg-green-500"></span>Running</span></td><td class="td font-mono text-xs">3m / 142Mi</td><td class="td">0</td><td class="td">3d</td><td class="td font-mono text-xs">node-2</td><td class="td text-right"><div class="inline-flex gap-1"><button class="btn btn-sm" onclick="restartPod('my-app-7d9f6-xyz90')">重启</button><button class="btn btn-sm" onclick="openTerminal('my-app-7d9f6-xyz90')">终端</button><button class="btn btn-sm" onclick="openLogs('my-app-7d9f6-xyz90')">日志</button></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card px-5 py-4">
+        <div class="card-title mb-3">网络</div>
+        <div class="grid gap-3 md:grid-cols-2">
+          <div class="rounded-lg border border-zinc-200 p-3">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-medium text-zinc-400">Service · ClusterIP</span>
+              <button class="btn btn-ghost px-1 py-0.5 text-xs" onclick="copyText('my-app.default:80')">复制</button>
+            </div>
+            <div class="mt-1 font-mono text-sm">my-app : 80 · 9090</div>
+            <div class="mt-0.5 font-mono text-xs text-zinc-400">10.0.0.45</div>
+          </div>
+          <div class="rounded-lg border border-zinc-200 p-3">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-medium text-zinc-400">Ingress</span>
+              <button class="btn btn-ghost px-1 py-0.5 text-xs" onclick="copyText('https://api.example.com')">复制</button>
+            </div>
+            <div class="mt-1 font-mono text-sm">api.example.com → http:80</div>
+            <div class="mt-0.5 font-mono text-xs text-zinc-400">203.0.113.7</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card px-5 py-4">
+        <div class="card-title mb-3">配置</div>
+        <div class="grid gap-3 md:grid-cols-2">
+          <div class="rounded-lg border border-zinc-200 p-3">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-medium text-zinc-400">ConfigMap · my-app-config</span>
+              <button class="btn btn-ghost px-1 py-0.5 text-xs" onclick="toast('演示：查看/编辑配置文件')">查看</button>
+            </div>
+            <div class="mt-1 text-sm">挂载 /etc/my-app · 1 个文件</div>
+            <div class="mt-0.5 font-mono text-xs text-zinc-400">app.properties</div>
+          </div>
+          <div class="rounded-lg border border-zinc-200 p-3">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-medium text-zinc-400">Secret · my-app-secret</span>
+              <button class="btn btn-ghost px-1 py-0.5 text-xs" onclick="toast('演示：Secret 内容已脱敏，仅可查看文件名')">查看</button>
+            </div>
+            <div class="mt-1 text-sm">挂载 /etc/my-app · 1 个文件</div>
+            <div class="mt-0.5 font-mono text-xs text-zinc-400">db-password（内容脱敏）</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card flex items-center gap-3 px-5 py-4">
+        <span class="chip chip-green"><span class="dot bg-green-500"></span>已同步</span>
+        <span class="text-sm text-zinc-500">配置一致，无漂移</span>
+        <button class="btn btn-sm ml-auto" onclick="toast('演示：查看上次发布 YAML')">查看上次发布 YAML</button>
+      </div>
+
+      <div class="card">
+        <div class="border-b border-zinc-100 px-5 py-3"><span class="card-title">⚠ 事件（1）</span></div>
+        <div class="divide-y divide-zinc-100">
+          <div class="flex items-center gap-3 px-5 py-2.5 text-sm">
+            <span class="chip chip-red"><span class="dot bg-red-500"></span>Warning</span>
+            <span class="font-mono text-xs text-zinc-500">Unhealthy</span>
+            <span class="text-zinc-600">Readiness probe failed: HTTP 503</span>
+            <span class="ml-auto text-xs text-zinc-400">1 次 · 2 小时前</span>
+          </div>
+        </div>
+      </div>
+      </div><!-- /prod-body -->
+      <div id="prod-offlined" class="hidden">
+        <div class="card flex flex-col items-center gap-2 px-6 py-16 text-center">
+          <span class="chip chip-zinc"><span class="dot bg-zinc-400"></span>已下线</span>
+          <div class="off-line2 text-sm text-zinc-500">集群资源已删除</div>
+          <div class="off-line3 text-xs text-zinc-400">配置与历史版本已保留，重新发布仍使用原有配置</div>
+          <button class="btn btn-primary mt-2" onclick="republish()">重新发布</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Tab：staging（漂移 + 冲突） ── -->
+    <div id="tab-staging" class="hidden">
+      <div id="staging-body" class="space-y-4">
+      <div class="card flex flex-wrap items-center gap-x-6 gap-y-2 px-5 py-3.5">
+        <span class="chip chip-amber"><span class="dot bg-amber-500"></span>1/2 Ready</span>
+        <span class="chip chip-amber" id="stg-drift-chip"><span class="dot bg-amber-500"></span>配置漂移（2）</span>
+        <span class="text-xs text-zinc-400" id="stg-times">上次发布 2026-09-18 09:00 · 尚未拉取</span>
+        <div class="ml-auto flex items-center gap-2">
+          <button class="btn btn-primary" onclick="openDeployModal()">发布</button>
+          <button class="btn" onclick="restartApp()">重启</button>
+          <button class="btn" onclick="openOfflineModal()">下线</button>
+          <div class="dropdown relative">
+            <button class="btn btn-ghost px-2" onclick="toggleMenu(event)">⋯</button>
+            <div class="menu hidden">
+              <div class="menu-item" onclick="toast('演示：复制配置到其他集群')">复制到其他集群</div>
+              <div class="menu-item" onclick="toast('演示：查看上次发布 YAML')">查看上次发布 YAML</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="flex items-center justify-between border-b border-zinc-100 px-5 py-3">
+          <span class="card-title">Pod（2）</span>
+          <span class="text-xs text-zinc-400">自动刷新 · 5s</span>
+        </div>
+        <table class="w-full">
+          <thead><tr class="border-b border-zinc-100"><th class="th">NAME</th><th class="th">STATUS</th><th class="th">CPU / 内存</th><th class="th">RESTARTS</th><th class="th">AGE</th><th class="th">NODE</th><th class="th text-right">操作</th></tr></thead>
+          <tbody class="divide-y divide-zinc-100">
+            <tr><td class="td font-mono text-xs"><button class="hover:underline" onclick="openPod('my-app-5c2a1-kq731')">my-app-5c2a1-kq731</button></td><td class="td"><span class="chip chip-green"><span class="dot bg-green-500"></span>Running</span></td><td class="td font-mono text-xs">1m / 96Mi</td><td class="td">0</td><td class="td">1d</td><td class="td font-mono text-xs">node-3</td><td class="td text-right"><div class="inline-flex gap-1"><button class="btn btn-sm" onclick="restartPod('my-app-5c2a1-kq731')">重启</button><button class="btn btn-sm" onclick="openTerminal('my-app-5c2a1-kq731')">终端</button><button class="btn btn-sm" onclick="openLogs('my-app-5c2a1-kq731')">日志</button></div></td></tr>
+            <tr><td class="td font-mono text-xs"><button class="hover:underline" onclick="openPod('my-app-5c2a1-mw208')">my-app-5c2a1-mw208</button></td><td class="td"><span class="chip chip-red"><span class="dot bg-red-500"></span>ImagePullBackOff</span></td><td class="td font-mono text-xs">1m / 64Mi</td><td class="td">5</td><td class="td">1d</td><td class="td font-mono text-xs">node-4</td><td class="td text-right"><div class="inline-flex gap-1"><button class="btn btn-sm" onclick="restartPod('my-app-5c2a1-mw208')">重启</button><button class="btn btn-sm" onclick="openTerminal('my-app-5c2a1-mw208')">终端</button><button class="btn btn-sm" onclick="openLogs('my-app-5c2a1-mw208')">日志</button></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card px-5 py-4">
+        <div class="card-title mb-3">网络</div>
+        <div class="grid gap-3 md:grid-cols-2">
+          <div class="rounded-lg border border-zinc-200 p-3">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-medium text-zinc-400">Service · ClusterIP</span>
+              <button class="btn btn-ghost px-1 py-0.5 text-xs" onclick="copyText('my-app.default.svc:80')">复制</button>
+            </div>
+            <div class="mt-1 font-mono text-sm">my-app : 80 · 9090</div>
+            <div class="mt-0.5 font-mono text-xs text-zinc-400">10.2.0.31</div>
+          </div>
+          <div class="rounded-lg border border-zinc-200 p-3">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-medium text-zinc-400">Ingress</span>
+              <button class="btn btn-ghost px-1 py-0.5 text-xs" onclick="copyText('https://stg.example.com')">复制</button>
+            </div>
+            <div class="mt-1 font-mono text-sm">stg.example.com → http:80</div>
+            <div class="mt-0.5 font-mono text-xs text-zinc-400">198.51.100.23</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 漂移明细：冲突态（发布/拉取后切换为下方已同步态） -->
+      <div class="card px-5 py-4">
+        <div id="stg-conflict">
+        <div class="mb-3 flex items-center gap-2">
+          <span class="card-title">配置一致性</span>
+          <span class="chip chip-amber"><span class="dot bg-amber-500"></span>冲突：两侧均有修改</span>
+          <span class="ml-auto text-xs text-zinc-400">校验于刚刚</span>
+        </div>
+        <div class="grid gap-4 md:grid-cols-2">
+          <div class="rounded-lg border border-amber-200 bg-amber-50/40 p-3">
+            <div class="mb-2 text-xs font-semibold text-amber-700">集群侧变更（2）· 合并时采纳</div>
+            <div class="space-y-2">
+              <div>
+                <div class="diff-path">apps/v1 · Deployment/my-app · spec.replicas</div>
+                <div class="diff-val"><span class="text-zinc-400">基线 </span><span class="text-zinc-500 line-through">2</span> <span class="text-zinc-400">→ 集群当前 </span><span class="font-semibold text-amber-700">3</span></div>
+              </div>
+              <div>
+                <div class="diff-path">apps/v1 · Deployment/my-app · env.LOG_LEVEL</div>
+                <div class="diff-val"><span class="text-zinc-400">基线 </span><span class="text-zinc-500 line-through">info</span> <span class="text-zinc-400">→ 集群当前 </span><span class="font-semibold text-amber-700">warn</span> <span class="ml-1 chip chip-amber py-0">碰撞</span></div>
+              </div>
+              <div class="text-xs text-zinc-400">可能来源：手工 kubectl / HPA 调整</div>
+            </div>
+          </div>
+          <div class="rounded-lg border border-sky-200 bg-sky-50/40 p-3">
+            <div class="mb-2 text-xs font-semibold text-sky-700">库侧待发布（2）· 合并时保留</div>
+            <div class="space-y-2">
+              <div>
+                <div class="diff-path">apps/v1 · Deployment/my-app · containers[0].image</div>
+                <div class="diff-val"><span class="text-zinc-400">集群当前 </span><span class="text-zinc-500">nginx:1.24</span> <span class="text-zinc-400">→ 库期望 </span><span class="font-semibold text-sky-700">nginx:1.25</span></div>
+              </div>
+              <div>
+                <div class="diff-path">apps/v1 · Deployment/my-app · env.LOG_LEVEL</div>
+                <div class="diff-val"><span class="text-zinc-400">基线 </span><span class="text-zinc-500">info</span> <span class="text-zinc-400">→ 库期望 </span><span class="font-semibold text-sky-700">debug</span> <span class="ml-1 chip chip-amber py-0">碰撞</span></div>
+              </div>
+              <div class="text-xs text-zinc-400">2026-09-21 由 管理员 修改，尚未发布</div>
+            </div>
+          </div>
+        </div>
+        <div class="mt-3 flex flex-wrap items-center gap-2 border-t border-zinc-100 pt-3">
+          <span class="text-sm text-zinc-500">⛔ 冲突未处理前发布被禁止（发布永不覆盖集群手动修改）：</span>
+          <button class="btn btn-sm btn-primary" onclick="openMergeModal()">处理冲突（合并）</button>
+        </div>
+        </div><!-- /stg-conflict -->
+        <div id="stg-merged" class="hidden flex items-center gap-3">
+          <span class="chip chip-amber"><span class="dot bg-amber-500"></span>已合并 · 待发布</span>
+          <span class="text-sm text-zinc-500">冲突已处理：集群修改已采纳/裁决，变更待发布</span>
+          <button class="btn btn-sm btn-primary ml-auto" onclick="openDeployModal()">去发布</button>
+        </div>
+        <div id="stg-synced" class="hidden items-center gap-3">
+          <span class="chip chip-green"><span class="dot bg-green-500"></span>已同步</span>
+          <span class="text-sm text-zinc-500">配置一致，无漂移</span>
+          <span class="text-xs text-zinc-400" id="stg-synced-note"></span>
+          <button class="btn btn-sm ml-auto" onclick="toast('演示：查看上次发布 YAML')">查看上次发布 YAML</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="border-b border-zinc-100 px-5 py-3"><span class="card-title">⚠ 事件（2）</span></div>
+        <div class="divide-y divide-zinc-100">
+          <div class="flex items-center gap-3 px-5 py-2.5 text-sm">
+            <span class="chip chip-red"><span class="dot bg-red-500"></span>Warning</span>
+            <span class="font-mono text-xs text-zinc-500">Failed</span>
+            <span class="text-zinc-600">Error: ErrImagePull · nginx:1.25 不存在于仓库（staging 集群无法访问该镜像）</span>
+            <span class="ml-auto text-xs text-zinc-400">6 次 · 30 分钟前</span>
+          </div>
+          <div class="flex items-center gap-3 px-5 py-2.5 text-sm">
+            <span class="chip chip-red"><span class="dot bg-red-500"></span>Warning</span>
+            <span class="font-mono text-xs text-zinc-500">BackOff</span>
+            <span class="text-zinc-600">Back-off restarting failed container</span>
+            <span class="ml-auto text-xs text-zinc-400">5 次 · 1 小时前</span>
+          </div>
+        </div>
+      </div>
+      </div><!-- /staging-body -->
+      <div id="staging-offlined" class="hidden">
+        <div class="card flex flex-col items-center gap-2 px-6 py-16 text-center">
+          <span class="chip chip-zinc"><span class="dot bg-zinc-400"></span>已下线</span>
+          <div class="off-line2 text-sm text-zinc-500">集群资源已删除</div>
+          <div class="off-line3 text-xs text-zinc-400">配置与历史版本已保留，重新发布仍使用原有配置</div>
+          <button class="btn btn-primary mt-2" onclick="republish()">重新发布</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ 视图③：创建/编辑向导 ══════════ -->
+<section id="view-wizard" class="hidden min-h-[calc(100vh-3rem)] p-6">
+  <div class="mx-auto max-w-3xl">
+    <div class="card overflow-hidden">
+      <div class="flex items-center justify-between border-b border-zinc-200 px-6 py-4">
+        <div class="flex items-center gap-2">
+          <span id="wizard-title" class="text-base font-semibold">创建应用</span>
+          <span class="chip chip-zinc font-mono" id="wizard-header-space">default</span>
+        </div>
+        <span id="wizard-step-label" class="text-xs text-zinc-400">第 1 / 6 步</span>
+      </div>
+
+      <!-- 步进条（目标集群步骤为只读展示：编辑由发布入口决定集群；创建后未部署，首次发布时绑定） -->
+      <div class="flex items-center gap-2 overflow-x-auto border-b border-zinc-100 px-6 py-4 text-xs">
+        <button class="flex items-center gap-2" onclick="gotoStep(1)"><span id="sd-1" class="step-dot step-dot-active">1</span><span class="font-medium text-zinc-900">基本信息</span></button>
+        <span class="h-px w-6 bg-zinc-200"></span>
+        <button class="flex items-center gap-2" onclick="gotoStep(2)"><span id="sd-2" class="step-dot">2</span><span class="text-zinc-400">运行配置</span></button>
+        <span class="h-px w-6 bg-zinc-200"></span>
+        <button class="flex items-center gap-2" onclick="gotoStep(3)"><span id="sd-3" class="step-dot">3</span><span class="text-zinc-400">配置文件</span></button>
+        <span class="h-px w-6 bg-zinc-200"></span>
+        <button class="flex items-center gap-2" onclick="gotoStep(4)"><span id="sd-4" class="step-dot">4</span><span class="text-zinc-400">网络访问</span></button>
+        <span class="h-px w-6 bg-zinc-200"></span>
+        <button class="flex items-center gap-2" onclick="gotoStep(5)"><span id="sd-5" class="step-dot">5</span><span class="text-zinc-400">目标集群</span></button>
+        <span class="h-px w-6 bg-zinc-200"></span>
+        <button class="flex items-center gap-2" onclick="gotoStep(6)"><span id="sd-6" class="step-dot">6</span><span class="text-zinc-400">预览与高级</span></button>
+      </div>
+
+      <div class="min-h-[22rem] px-6 py-5">
+        <!-- 步骤1 基本信息 -->
+        <div class="step-panel" data-step="1">
+          <div class="grid gap-4 md:grid-cols-2">
+            <div>
+              <label class="label">应用名称（空间 / 应用名）</label>
+              <div class="flex">
+                <span id="wizard-name-space" class="flex h-9 items-center whitespace-nowrap rounded-l-lg border border-r-0 border-zinc-200 bg-zinc-50 px-3 font-mono text-sm text-zinc-500">default</span>
+                <span class="flex h-9 items-center border-y border-zinc-200 bg-zinc-50 px-1 text-sm text-zinc-400">/</span>
+                <input class="input rounded-l-none" value="my-app" />
+              </div>
+              <p class="mt-1 text-xs text-zinc-400">空间由侧边栏当前空间决定，不可编辑；应用名仅小写字母/数字/中划线，创建后不可修改</p>
+            </div>
+            <div class="flex items-end"><p class="mb-[2.4rem] text-xs text-zinc-400">创建后应用将归属该空间（暂未部署，首次发布在详情页进行）；列表与详情均以 空间/应用名 标识</p></div>
+          </div>
+          <div class="mt-4"><label class="label">描述</label><input class="input" value="核心 API 服务" /></div>
+          <div class="mt-4">
+            <label class="label">工作负载类型</label>
+            <div class="flex gap-2">
+              <label class="btn cursor-pointer border-zinc-900 bg-zinc-900 text-white"><input type="radio" name="wl" class="accent-white" checked /> Deployment</label>
+              <label class="btn cursor-pointer"><input type="radio" name="wl" class="accent-zinc-900" /> StatefulSet</label>
+            </div>
+          </div>
+          <div class="mt-4 grid gap-4 md:grid-cols-[1fr_8rem]">
+            <div><label class="label">镜像</label><input class="input" value="nginx:1.25" /><p class="mt-1 text-xs text-zinc-400">输入后自动提示可用 tag</p></div>
+            <div><label class="label">副本数</label><input class="input" value="2" type="number" /></div>
+          </div>
+        </div>
+
+        <!-- 步骤2 运行配置 -->
+        <div class="step-panel hidden" data-step="2">
+          <div>
+            <label class="label">环境变量</label>
+            <div class="space-y-2" id="env-rows"></div>
+            <div class="mt-2 text-center"><span class="add-link" onclick="addEnvRow()">＋ 添加变量</span></div>
+          </div>
+          <div class="mt-6">
+            <label class="label">资源请求 / 限额</label>
+            <div class="grid gap-4 md:grid-cols-2">
+              <div class="rounded-lg border border-zinc-200 p-3">
+                <div class="mb-2 text-xs font-medium text-zinc-400">Requests</div>
+                <div class="grid grid-cols-2 gap-2">
+                  <div><div class="mb-1 text-xs text-zinc-500">CPU</div><input class="input" value="100m" /></div>
+                  <div><div class="mb-1 text-xs text-zinc-500">内存</div><input class="input" value="128Mi" /></div>
+                </div>
+              </div>
+              <div class="rounded-lg border border-zinc-200 p-3">
+                <div class="mb-2 text-xs font-medium text-zinc-400">Limits</div>
+                <div class="grid grid-cols-2 gap-2">
+                  <div><div class="mb-1 text-xs text-zinc-500">CPU</div><input class="input" value="500m" /></div>
+                  <div><div class="mb-1 text-xs text-zinc-500">内存</div><input class="input" value="512Mi" /></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 步骤3 配置文件（可选，紧凑列表 + 点击编辑） -->
+        <div class="step-panel hidden" data-step="3">
+          <div class="rounded-lg border border-zinc-200 p-4">
+            <div class="text-sm font-medium">配置文件<span class="ml-1.5 text-xs font-normal text-zinc-400">可选</span></div>
+            <p class="mt-1 text-xs text-zinc-400">文件按挂载点分组；添加/编辑文件时从挂载点中下拉选择，不手输路径；以 subPath 逐文件挂载，只覆盖该文件、不遮蔽目录内其他文件</p>
+
+            <div class="mt-3 rounded-lg border border-zinc-200 p-3">
+              <div class="text-xs font-medium text-zinc-500">挂载点</div>
+              <div id="mp-chips" class="mt-2 flex flex-wrap gap-1.5"></div>
+              <div id="mp-input-row" class="mt-2 hidden items-center gap-2">
+                <input id="mp-input" class="input h-8 max-w-[14rem] py-0 font-mono text-xs" placeholder="/etc/xxx，以 / 开头" />
+                <button class="btn btn-sm btn-primary" onclick="confirmAddMountPoint()">添加</button>
+                <button class="btn btn-sm" onclick="hideMpInput()">取消</button>
+                <span id="mp-error" class="text-xs text-red-600"></span>
+              </div>
+              <div class="mt-2 text-center"><span class="add-link" onclick="showMpInput()">＋ 挂载点</span></div>
+            </div>
+
+            <div id="config-files" class="mt-4 hidden space-y-4"></div>
+            <div id="config-empty" class="mt-4 cursor-pointer rounded-lg border border-dashed border-zinc-300 px-4 py-8 text-center transition-colors hover:border-zinc-400" onclick="addConfigFile()" title="添加配置文件">
+              <div class="text-sm text-zinc-500">＋ 点击添加配置文件</div>
+              <div class="mt-1 text-xs text-zinc-400">不需要配置文件的话，直接「下一步」即可</div>
+            </div>
+            <p class="mt-3 text-xs text-zinc-400">引用已有共享 ConfigMap/Secret 或 envFrom、subPath 等高级用法，请保存后使用 YAML 模式 / ExtraYAML</p>
+          </div>
+        </div>
+        <!-- 步骤4 网络访问 -->
+        <div class="step-panel hidden" data-step="4">
+          <div class="rounded-lg border border-zinc-200 p-4">
+            <div class="text-sm font-medium">端口</div>
+            <p class="mt-1 text-xs text-zinc-400">端口可自定义，名称自动生成（如 tcp_80）无需填写；点击「＋ 对外域名」配置对外访问（生成 Ingress 规则），不配置 = 仅集群内（Service 暴露）</p>
+            <div class="mt-3 space-y-2">
+              <div class="flex items-center gap-2">
+                <span class="w-[7rem] shrink-0 text-xs text-zinc-400">端口</span>
+                <span class="w-[9rem] shrink-0 text-xs text-zinc-400">类型（Service）</span>
+                <span class="min-w-[8rem] flex-1 text-xs text-zinc-400">对外访问（域名 / 路径）</span>
+                <span class="w-8 shrink-0"></span>
+              </div>
+              <div id="port-rows" class="space-y-2"></div>
+            </div>
+            <div class="mt-2 text-center"><span class="add-link" onclick="addPortRow()">＋ 添加端口</span></div>
+            <div id="ingress-class-box" class="mt-4 w-56">
+              <label class="label">IngressClass</label>
+              <select class="input"><option>nginx</option><option>（集群默认）</option></select>
+            </div>
+          </div>
+        </div>
+        <!-- 步骤5 目标集群（只读展示，不可修改） -->
+        <div class="step-panel hidden" data-step="5">
+          <label class="label">目标集群（只读）</label>
+          <div id="wl-edit" class="hidden">
+            <div class="flex items-center gap-3 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3">
+              <span id="wl-cluster-name" class="text-sm font-medium"></span>
+              <span class="chip chip-green"><span class="dot bg-green-500"></span>在线</span>
+              <span id="wl-cluster-meta" class="ml-auto text-xs text-zinc-400"></span>
+            </div>
+            <p class="mt-2 text-xs text-zinc-400">编辑模式下目标集群由发布入口（详情页集群 Tab）决定，不可在此修改；如需其他集群，可复制配置后在对应集群的发布弹窗修改</p>
+          </div>
+          <div id="wl-create">
+            <div class="rounded-lg border border-dashed border-zinc-300 px-4 py-6 text-center">
+              <div class="text-sm text-zinc-500">创建后应用暂未绑定集群（未部署）</div>
+              <div class="mt-1 text-xs text-zinc-400">首次发布在详情页进行：对指定集群发布时才会创建该集群的配置；每个集群一份独立配置</div>
+            </div>
+          </div>
+          <div class="mt-4"><label class="label">空间</label><div class="flex h-9 items-center"><span id="wizard-uniform-space" class="chip chip-zinc">default</span></div><p class="mt-1 text-xs text-zinc-400">各集群配置统一使用当前空间；如需更换请先在侧边栏切换</p></div>
+        </div>
+
+        <!-- 步骤6 预览与高级（高级模式即本步：可切换 YAML 模式编辑整份 manifests） -->
+        <div class="step-panel hidden" data-step="6">
+          <div id="wiz-preview-mode">
+            <div class="mb-2 flex items-center justify-between">
+              <div class="label !mb-0">渲染预览（只读）</div>
+              <button class="btn btn-sm" onclick="toggleWizYaml(true)">切换 YAML 模式（编辑整份 manifests）</button>
+            </div>
+            <div class="grid gap-4 lg:grid-cols-2">
+            <div>
+              <div class="label">渲染预览（只读 · 每集群一份）</div>
+              <pre class="yaml"><span class="yk">apiVersion:</span> <span class="ys">apps/v1</span>
+<span class="yk">kind:</span> <span class="ys">Deployment</span>
+<span class="yk">metadata:</span>
+  <span class="yk">name:</span> <span class="ys">my-app</span>
+  <span class="yk">namespace:</span> <span class="ys">default</span>
+  <span class="yk">labels:</span>
+    <span class="yk">app.kubernetes.io/name:</span> <span class="ys">my-app</span>
+    <span class="yk">app.kubernetes.io/managed-by:</span> <span class="ys">kite</span>
+    <span class="yk">kite.application/name:</span> <span class="ys">my-app</span>
+<span class="yk">spec:</span>
+  <span class="yk">replicas:</span> <span class="ys">2</span>
+  <span class="yk">selector:</span>
+    <span class="yk">matchLabels:</span>
+      <span class="yk">app.kubernetes.io/name:</span> <span class="ys">my-app</span>
+  <span class="yk">template:</span>
+    <span class="yk">metadata:</span>
+      <span class="yk">labels:</span>
+        <span class="yk">app.kubernetes.io/name:</span> <span class="ys">my-app</span>
+    <span class="yk">spec:</span>
+      <span class="yk">containers:</span>
+        - <span class="yk">name:</span> <span class="ys">app</span>
+          <span class="yk">image:</span> <span class="ys">nginx:1.25</span>
+          <span class="yk">ports:</span>
+            - <span class="yk">name:</span> <span class="ys">tcp_80</span>
+              <span class="yk">containerPort:</span> <span class="ys">80</span>
+          <span class="yk">env:</span>
+            - <span class="yk">name:</span> <span class="ys">LOG_LEVEL</span>
+              <span class="yk">value:</span> <span class="ys">info</span>
+<span class="yc">---</span>
+<span class="yc"># ConfigMap/Secret（挂载 /etc/my-app）· Service · Ingress 文档同理…</span></pre>
+            </div>
+            <div>
+              <div class="label">高级扩展 · ExtraYAML（追加的多文档，随每次发布一并 apply）</div>
+              <textarea class="input !h-72 font-mono text-xs" placeholder="# 例：挂载 ConfigMap、PVC、HPA 等
+# apiVersion: v1
+# kind: ConfigMap
+# metadata:
+#   name: my-app-config
+# data:
+#   app.properties: |
+#     key=value"></textarea>
+              <p class="mt-1 text-xs text-zinc-400">追加的多文档随每次发布一并 apply；表单未覆盖的高级字段在 YAML 模式维护</p>
+            </div>
+          </div>
+          </div><!-- /wiz-preview-mode -->
+          <div id="wiz-yaml-mode" class="hidden">
+            <div class="mb-2 flex items-center justify-between">
+              <div class="label !mb-0">YAML 模式 · 整份 manifests（高级）</div>
+              <button class="btn btn-sm" onclick="toggleWizYaml(false)">返回渲染预览</button>
+            </div>
+            <textarea id="wiz-yaml" class="input !h-80 font-mono text-xs"></textarea>
+            <p class="mt-1 text-xs text-zinc-400">直接编辑完整多文档 manifests（--- 分隔）；保存后表单视图按已知字段回填，未知字段原样保留</p>
+          </div>
+          <p id="wiz-last-hint" class="mt-4 text-xs text-zinc-400"></p>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-between border-t border-zinc-200 px-6 py-4">
+        <button class="btn" onclick="toast('演示：取消')">取消</button>
+        <div class="flex gap-2">
+          <button id="wizard-prev" class="btn hidden" onclick="stepMove(-1)">上一步</button>
+          <button id="wizard-save" class="btn hidden" title="仅保存到数据库，不改动集群；稍后可在发布弹窗发布" onclick="toast('演示：配置已保存到数据库（未发布），可在发布弹窗随时发布')">保存配置</button>
+          <button id="wizard-go" class="btn btn-primary hidden" onclick="wizardGoFinish()">创建应用</button>
+          <button id="wizard-next" class="btn btn-primary" onclick="stepMove(1)">下一步 →</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ 视图④：确认弹窗集中演示 ══════════ -->
+<section id="view-modals" class="hidden min-h-[calc(100vh-3rem)] p-6">
+  <div class="mx-auto max-w-2xl space-y-3">
+    <div class="card px-5 py-4">
+      <div class="text-base font-semibold">确认弹窗集中演示</div>
+      <p class="mt-1 text-sm text-zinc-500">详情页中的「发布 / 拉取 / 删除」按钮也会打开对应弹窗，此处集中触发便于评审。</p>
+    </div>
+    <div class="card flex items-center justify-between px-5 py-4">
+      <div>
+        <div class="text-sm font-medium">发布（修改 + 发布唯一入口）</div>
+        <div class="text-xs text-zinc-400">镜像快捷修改 · 修改配置走向导（末步可编辑整份 YAML）· 冲突时禁止发布并引导合并处理</div>
+      </div>
+      <button class="btn" onclick="openDeployModal()">打开</button>
+    </div>
+    <div class="card flex items-center justify-between px-5 py-4">
+      <div>
+        <div class="text-sm font-medium">处理冲突（三方合并预览）</div>
+        <div class="text-xs text-zinc-400">无碰撞自动合并可回退 · 碰撞二选一 · 确认后自动进入发布</div>
+      </div>
+      <button class="btn" onclick="openMergeModal()">打开</button>
+    </div>
+    <div class="card flex items-center justify-between px-5 py-4">
+      <div>
+        <div class="text-sm font-medium">下线（双选项）</div>
+        <div class="text-xs text-zinc-400">仅下线（保留配置，重发布恢复原配置）/ 下线并删除配置（不可恢复）</div>
+      </div>
+      <button class="btn" onclick="openOfflineModal()">打开</button>
+    </div>
+    <div class="card flex items-center justify-between px-5 py-4">
+      <div>
+        <div class="text-sm font-medium">删除应用（仅列表 · 仅未部署）</div>
+        <div class="text-xs text-zinc-400">存在集群配置时禁止删除，需先在各集群「下线」</div>
+      </div>
+      <button class="btn" onclick="openModal('modal-delete')">打开</button>
+    </div>
+  </div>
+</section>
+
+</div><!-- /pt-12 -->
+
+<!-- ══════════ 弹窗：发布（修改 + 发布唯一入口；冲突时禁止发布并引导拉取） ══════════ -->
+<div id="modal-deploy" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/40 p-4">
+  <div class="card w-full max-w-xl">
+    <div id="deploy-title" class="border-b border-zinc-200 px-5 py-3.5 text-base font-semibold">发布到 staging-cluster？</div>
+    <div class="px-5 py-4">
+
+      <!-- 冲突态：集群存在手动修改，禁止发布，引导合并处理 -->
+      <div id="deploy-conflict" class="hidden">
+        <div class="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-xs text-red-700">
+          <span>⛔</span>
+          <span>检测到集群中的手动修改（配置冲突），为避免发布覆盖生产配置，<strong>冲突处理前禁止发布</strong>。请先合并处理：集群修改将被采纳或显式回退（知情覆盖），库侧修改自动保留。</span>
+        </div>
+        <div class="mt-3 rounded-lg border border-amber-200 bg-amber-50/40 p-3">
+          <div class="text-xs font-semibold text-amber-700">集群侧修改（2）</div>
+          <div class="mt-1.5 space-y-1.5">
+            <div>
+              <div class="diff-path">apps/v1 · Deployment/my-app · spec.replicas</div>
+              <div class="diff-val"><span class="text-zinc-400">基线 </span><span class="text-zinc-500 line-through">2</span> <span class="text-zinc-400">→ 集群当前 </span><span class="font-semibold text-amber-700">3</span></div>
+            </div>
+            <div>
+              <div class="diff-path">apps/v1 · Deployment/my-app · env.LOG_LEVEL</div>
+              <div class="diff-val"><span class="text-zinc-400">基线 </span><span class="text-zinc-500 line-through">info</span> <span class="text-zinc-400">→ 集群当前 </span><span class="font-semibold text-amber-700">warn</span> <span class="text-zinc-400">（与库侧 debug 碰撞，需二选一）</span></div>
+            </div>
+          </div>
+          <div class="mt-1 text-xs text-zinc-400">可能来源：手工 kubectl / HPA 调整</div>
+        </div>
+        <div class="mt-2 text-xs text-zinc-500">库侧 2 处未发布修改（image → nginx:1.25、LOG_LEVEL → debug）在合并中自动保留，碰撞字段需二选一。</div>
+        <button class="btn btn-primary mt-3 w-full" onclick="closeModal('modal-deploy');openMergeModal()">处理冲突（合并集群修改，完成后即可发布）</button>
+      </div>
+
+      <!-- 正常态：镜像快捷修改 + 向导修改（首发布时含目标集群选择） -->
+      <div id="deploy-normal">
+        <div id="deploy-cluster-pick" class="hidden mb-4">
+          <label class="label !mb-1">目标集群（首次发布：选择后创建该集群配置）</label>
+          <select class="input" onchange="deployCtx.cluster=this.value">
+            <option value="prod-cluster">prod-cluster · 在线 · v1.30.1</option>
+            <option value="staging-cluster">staging-cluster · 在线 · v1.29.6</option>
+            <option disabled>edge-cluster · 离线</option>
+          </select>
+        </div>
+        <label class="label !mb-1">镜像</label>
+        <input id="deploy-image" class="input font-mono text-sm" value="nginx:1.25" oninput="renderDeployPreview()" />
+        <p class="mt-1 text-xs text-zinc-400">改镜像即发布：镜像修改会先保存为库侧配置，再随本次发布一并推送到集群</p>
+
+        <div class="label !mb-1 mt-4">其他配置</div>
+        <div class="flex flex-wrap items-center gap-2 rounded-lg border border-zinc-200 px-3 py-2.5">
+          <span class="text-xs text-zinc-500">副本 2 · 环境变量 2 项 · 端口 80/9090 · 配置文件 2 个</span>
+          <span id="deploy-spec-modified" class="chip hidden border-sky-200 bg-sky-50 text-sky-700">已修改</span>
+          <div class="ml-auto flex gap-1.5">
+            <button class="btn btn-sm" title="打开向导编辑；末步「预览与高级」可切换 YAML 模式编辑整份 manifests（高级模式）" onclick="editViaWizard()">修改配置</button>
+          </div>
+        </div>
+
+        <div class="label !mb-1 mt-4">变更预览</div>
+        <pre id="deploy-preview" class="yaml"></pre>
+        <div id="deploy-dryrun" class="mt-2 hidden items-center gap-1.5 text-xs text-green-600"></div>
+        <div id="deploy-empty" class="hidden rounded-lg bg-zinc-50 px-3 py-2.5 text-xs text-zinc-500">库侧配置与集群当前一致——修改镜像、向导修改或其他配置后发布。</div>
+
+        <div class="mt-3 flex items-start gap-2 rounded-lg bg-zinc-50 px-3 py-2.5 text-xs text-zinc-500">
+          <span>ℹ</span>
+          <span>发布成功后将从集群读回对象并更新一致性锚点。原则：发布永不覆盖集群中的手动修改——存在冲突时须先合并处理。</span>
+        </div>
+      </div>
+    </div>
+    <div class="flex justify-end gap-2 border-t border-zinc-200 px-5 py-3.5">
+      <button class="btn" onclick="closeModal('modal-deploy')">取消</button>
+      <button id="deploy-confirm" class="btn btn-primary" onclick="confirmSync('deploy')">确认发布</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ 弹窗：处理冲突（三方合并预览：自动采纳可回退 + 碰撞二选一） ══════════ -->
+<div id="modal-merge" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/40 p-4">
+  <div class="card flex max-h-[85vh] w-full max-w-xl flex-col overflow-hidden">
+    <div class="border-b border-zinc-200 px-5 py-3.5 text-base font-semibold">处理冲突 · staging-cluster</div>
+    <div class="flex-1 overflow-auto px-5 py-4">
+      <div class="flex items-start gap-2 rounded-lg bg-zinc-50 px-3 py-2.5 text-xs text-zinc-500">
+        <span>ℹ</span>
+        <span>三方合并：无碰撞字段自动合并（每项可单独回退 = 知情覆盖），碰撞字段需二选一。发布永不覆盖集群手动修改。</span>
+      </div>
+      <div class="label !mb-1 mt-4">自动合并（无碰撞）</div>
+      <div id="merge-auto" class="space-y-1.5"></div>
+      <div id="merge-collide-wrap">
+        <div class="label !mb-1 mt-4">碰撞（双方修改了同一字段）</div>
+        <div id="merge-collide" class="space-y-2"></div>
+      </div>
+    </div>
+    <div class="flex justify-end gap-2 border-t border-zinc-200 px-5 py-3.5">
+      <button class="btn" onclick="closeModal('modal-merge')">取消</button>
+      <button id="merge-confirm" class="btn btn-primary" onclick="confirmMerge()">确认合并并发布</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ 弹窗：下线确认（集群级生命周期：删资源 + 删该集群配置，应用保留） ══════════ -->
+<div id="modal-offline" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/40 p-4">
+  <div class="card w-full max-w-md">
+    <div class="border-b border-zinc-200 px-5 py-3.5 text-base font-semibold">下线 <span id="offline-cluster"></span> 上的 my-app？</div>
+    <div class="px-5 py-4">
+      <p class="text-sm text-zinc-600">将删除该集群中的 Deployment / Service / Ingress 等资源。请选择处理方式：</p>
+      <div class="mt-3 space-y-2">
+        <label id="offline-opt-keep" class="flex cursor-pointer items-start gap-3 rounded-lg border border-zinc-900 bg-zinc-50 px-3 py-3">
+          <input type="radio" name="offline-mode" value="keep" checked class="mt-0.5 h-4 w-4 accent-zinc-900" onchange="renderOfflineOpts()" />
+          <div>
+            <div class="text-sm font-medium">仅下线<span class="ml-1.5 text-xs font-normal text-zinc-400">默认</span></div>
+            <div class="mt-0.5 text-xs text-zinc-400">配置与历史版本保留，重新发布仍使用下线前的该集群配置（无需重配）</div>
+          </div>
+        </label>
+        <label id="offline-opt-purge" class="flex cursor-pointer items-start gap-3 rounded-lg border border-zinc-200 px-3 py-3">
+          <input type="radio" name="offline-mode" value="purge" class="mt-0.5 h-4 w-4 accent-red-600" onchange="renderOfflineOpts()" />
+          <div>
+            <div class="text-sm font-medium text-red-600">下线并删除配置</div>
+            <div class="mt-0.5 text-xs text-zinc-400">同时删除该集群配置与历史版本（不可恢复）；若应用因此无集群配置，再次部署走首次发布（初始定义）</div>
+          </div>
+        </label>
+      </div>
+      <div class="mt-3 flex items-start gap-2 rounded-lg bg-zinc-50 px-3 py-2.5 text-xs text-zinc-500">
+        <span>ℹ</span>
+        <span>删除应用请在应用列表操作，且需先下线所有集群。</span>
+      </div>
+    </div>
+    <div class="flex justify-end gap-2 border-t border-zinc-200 px-5 py-3.5">
+      <button class="btn" onclick="closeModal('modal-offline')">取消</button>
+      <button id="offline-confirm" class="btn btn-primary" onclick="offlineApp()">确认下线</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ 弹窗：删除应用（仅列表入口 · 仅未部署可删） ══════════ -->
+<div id="modal-delete" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/40 p-4">
+  <div class="card w-full max-w-md">
+    <div class="border-b border-zinc-200 px-5 py-3.5 text-base font-semibold text-red-600">删除应用 data-worker？</div>
+    <div class="px-5 py-4">
+      <p class="text-sm text-zinc-600">将删除数据库中的应用定义。该应用未部署，无集群资源需要处理。</p>
+      <div class="mt-3 flex items-start gap-2 rounded-lg bg-zinc-50 px-3 py-2.5 text-xs text-zinc-500">
+        <span>ℹ</span>
+        <span>存在集群配置（已部署 / 漂移）的应用不可删除——请先在各集群「下线」。</span>
+      </div>
+    </div>
+    <div class="flex justify-end gap-2 border-t border-zinc-200 px-5 py-3.5">
+      <button class="btn" onclick="closeModal('modal-delete')">取消</button>
+      <button class="btn btn-destructive" onclick="closeModal('modal-delete');toast('演示：已删除应用定义')">删除</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ Pod 终端抽屉（复用 kite 既有终端能力） ══════════ -->
+<div id="terminal-drawer" class="fixed inset-x-0 bottom-0 z-50 hidden">
+  <div class="mx-auto max-w-4xl rounded-t-xl border border-b-0 border-zinc-700 bg-zinc-950 shadow-2xl">
+    <div class="flex items-center gap-2 border-b border-zinc-800 px-4 py-2.5">
+      <span class="dot bg-red-500"></span><span class="dot bg-amber-500"></span><span class="dot bg-green-500"></span>
+      <span id="terminal-title" class="ml-2 font-mono text-xs text-zinc-300"></span>
+      <span class="chip chip-green ml-2"><span class="dot bg-green-500"></span>已连接</span>
+      <div class="ml-auto flex gap-1.5">
+        <button class="btn btn-sm" onclick="toast('演示：在独立窗口打开终端')">新窗口</button>
+        <button class="btn btn-sm" onclick="closeTerminal()">关闭</button>
+      </div>
+    </div>
+    <div class="h-64 cursor-text overflow-auto px-4 py-3 font-mono text-xs leading-5 text-zinc-200" onclick="focusTermInput()">
+      <div id="term-out"></div>
+      <div><span class="text-emerald-400">bash-5.1$</span> <span id="term-buf"></span><span class="term-cursor text-zinc-400">▊</span></div>
+    </div>
+    <div class="border-t border-zinc-800 px-4 py-1.5 text-[10px] text-zinc-500">演示：可直接敲键盘输入命令（试 ls / pwd / whoami / exit）· 正式实现为 WebSocket 终端，复用 kite 既有 /terminal 能力</div>
+  </div>
+</div>
+
+<!-- ══════════ Pod 日志弹窗（复用 kite 既有日志能力） ══════════ -->
+<div id="modal-logs" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/40 p-4">
+  <div class="card flex h-[80vh] w-full max-w-4xl flex-col">
+    <div class="flex flex-wrap items-center gap-2 border-b border-zinc-200 px-4 py-3">
+      <span class="text-sm font-semibold">日志</span>
+      <span id="logs-pod" class="font-mono text-xs text-zinc-500"></span>
+      <select class="input h-8 max-w-[8rem] py-0 text-xs"><option>容器：app</option><option>容器：sidecar</option></select>
+      <div class="ml-auto flex items-center gap-1.5">
+        <button id="logs-follow-btn" class="btn btn-sm btn-primary" onclick="toggleFollow()">跟随中</button>
+        <button class="btn btn-sm" onclick="logsJump('start')">跳到开头</button>
+        <button class="btn btn-sm" onclick="logsJump('end')">跳到末尾</button>
+        <button class="btn btn-sm" onclick="toast('演示：下载日志文件')">下载</button>
+        <button class="btn btn-ghost px-2" onclick="closeModal('modal-logs')">✕</button>
+      </div>
+    </div>
+    <pre id="logs-body" class="flex-1 overflow-auto bg-zinc-950 p-4 font-mono text-xs leading-5 text-zinc-300"></pre>
+  </div>
+</div>
+
+<!-- ══════════ 配置文件编辑悬浮窗（可全屏） ══════════ -->
+<div id="modal-config-editor" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/40 p-4">
+  <div id="config-editor-card" class="card flex h-[80vh] w-full max-w-4xl flex-col overflow-hidden">
+    <div class="flex flex-wrap items-center gap-2 border-b border-zinc-200 px-4 py-3">
+      <input id="ce-name" class="input h-8 max-w-[13rem] py-0 font-mono text-sm" placeholder="文件名" oninput="if(ceIndex>-1)configFiles[ceIndex].name=this.value" />
+      <select id="ce-mount" class="input h-8 max-w-[12rem] py-0 font-mono text-xs" onchange="if(ceIndex>-1){configFiles[ceIndex].mountPath=this.value;renderConfigFiles()}"></select>
+      <div class="ml-auto flex items-center gap-1.5">
+        <button id="ce-full" class="btn btn-sm" onclick="setEditorFullscreen()">全屏</button>
+        <button class="btn btn-ghost px-2" onclick="closeModal('modal-config-editor')">✕</button>
+      </div>
+    </div>
+    <textarea id="ce-content" class="flex-1 resize-none bg-zinc-950 p-4 font-mono text-xs leading-5 text-zinc-200 outline-none" placeholder="输入文件内容…"></textarea>
+    <div class="flex items-center gap-3 border-t border-zinc-200 px-4 py-3">
+      <label class="flex cursor-pointer items-center gap-1.5 text-xs text-zinc-500"><input id="ce-secret" type="checkbox" class="accent-zinc-900" onchange="if(ceIndex>-1)configFiles[ceIndex].secret=this.checked">敏感（存入 Secret，查看与审计时脱敏）</label>
+      <span id="ce-stat" class="ml-auto text-xs text-zinc-400"></span>
+      <button class="btn btn-sm btn-primary" onclick="closeModal('modal-config-editor');renderConfigFiles()">完成</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ Pod 监控弹窗（点击 Pod 名称） ══════════ -->
+<div id="modal-pod" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/40 p-4">
+  <div class="card flex h-[85vh] w-full max-w-4xl flex-col">
+    <div class="flex flex-wrap items-center gap-2 border-b border-zinc-200 px-4 py-3">
+      <span id="pod-title" class="font-mono text-sm font-semibold"></span>
+      <span id="pod-cluster" class="text-xs text-zinc-400"></span>
+      <div class="ml-auto flex items-center gap-1.5">
+        <button class="btn btn-sm" onclick="restartPod(currentPod)">重启</button>
+        <button class="btn btn-sm" onclick="openTerminal(currentPod)">终端</button>
+        <button class="btn btn-sm" onclick="openLogs(currentPod)">日志</button>
+        <button class="btn btn-ghost px-2" onclick="closeModal('modal-pod')">✕</button>
+      </div>
+    </div>
+    <div class="flex items-center gap-3 px-4 pt-3 text-xs">
+      <span class="text-zinc-400">时间范围</span>
+      <span class="add-link text-zinc-600" onclick="drawCharts()">近 1 小时</span>
+      <span class="add-link" onclick="drawCharts()">近 6 小时</span>
+      <span class="add-link" onclick="drawCharts()">近 24 小时</span>
+      <span class="ml-auto text-zinc-400">数据来源 metrics API，自动刷新</span>
+    </div>
+    <div class="grid flex-1 gap-4 overflow-auto p-4 md:grid-cols-2">
+      <div class="rounded-lg border border-zinc-200 p-3">
+        <div class="mb-1 flex items-center justify-between"><span class="text-xs font-medium text-zinc-400">CPU 使用</span><span id="cpu-now" class="font-mono text-xs text-amber-600"></span></div>
+        <svg id="chart-cpu" viewBox="0 0 560 140" class="h-36 w-full" preserveAspectRatio="none"></svg>
+      </div>
+      <div class="rounded-lg border border-zinc-200 p-3">
+        <div class="mb-1 flex items-center justify-between"><span class="text-xs font-medium text-zinc-400">内存使用</span><span id="mem-now" class="font-mono text-xs text-sky-600"></span></div>
+        <svg id="chart-mem" viewBox="0 0 560 140" class="h-36 w-full" preserveAspectRatio="none"></svg>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- toast -->
+<div id="toast" class="fixed bottom-6 left-1/2 z-[60] hidden -translate-x-1/2 rounded-lg bg-zinc-900 px-4 py-2 text-sm text-white shadow-lg"></div>
+
+<script>
+// ── 视图切换（支持 #view=detail&tab=staging / #view=wizard&step=5 深链） ──
+var currentTab = 'prod'
+var stgState = 'drift' // staging 配置状态：drift | synced
+
+function applyHash() {
+  var q = new URLSearchParams((location.hash || '').replace(/^#/, ''))
+  var views = { list: 'view-list', detail: 'view-detail', wizard: 'view-wizard', modals: 'view-modals' }
+  if (views[q.get('view')]) switchViewByName(views[q.get('view')])
+  var tab = q.get('tab')
+  if (tab) { var b = document.querySelector('[data-tab="tab-' + tab + '"]'); if (b) switchTab(b) }
+  var step = Number(q.get('step'))
+  if (step >= 1 && step <= 6) gotoStep(step)
+  var cluster = q.get('cluster')
+  if (cluster) setClusterFilter(cluster)
+  var pod = q.get('pod')
+  if (pod && q.get('terminal')) openTerminal(pod)
+  if (pod && q.get('logs')) openLogs(pod)
+}
+window.addEventListener('hashchange', applyHash)
+
+// ── 列表：集群筛选 ──
+// ── 工作模式：应用模式（普通用户默认）/ 专业模式（k8s 资源全集），单按钮点击切换 ──
+var sideMode = 'app'
+function toggleSideMode() {
+  sideMode = sideMode === 'app' ? 'pro' : 'app'
+  var appOn = sideMode === 'app'
+  var app = document.getElementById('nav-app'), pro = document.getElementById('nav-pro')
+  app.classList.toggle('hidden', !appOn); app.classList.toggle('flex', appOn)
+  pro.classList.toggle('hidden', appOn); pro.classList.toggle('flex', !appOn)
+  var btn = document.getElementById('mode-toggle')
+  btn.textContent = appOn ? '切换到专业模式' : '切换到应用模式'
+  btn.title = '当前：' + (appOn ? '应用模式' : '专业模式')
+  if (!appOn) toast('演示：专业模式（现有 k8s 资源页面）')
+}
+
+// ── 全局空间：决定列表范围与向导默认空间（仅列出带 kite.application/space 标记的空间） ──
+var globalSpace = ''
+function setGlobalSpace(v) { globalSpace = v; applyListFilter(); syncSpaceNav(); syncWizardSpace() }
+function syncSpaceNav() { renderSpaceNav() }
+// 空间较多：搜索过滤 + 定高滚动，当前空间高亮并滚到可见处
+var spaces = ['billing', 'data', 'default', 'infra', 'logs', 'order', 'payment', 'report', 'search', 'staging-tools', 'upload']
+function renderSpaceNav() {
+  var q = (document.getElementById('space-search') || {}).value || ''
+  var list = document.getElementById('space-nav-list')
+  var html = ''
+  spaces.forEach(function (sp) {
+    if (q && sp.indexOf(q) === -1) return
+    html += '<div class="nav-item' + (sp === globalSpace ? ' nav-item-active' : '') + '" onclick="pickNavSpace(\'' + sp + '\')">' + sp + '</div>'
+  })
+  if (!html) html = '<div class="px-2.5 py-2 text-xs text-zinc-400">无匹配空间</div>'
+  list.innerHTML = html
+  document.getElementById('nav-space-all').classList.toggle('nav-item-active', globalSpace === '')
+  var act = list.querySelector('.nav-item-active')
+  if (act) act.scrollIntoView({ block: 'nearest' })
+}
+function pickNavSpace(v) { setGlobalSpace(v); switchViewByName('view-list') }
+function applyListFilter() {
+  var f = document.getElementById('cluster-filter').value
+  var anyVisible = false
+  document.querySelectorAll('#view-list tbody tr[data-clusters]').forEach(function (row) {
+    var hitC = f === '' || row.dataset.clusters.split(' ').indexOf(f) !== -1
+    var hitS = globalSpace === '' || row.dataset.space === globalSpace
+    var hit = hitC && hitS
+    row.classList.toggle('hidden', !hit)
+    if (hit) anyVisible = true
+  })
+  document.getElementById('list-empty').classList.toggle('hidden', anyVisible)
+}
+function syncWizardSpace() {
+  var sp = globalSpace === '' ? 'default' : globalSpace
+  ;[ 'wizard-header-space', 'wizard-name-space', 'wizard-uniform-space' ].forEach(function (id) {
+    var el = document.getElementById(id)
+    if (el) el.textContent = sp
+  })
+}
+function setClusterFilter(name) {
+  document.getElementById('cluster-filter').value = name
+  switchViewByName('view-list')
+  applyListFilter()
+}
+
+// ── 配置文件：紧凑列表，点击文件名进入编辑（手风琴） ──
+var configFiles = []
+var mountPoints = ['/etc/my-app']
+function esc(t) { return t.replace(/&/g, '&amp;').replace(/</g, '&lt;') }
+function showMpInput() {
+  var r = document.getElementById('mp-input-row')
+  r.classList.remove('hidden'); r.classList.add('flex')
+  document.getElementById('mp-input').focus()
+}
+function hideMpInput() {
+  var r = document.getElementById('mp-input-row')
+  r.classList.add('hidden'); r.classList.remove('flex')
+  document.getElementById('mp-error').textContent = ''
+  document.getElementById('mp-input').value = ''
+}
+function confirmAddMountPoint() {
+  var v = document.getElementById('mp-input').value.trim().replace(/\/+$/, '')
+  var err = document.getElementById('mp-error')
+  if (!v.startsWith('/')) { err.textContent = '必须是以 / 开头的绝对路径'; return }
+  if (mountPoints.indexOf(v) !== -1) { err.textContent = '该挂载点已存在'; return }
+  mountPoints.push(v)
+  hideMpInput(); renderMountPoints()
+}
+function removeMountPoint(i) {
+  if (configFiles.some(function (f) { return f.mountPath === mountPoints[i] })) return
+  mountPoints.splice(i, 1); renderMountPoints()
+}
+function renderMountPoints() {
+  document.getElementById('mp-chips').innerHTML = mountPoints.map(function (p, i) {
+    var count = configFiles.filter(function (f) { return f.mountPath === p }).length
+    var del = count === 0 ? '<button class="ml-0.5 text-zinc-300 hover:text-red-500" title="删除挂载点" onclick="removeMountPoint(' + i + ')">×</button>' : ''
+    return '<span class="chip chip-zinc font-mono">' + esc(p) + ' · ' + count + ' 个文件' + del + '</span>'
+  }).join('')
+}
+function addConfigFile() {
+  if (!mountPoints.length) { toast('请先添加挂载点'); return }
+  configFiles.push({ name: 'file' + (configFiles.length + 1) + '.conf', content: '', secret: false, mountPath: mountPoints[0] })
+  openConfigEditor(configFiles.length - 1)
+  renderConfigFiles()
+}
+function openConfigEditor(i) {
+  ceIndex = i
+  var f = configFiles[i]
+  document.getElementById('ce-name').value = f.name
+  document.getElementById('ce-mount').innerHTML = mountPoints.map(function (p) {
+    return '<option' + (p === f.mountPath ? ' selected' : '') + '>' + esc(p) + '</option>'
+  }).join('')
+  if (mountPoints.indexOf(f.mountPath) === -1) {
+    document.getElementById('ce-mount').insertAdjacentHTML('beforeend', '<option selected>' + esc(f.mountPath) + '</option>')
+  }
+  document.getElementById('ce-content').value = f.content
+  document.getElementById('ce-secret').checked = f.secret
+  setEditorFullscreen(false)
+  updateCeStat()
+  var m = document.getElementById('modal-config-editor')
+  m.classList.remove('hidden'); m.classList.add('flex')
+}
+function removeConfigFile(i) { configFiles.splice(i, 1); renderConfigFiles() }
+function renderConfigFiles() {
+  var box = document.getElementById('config-files')
+  var has = configFiles.length > 0
+  var html = ''
+  mountPoints.forEach(function (mp) {
+    var files = configFiles.filter(function (f) { return f.mountPath === mp })
+    if (!files.length) return
+    html += '<div>'
+      + '<div class="mb-1.5 flex items-center gap-2"><span class="chip chip-zinc font-mono">' + esc(mp) + '</span>'
+      + '<span class="text-xs text-zinc-400">' + files.length + ' 个文件</span></div>'
+      + '<div class="space-y-1.5">' + files.map(function (f) {
+        var i = configFiles.indexOf(f)
+        var lines = f.content ? f.content.split('\n').length : 0
+        return '<div class="flex items-center gap-2 rounded-lg border border-zinc-200 p-3">'
+          + '<button class="flex min-w-0 items-center gap-1.5 text-left" onclick="openConfigEditor(' + i + ')">'
+          + '<span class="truncate font-mono text-sm hover:underline">' + esc(f.name) + '</span></button>'
+          + (f.secret ? '<span class="chip chip-amber">Secret</span>' : '<span class="chip chip-zinc">ConfigMap</span>')
+          + '<span class="ml-auto shrink-0 text-xs text-zinc-400">' + lines + ' 行</span>'
+          + '<button class="btn btn-ghost shrink-0 px-2" title="删除该文件" onclick="removeConfigFile(' + i + ')">✕</button></div>'
+      }).join('') + '</div></div>'
+  })
+  if (has) html += '<div class="pt-1 text-center"><span class="add-link" onclick="addConfigFile()">＋ 添加文件</span></div>'
+  box.innerHTML = html
+  box.classList.toggle('hidden', !has)
+  document.getElementById('config-empty').classList.toggle('hidden', has)
+  renderMountPoints()
+}
+
+// ── 配置编辑悬浮窗 ──
+var ceIndex = -1
+function updateCeStat() {
+  var c = document.getElementById('ce-content').value
+  document.getElementById('ce-stat').textContent = c.split('\n').length + ' 行 · ' + c.length + ' 字符'
+}
+function setEditorFullscreen(full) {
+  var card = document.getElementById('config-editor-card'), btn = document.getElementById('ce-full')
+  var on = full === undefined ? !card.classList.contains('editor-full') : full
+  card.classList.toggle('editor-full', on)
+  btn.textContent = on ? '退出全屏' : '全屏'
+}
+function initCeEvents() {
+  document.getElementById('ce-content').addEventListener('input', function () {
+    if (ceIndex > -1) configFiles[ceIndex].content = this.value
+    updateCeStat()
+  })
+}
+
+// ── 端口列表（动态行；点击「＋ 对外域名」展开该行域名/路径输入） ──
+var portRows = [
+  { port: '80', type: 'ClusterIP', host: '', path: '/', open: false },
+  { port: '9090', type: 'ClusterIP', host: '', path: '/', open: false }
+]
+function renderPorts() {
+  document.getElementById('port-rows').innerHTML = portRows.map(function (r, i) {
+    var domainPart
+    if (r.open) {
+      domainPart = '<input class="input min-w-[6rem] flex-1" value="' + esc(r.host) + '" placeholder="域名" oninput="portRows[' + i + '].host=this.value;updateIngressBox()" />'
+        + '<input class="input !w-[5rem] shrink-0" value="' + esc(r.path) + '" placeholder="路径" oninput="portRows[' + i + '].path=this.value" />'
+        + '<button class="btn btn-ghost shrink-0 px-1 text-xs" onclick="portRows[' + i + '].open=false;portRows[' + i + '].host=\'\';renderPorts()">移除</button>'
+    } else if (r.host) {
+      domainPart = '<button class="btn min-w-0 flex-1 justify-start border-dashed px-2 py-1 text-left font-mono text-xs text-sky-600" title="点击修改" onclick="portRows[' + i + '].open=true;renderPorts()">'
+        + '<span class="truncate">' + esc(r.host) + (r.path && r.path !== '/' ? ' · ' + esc(r.path) : '') + '</span></button>'
+    } else {
+      domainPart = '<button class="btn btn-sm shrink-0 border-dashed text-xs text-zinc-500" onclick="portRows[' + i + '].open=true;renderPorts()">＋ 对外域名</button>'
+    }
+    return '<div class="flex flex-wrap items-center gap-2 md:flex-nowrap">'
+      + '<input class="input !w-[7rem] shrink-0" value="' + esc(r.port) + '" placeholder="端口" oninput="portRows[' + i + '].port=this.value" />'
+      + '<select class="input !w-[9rem] shrink-0" onchange="portRows[' + i + '].type=this.value">'
+      + ['ClusterIP', 'NodePort', 'LoadBalancer'].map(function (t) { return '<option' + (t === r.type ? ' selected' : '') + '>' + t + '</option>' }).join('')
+      + '</select>'
+      + domainPart
+      + '<button class="btn btn-ghost w-8 shrink-0 px-0" title="删除该端口" onclick="portRows.splice(' + i + ',1);renderPorts()">✕</button>'
+      + '</div>'
+  }).join('')
+  updateIngressBox()
+}
+function updateIngressBox() {
+  var need = portRows.some(function (r) { return r.host && r.host.trim() })
+  document.getElementById('ingress-class-box').classList.toggle('hidden', !need)
+}
+function addPortRow() { portRows.push({ port: '', type: 'ClusterIP', host: '', path: '', open: false }); renderPorts() }
+
+// ── 环境变量列表（动态行） ──
+var envRows = [ { k: 'LOG_LEVEL', v: 'info' }, { k: 'TZ', v: 'Asia/Shanghai' } ]
+function renderEnv() {
+  document.getElementById('env-rows').innerHTML = envRows.map(function (r, i) {
+    return '<div class="flex items-center gap-2">'
+      + '<input class="input !w-[12rem] shrink-0 font-mono text-xs" value="' + esc(r.k) + '" placeholder="KEY" oninput="envRows[' + i + '].k=this.value" />'
+      + '<input class="input font-mono text-xs" value="' + esc(r.v) + '" placeholder="VALUE" oninput="envRows[' + i + '].v=this.value" />'
+      + '<button class="btn btn-ghost shrink-0 px-2" onclick="envRows.splice(' + i + ',1);renderEnv()">✕</button>'
+      + '</div>'
+  }).join('')
+}
+function addEnvRow() { envRows.push({ k: '', v: '' }); renderEnv() }
+
+// ── Pod 监控弹窗 / 重启 ──
+var currentPod = ''
+function openPod(pod) {
+  currentPod = pod
+  document.getElementById('pod-title').textContent = pod
+  document.getElementById('pod-cluster').textContent = '· ' + (currentTab === 'staging' ? 'staging-cluster' : 'prod-cluster') + ' · default'
+  drawCharts()
+  var m = document.getElementById('modal-pod')
+  m.classList.remove('hidden'); m.classList.add('flex')
+}
+function restartPod(pod) { toast('演示：Pod ' + pod + ' 重启中（删除后由控制器重建）') }
+function restartApp() { toast('演示：已触发滚动重启，Pod 将逐个替换') }
+function drawLine(id, color, base, jitter, nowEl, unit) {
+  var pts = [], n = 40
+  for (var i = 0; i < n; i++) pts.push(Math.max(0, base + (Math.random() - 0.5) * jitter + Math.sin(i / 4) * jitter / 3))
+  var max = Math.max.apply(null, pts) * 1.25, w = 560, h = 140
+  var poly = pts.map(function (v, idx) {
+    var x = (idx / (n - 1) * w).toFixed(1), y = (h - v / max * h).toFixed(1)
+    return x + ',' + y
+  }).join(' ')
+  var svg = document.getElementById(id)
+  svg.innerHTML = '<line x1="0" y1="' + h + '" x2="' + w + '" y2="' + h + '" stroke="#e4e4e7" stroke-width="1"/>'
+    + '<polyline fill="none" stroke="' + color + '" stroke-width="2" points="' + poly + '"/>'
+  document.getElementById(nowEl).textContent = pts[n - 1].toFixed(0) + unit
+}
+function drawCharts() {
+  drawLine('chart-cpu', '#f59e0b', 42, 26, 'cpu-now', 'm')
+  drawLine('chart-mem', '#0ea5e9', 128, 18, 'mem-now', 'Mi')
+}
+
+// ── 全局集群切换（kite 全局上下文；应用列表跨集群聚合，不受其影响） ──
+function setGlobalCluster(v) { toast('演示：已切换当前集群 → ' + v) }
+
+// ── 端口行：对外域名展开/收起 ──
+function toggleDomain(btn) {
+  var group = btn.parentElement.querySelector('.domain-group')
+  var open = group.classList.contains('hidden')
+  group.classList.toggle('hidden', !open)
+  group.classList.toggle('flex', open)
+  btn.textContent = open ? '收起域名' : '＋ 对外域名'
+}
+
+// ── 发布弹窗：修改 + 发布唯一入口（镜像栏 / 向导修改 / 高级模式 YAML） ──
+// 冲突（集群侧存在手动修改）时禁止发布，引导先拉取收编：先收编 → 再修改 → 后发布
+var deployCtx = null
+var stagedEdit = false // 向导修改已暂存（返回发布弹窗后待确认发布）
+var appImages = { 'prod-cluster': 'nginx:1.25', 'staging-cluster': 'nginx:1.24' }
+var stgDesired = 'nginx:1.25' // staging 库侧期望镜像（尚未发布）
+function openDeployModal(fresh) {
+  var isStg = currentTab === 'staging'
+  var conflict = isStg && stgState === 'drift'
+  var cluster = isStg ? 'staging-cluster' : 'prod-cluster'
+  deployCtx = {
+    cluster: cluster,
+    conflict: conflict,
+    fresh: !!fresh,
+    liveImage: appImages[cluster],
+    dbImage: conflict ? stgDesired : appImages[cluster]
+  }
+  document.getElementById('deploy-title').textContent = '发布到 ' + cluster + '？'
+  document.getElementById('deploy-cluster-pick').classList.add('hidden')
+  document.getElementById('deploy-conflict').classList.toggle('hidden', !conflict)
+  document.getElementById('deploy-normal').classList.toggle('hidden', conflict)
+  document.getElementById('deploy-confirm').disabled = conflict
+  if (!conflict) {
+    document.getElementById('deploy-image').value = deployCtx.dbImage
+    renderDeployPreview()
+  }
+  openModal('modal-deploy')
+}
+function renderDeployPreview() {
+  if (!deployCtx || deployCtx.conflict) return
+  var preview = document.getElementById('deploy-preview')
+  var empty = document.getElementById('deploy-empty')
+  var confirmBtn = document.getElementById('deploy-confirm')
+  if (deployCtx.fresh) { // 首次发布（Render 草稿）/ 下线后重新发布（保留配置）：均为 create 模式，仅创建不覆盖
+    preview.classList.remove('hidden')
+    empty.classList.add('hidden')
+    confirmBtn.disabled = false
+    var freshTitle = deployCtx.firstPublish
+      ? '首次发布 · 将创建 Deployment / Service / Ingress 等全部资源'
+      : repubPurged
+        ? '重新部署（配置已删 · 初始定义）· 将创建全部资源'
+        : '重新发布 · 使用下线前保留的配置，将创建全部资源'
+    preview.innerHTML = '<span class="yc"># ' + freshTitle + '</span>\n<span class="yk">spec:</span>\n  <span class="yk">replicas:</span> <span class="ys">2</span>\n  <span class="yk">template:</span>\n    <span class="yk">spec:</span>\n      <span class="yk">containers:</span>\n        - <span class="yk">name:</span> <span class="ys">app</span>\n          <span class="yk">image:</span> <span class="ys">' + esc(document.getElementById('deploy-image').value.trim()) + '</span>'
+    document.getElementById('deploy-spec-modified').classList.add('hidden')
+    setDryRun(true, 'create 模式：仅创建、绝不覆盖已有对象 · 服务端 dry-run 校验通过')
+    return
+  }
+  var img = document.getElementById('deploy-image').value.trim()
+  var imgChanged = img !== '' && img !== deployCtx.liveImage
+  var specLines = ''
+  if (imgChanged) {
+    specLines += '  <span class="yk">template:</span>\n    <span class="yk">spec:</span>\n      <span class="yk">containers:</span>\n        - <span class="yk">name:</span> <span class="ys">app</span>\n          <span class="yk">image:</span> <span class="ys">' + esc(deployCtx.liveImage) + '</span> <span class="yc"># → ' + esc(img) + '</span>\n'
+  }
+  var merged = currentTab === 'staging' && stgState === 'merged'
+  var n = (imgChanged ? 1 : 0) + (stagedEdit ? 1 : 0) + (merged ? 1 : 0)
+  var preview = document.getElementById('deploy-preview')
+  var empty = document.getElementById('deploy-empty')
+  var confirmBtn = document.getElementById('deploy-confirm')
+  if (n === 0) {
+    preview.classList.add('hidden')
+    empty.classList.remove('hidden')
+    confirmBtn.disabled = true
+    setDryRun(false)
+  } else {
+    preview.classList.remove('hidden')
+    empty.classList.add('hidden')
+    confirmBtn.disabled = false
+    setDryRun(true, '服务端 dry-run 校验通过（admission / quota / schema）')
+    var head = '<span class="yc"># apps/v1 · Deployment/my-app · 变更 ' + n + ' 处</span>\n'
+    if (merged) head += '<span class="yc"># 含合并采纳的集群侧修改（replicas 2→3 等）与碰撞裁决</span>\n'
+    if (stagedEdit) head += '<span class="yc"># 其他配置已在向导中修改（已暂存到库侧，含末步 YAML 模式）</span>\n'
+    preview.innerHTML = head + '<span class="yk">spec:</span>\n' + (specLines ? specLines.replace(/\n$/, '') : '  <span class="yc"># 其余字段以暂存的完整 manifests 为准</span>')
+  }
+  document.getElementById('deploy-spec-modified').classList.toggle('hidden', !stagedEdit)
+}
+function setDryRun(ok, text) {
+  var el = document.getElementById('deploy-dryrun')
+  el.classList.toggle('hidden', !ok)
+  el.classList.toggle('flex', ok)
+  el.innerHTML = ok ? '<span>✔</span><span>' + text + '</span>' : ''
+}
+function editViaWizard() {
+  var cluster = deployCtx.cluster
+  closeModal('modal-deploy')
+  setWizardMode('edit', cluster)
+  switchViewByName('view-wizard')
+  gotoStep(1)
+  toast('演示：向导编辑 ' + cluster + ' 配置，完成后「去发布」返回发布弹窗')
+}
+// 向导双模式：edit（发布入口进入，目标集群只读）| create（创建定义，暂不绑定集群）
+var wizardMode = 'create', wizardCluster = ''
+var clusterMeta = { 'prod-cluster': 'v1.30.1', 'staging-cluster': 'v1.29.6 · kcross' }
+function setWizardMode(mode, cluster) {
+  wizardMode = mode; wizardCluster = cluster || ''
+  document.getElementById('wizard-title').textContent = mode === 'edit' ? '编辑 my-app · ' + wizardCluster : '创建应用'
+  document.getElementById('wl-edit').classList.toggle('hidden', mode !== 'edit')
+  document.getElementById('wl-create').classList.toggle('hidden', mode === 'edit')
+  if (mode === 'edit') {
+    document.getElementById('wl-cluster-name').textContent = wizardCluster
+    document.getElementById('wl-cluster-meta').textContent = clusterMeta[wizardCluster] || ''
+  }
+  document.getElementById('wizard-go').textContent = mode === 'edit' ? '去发布' : '创建应用'
+  document.getElementById('wiz-last-hint').textContent = mode === 'edit'
+    ? '「保存配置」仅更新库侧期望配置，可稍后在发布弹窗发布；「去发布」返回发布弹窗——变更经预览确认后才推送，存在冲突时会先要求拉取收编'
+    : '创建后应用保存为定义（未部署）；首次发布在详情页进行，经发布弹窗确认后推送到指定集群'
+}
+function wizardGoFinish() {
+  if (wizardMode === 'edit') {
+    stagedEdit = true
+    toast('演示：修改已暂存到库侧配置')
+    switchViewByName('view-detail')
+    openDeployModal()
+    return
+  }
+  toast('演示：应用已创建（未部署）——在详情页对指定集群发布后生效')
+  switchViewByName('view-list')
+}
+function toggleWizYaml(on) {
+  document.getElementById('wiz-preview-mode').classList.toggle('hidden', on)
+  document.getElementById('wiz-yaml-mode').classList.toggle('hidden', !on)
+  var ta = document.getElementById('wiz-yaml')
+  if (on && !ta.value) ta.value = 'apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: my-app\n  namespace: default\n  labels:\n    kite.application/name: my-app\nspec:\n  replicas: 2\n  template:\n    spec:\n      containers:\n        - name: app\n          image: nginx:1.25\n---\n# Service / Ingress / ConfigMap 等其余文档同理（--- 分隔）'
+}
+
+// ── 发布 / 拉取：状态流转（staging 冲突态 → 已同步态） ──
+// ── 发布 / 合并 / 首次发布：状态流转 ──
+function confirmSync(kind) {
+  var ctx = deployCtx
+  var img = ((document.getElementById('deploy-image') || {}).value || '').trim()
+  closeModal('modal-deploy')
+  if (ctx && ctx.firstPublish) {
+    document.getElementById('deploy-cluster-pick').classList.add('hidden')
+    toast('演示：已创建 ' + ctx.cluster + ' 的集群配置并发布（data-worker 首次发布）')
+    return
+  }
+  if (currentTab === 'staging' && stgState === 'drift') {
+    toast('演示：存在冲突，发布被禁止——请先处理冲突（合并）')
+    return
+  }
+  if (img && ctx) appImages[ctx.cluster] = img
+  stagedEdit = false
+  mergeState = null
+  if (currentTab === 'staging') { stagingSynced('deploy'); return }
+  toast('演示：发布成功，已从集群读回并更新一致性锚点')
+}
+function stagingSynced(kind) {
+  stgState = 'synced'
+  var chip = document.getElementById('stg-drift-chip')
+  chip.className = 'chip chip-green'
+  chip.innerHTML = '<span class="dot bg-green-500"></span>已同步'
+  document.getElementById('stg-times').textContent = '上次发布 刚刚 · 上次拉取 2026-09-20 18:00'
+  document.getElementById('stg-conflict').classList.add('hidden')
+  document.getElementById('stg-merged').classList.add('hidden')
+  document.getElementById('stg-synced').classList.remove('hidden')
+  document.getElementById('stg-synced-note').textContent = '刚刚发布 · 锚点已从集群读回'
+  var dot = document.getElementById('stg-tab-dot')
+  dot.classList.remove('bg-amber-500'); dot.classList.add('bg-green-500')
+  toast('演示：发布成功，已从集群读回并更新一致性锚点')
+}
+
+// ── 冲突处理：三方合并预览（自动采纳可回退 + 碰撞二选一） ──
+// 基线=LastApplied(replicas 2 / image 1.24 / LOG_LEVEL info)、库=Manifests(image 1.25 / LOG_LEVEL debug)、集群=Live(replicas 3 / LOG_LEVEL warn)
+var mergeState = null
+function openMergeModal() {
+  if (currentTab !== 'staging') switchTab(document.querySelector('[data-tab="tab-staging"]'))
+  mergeState = {
+    auto: [
+      { path: 'spec.replicas', from: '2', to: '3', side: '集群侧', reverted: false },
+      { path: 'containers[0].image', from: 'nginx:1.24', to: 'nginx:1.25', side: '库侧', reverted: false }
+    ],
+    collide: [
+      { path: 'env · LOG_LEVEL', base: 'info', ours: 'debug', theirs: 'warn', pick: null }
+    ]
+  }
+  renderMerge()
+  openModal('modal-merge')
+}
+function renderMerge() {
+  document.getElementById('merge-auto').innerHTML = mergeState.auto.map(function (m, i) {
+    return '<div class="flex flex-wrap items-center gap-2 rounded-lg border border-zinc-200 px-3 py-2' + (m.reverted ? ' opacity-50' : '') + '">'
+      + '<span class="chip ' + (m.side === '集群侧' ? 'chip-amber' : 'chip-zinc') + '">' + m.side + '</span>'
+      + '<span class="diff-path">' + m.path + '</span>'
+      + '<span class="diff-val"><span class="text-zinc-400 line-through">' + esc(m.from) + '</span> → <span class="font-semibold">' + esc(m.to) + '</span></span>'
+      + '<button class="ml-auto text-xs text-zinc-400 hover:text-red-500" onclick="toggleMergeAuto(' + i + ')">' + (m.reverted ? '撤销回退' : '回退到基线') + '</button></div>'
+  }).join('')
+  var hasCollide = mergeState.collide.length > 0
+  document.getElementById('merge-collide-wrap').classList.toggle('hidden', !hasCollide)
+  document.getElementById('merge-collide').innerHTML = mergeState.collide.map(function (c, i) {
+    return '<div class="rounded-lg border border-amber-200 bg-amber-50/40 px-3 py-2">'
+      + '<div class="diff-path">' + c.path + ' <span class="text-zinc-400">基线 ' + esc(c.base) + '</span></div>'
+      + '<div class="mt-1.5 flex flex-wrap items-center gap-2">'
+      + '<span class="diff-val">库侧 <span class="font-semibold">' + esc(c.ours) + '</span></span>'
+      + '<span class="diff-val">集群侧 <span class="font-semibold text-amber-700">' + esc(c.theirs) + '</span></span>'
+      + '<span class="ml-auto flex gap-1.5">'
+      + '<button class="btn btn-sm' + (c.pick === 'ours' ? ' btn-primary' : '') + '" onclick="pickMerge(' + i + ',\'ours\')">保留库值</button>'
+      + '<button class="btn btn-sm' + (c.pick === 'theirs' ? ' btn-primary' : '') + '" onclick="pickMerge(' + i + ',\'theirs\')">采纳集群值</button>'
+      + '</span></div></div>'
+  }).join('')
+  document.getElementById('merge-confirm').disabled = mergeState.collide.some(function (c) { return !c.pick })
+}
+function toggleMergeAuto(i) { mergeState.auto[i].reverted = !mergeState.auto[i].reverted; renderMerge() }
+function pickMerge(i, side) { mergeState.collide[i].pick = side; renderMerge() }
+function confirmMerge() {
+  closeModal('modal-merge')
+  stgState = 'merged'
+  document.getElementById('stg-conflict').classList.add('hidden')
+  document.getElementById('stg-merged').classList.remove('hidden')
+  var chip = document.getElementById('stg-drift-chip')
+  chip.className = 'chip chip-amber'
+  chip.innerHTML = '<span class="dot bg-amber-500"></span>已合并 · 待发布'
+  toast('演示：合并结果已写入库侧配置（rev+1，Source=merge），进入发布')
+  openDeployModal()
+}
+
+// ── 首次发布（未部署应用）：选择目标集群 → 创建配置并发布 ──
+function openFirstPublish() {
+  deployCtx = { cluster: 'prod-cluster', conflict: false, fresh: true, firstPublish: true, liveImage: '', dbImage: 'worker:1.0' }
+  document.getElementById('deploy-title').textContent = '首次发布 data-worker'
+  document.getElementById('deploy-conflict').classList.add('hidden')
+  document.getElementById('deploy-normal').classList.remove('hidden')
+  document.getElementById('deploy-cluster-pick').classList.remove('hidden')
+  document.getElementById('deploy-image').value = deployCtx.dbImage
+  document.getElementById('deploy-confirm').disabled = false
+  renderDeployPreview()
+  openModal('modal-deploy')
+}
+
+// ── 下线（集群级生命周期）：双选项——仅下线（保留配置）/ 下线并删除配置 ──
+function openOfflineModal() {
+  document.getElementById('offline-cluster').textContent = currentTab === 'staging' ? 'staging-cluster' : 'prod-cluster'
+  document.querySelector('input[name="offline-mode"][value="keep"]').checked = true
+  renderOfflineOpts()
+  openModal('modal-offline')
+}
+function renderOfflineOpts() {
+  var purge = (document.querySelector('input[name="offline-mode"]:checked') || {}).value === 'purge'
+  document.getElementById('offline-opt-keep').className = 'flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-3' + (purge ? ' border-zinc-200' : ' border-zinc-900 bg-zinc-50')
+  document.getElementById('offline-opt-purge').className = 'flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-3' + (purge ? ' border-red-300 bg-red-50/40' : ' border-zinc-200')
+  var btn = document.getElementById('offline-confirm')
+  btn.className = 'btn ' + (purge ? 'btn-destructive' : 'btn-primary')
+  btn.textContent = purge ? '确认下线并删除配置' : '确认下线'
+}
+var repubPurged = false // 上一次下线是否删除了配置（决定重新发布用保留配置还是初始定义）
+function offlineApp() {
+  var purge = (document.querySelector('input[name="offline-mode"]:checked') || {}).value === 'purge'
+  repubPurged = purge
+  closeModal('modal-offline')
+  document.getElementById(currentTab + '-body').classList.add('hidden')
+  var empty = document.getElementById(currentTab + '-offlined')
+  empty.classList.remove('hidden')
+  empty.querySelector('.off-line2').textContent = purge ? '集群资源已删除，该集群配置与历史版本已删除（不可恢复）' : '集群资源已删除'
+  empty.querySelector('.off-line3').textContent = purge ? '再次部署走首次发布（初始定义）' : '配置与历史版本已保留，重新发布仍使用原有配置'
+  empty.querySelector('button').textContent = purge ? '重新部署（首次发布）' : '重新发布'
+  var dot = document.getElementById(currentTab === 'staging' ? 'stg-tab-dot' : 'prod-tab-dot')
+  dot.classList.remove(currentTab === 'staging' ? 'bg-amber-500' : 'bg-green-500')
+  dot.classList.add('bg-zinc-400')
+  toast(purge
+    ? '演示：已下线并删除该集群配置与历史版本（不可恢复）'
+    : '演示：已下线——集群资源已删除，配置与历史版本已保留')
+}
+function republish() {
+  var tab = currentTab
+  document.getElementById(tab + '-body').classList.remove('hidden')
+  document.getElementById(tab + '-offlined').classList.add('hidden')
+  var dot = document.getElementById(tab === 'staging' ? 'stg-tab-dot' : 'prod-tab-dot')
+  dot.classList.remove('bg-zinc-400')
+  dot.classList.add(tab === 'staging' ? 'bg-amber-500' : 'bg-green-500')
+  if (tab === 'staging') stgState = 'synced' // 下线清空锚点：重发布无漂移/冲突
+  openDeployModal(true)
+}
+
+// ── 视图切换 ──
+function switchViewByName(name) {
+  if (name === 'view-wizard') syncWizardSpace()
+  document.querySelectorAll('[data-view]').forEach(function (b) {
+    b.classList.toggle('demo-btn-active', b.dataset.view === name)
+  })
+  ;['view-list', 'view-detail', 'view-wizard', 'view-modals'].forEach(function (id) {
+    document.getElementById(id).classList.toggle('hidden', id !== name)
+    document.getElementById(id).classList.toggle('flex', id === name && id === 'view-list')
+  })
+  window.scrollTo(0, 0)
+}
+function switchView(btn) { switchViewByName(btn.dataset.view) }
+function gotoDetail() { switchViewByName('view-detail') }
+
+// ── 详情页 Tab ──
+function switchTab(btn) {
+  currentTab = btn.dataset.tab === 'tab-staging' ? 'staging' : 'prod'
+  document.querySelectorAll('[data-tab]').forEach(function (b) { b.classList.toggle('tab-active', b === btn) })
+  document.getElementById('tab-prod').classList.toggle('hidden', btn.dataset.tab !== 'tab-prod')
+  document.getElementById('tab-staging').classList.toggle('hidden', btn.dataset.tab !== 'tab-staging')
+}
+
+// ── 向导步进 ──
+var currentStep = 1, totalSteps = 6
+function gotoStep(n) {
+  currentStep = n
+  document.querySelectorAll('.step-panel').forEach(function (p) {
+    p.classList.toggle('hidden', Number(p.dataset.step) !== n)
+  })
+  for (var i = 1; i <= totalSteps; i++) {
+    var dot = document.getElementById('sd-' + i)
+    dot.classList.toggle('step-dot-active', i === n)
+    dot.classList.toggle('step-dot-done', i < n)
+    dot.textContent = i < n ? '✓' : String(i)
+  }
+  document.getElementById('wizard-step-label').textContent = '第 ' + n + ' / ' + totalSteps + ' 步'
+  document.getElementById('wizard-prev').classList.toggle('hidden', n === 1)
+  var last = n === totalSteps
+  document.getElementById('wizard-next').classList.toggle('hidden', last)
+  document.getElementById('wizard-save').classList.toggle('hidden', !(last && wizardMode === 'edit'))
+  document.getElementById('wizard-go').classList.toggle('hidden', !last)
+}
+function stepMove(d) {
+  var t = currentStep + d
+  if (t < 1 || t > totalSteps) return
+  gotoStep(t)
+}
+
+// ── 弹窗 ──
+function openModal(id) {
+  var m = document.getElementById(id)
+  m.classList.remove('hidden'); m.classList.add('flex')
+}
+function closeModal(id) {
+  var m = document.getElementById(id)
+  m.classList.add('hidden'); m.classList.remove('flex')
+  if (id === 'modal-logs') stopFollow()
+  if (id === 'modal-config-editor') renderConfigFiles()
+}
+document.querySelectorAll('[id^="modal-"]').forEach(function (m) {
+  m.addEventListener('click', function (e) { if (e.target === m) closeModal(m.id) })
+})
+
+// ── 下拉菜单 ──
+function toggleMenu(e) {
+  e.stopPropagation()
+  var menu = e.currentTarget.parentElement.querySelector('.menu')
+  var open = !menu.classList.contains('hidden')
+  closeMenus()
+  if (!open) menu.classList.remove('hidden')
+}
+function closeMenus() { document.querySelectorAll('.menu').forEach(function (m) { m.classList.add('hidden') }) }
+document.addEventListener('click', function (e) { if (!e.target.closest('.dropdown')) closeMenus() })
+
+// ── 复制 / toast ──
+var toastTimer
+function toast(msg) {
+  var t = document.getElementById('toast')
+  t.textContent = msg
+  t.classList.remove('hidden')
+  clearTimeout(toastTimer)
+  toastTimer = setTimeout(function () { t.classList.add('hidden') }, 2200)
+}
+function copyText(v) {
+  try { navigator.clipboard.writeText(v) } catch (e) {}
+  toast('已复制：' + v)
+}
+
+// ── Pod 终端（模拟；正式实现为 WebSocket PTY，复用 kite /terminal 能力） ──
+var termOpenFor = null, termBuf = ''
+function openTerminal(pod) {
+  termOpenFor = pod; termBuf = ''
+  document.getElementById('terminal-title').textContent =
+    '终端 · ' + pod + ' · ' + (currentTab === 'staging' ? 'staging-cluster' : 'prod-cluster') + ' · default'
+  document.getElementById('term-out').innerHTML =
+    '<div class="text-zinc-500">已连接到容器 app（PTY bash）· 输入 exit 关闭</div>'
+  document.getElementById('terminal-drawer').classList.remove('hidden')
+  renderTermBuf()
+}
+function closeTerminal() {
+  document.getElementById('terminal-drawer').classList.add('hidden')
+  termOpenFor = null
+}
+function focusTermInput() { /* 键盘监听挂全局，点击面板仅为聚焦体验 */ }
+function renderTermBuf() { document.getElementById('term-buf').textContent = termBuf }
+function termRun(cmd) {
+  var out = document.getElementById('term-out')
+  var echo = document.createElement('div')
+  echo.innerHTML = '<span class="text-emerald-400">bash-5.1$</span> ' + cmd.replace(/</g, '&lt;')
+  out.appendChild(echo)
+  var resp = {
+    ls: 'assets  bin  dev  etc  home  proc  usr  var  app.js',
+    pwd: '/usr/share/nginx/html',
+    whoami: 'nginx',
+    'cat /etc/hostname': 'my-app-7d9f6',
+    date: new Date().toString()
+  }
+  var r = resp[cmd.trim()]
+  if (r === undefined && cmd.trim()) r = 'bash: ' + cmd.trim() + ': command not found'
+  if (r) { var line = document.createElement('div'); line.textContent = r; out.appendChild(line) }
+  var scroller = document.querySelector('#terminal-drawer .overflow-auto')
+  scroller.scrollTop = scroller.scrollHeight
+}
+document.addEventListener('keydown', function (e) {
+  if (!termOpenFor) return
+  var t = e.target.tagName
+  if (t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT') return
+  if (e.key === 'Enter') { termRun(termBuf); termBuf = ''; renderTermBuf(); e.preventDefault(); return }
+  if (e.key === 'Backspace') { termBuf = termBuf.slice(0, -1); renderTermBuf(); e.preventDefault(); return }
+  if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) { termBuf += e.key; renderTermBuf() }
+})
+
+// ── Pod 日志（模拟；正式实现复用 kite /logs WebSocket） ──
+var followTimer = null, logSec = 0
+function nextLogLine() {
+  logSec++
+  var ts = '2026-09-23 17:4' + String(Math.floor(logSec / 60) % 6) + ':' + String(logSec % 60).padStart(2, '0')
+  var samples = [
+    ['INFO', 'GET /api/v1/orders 200 12ms'],
+    ['INFO', 'GET /healthz 200 1ms'],
+    ['INFO', 'POST /api/v1/login 200 45ms'],
+    ['INFO', 'GET /api/v1/items?id=8 200 23ms'],
+    ['WARN', 'upstream response slow: 812ms'],
+    ['INFO', 'GET /static/app.js 200 3ms']
+  ]
+  var s = samples[logSec % samples.length]
+  var lvl = s[0] === 'WARN'
+    ? '<span class="text-amber-400">WARN</span>'
+    : '<span class="text-sky-400">INFO</span>'
+  return ts + ' ' + lvl + ' ' + s[1].replace(/</g, '&lt;')
+}
+function appendLog(n) {
+  var body = document.getElementById('logs-body')
+  var parts = []
+  for (var i = 0; i < n; i++) parts.push(nextLogLine())
+  body.insertAdjacentHTML('beforeend', parts.join('\n') + '\n')
+  body.scrollTop = body.scrollHeight
+}
+function openLogs(pod) {
+  document.getElementById('logs-pod').textContent = pod + ' · default'
+  document.getElementById('logs-body').textContent = ''
+  logSec = 0
+  appendLog(30)
+  openModal('modal-logs')
+  startFollow()
+}
+function startFollow() {
+  stopFollow()
+  followTimer = setInterval(function () { appendLog(1) }, 1000)
+  var b = document.getElementById('logs-follow-btn')
+  b.textContent = '跟随中'; b.classList.add('btn-primary')
+}
+function stopFollow() {
+  if (followTimer) { clearInterval(followTimer); followTimer = null }
+  var b = document.getElementById('logs-follow-btn')
+  if (b) { b.textContent = '已暂停'; b.classList.remove('btn-primary') }
+}
+function toggleFollow() { followTimer ? stopFollow() : startFollow() }
+function logsJump(where) {
+  var body = document.getElementById('logs-body')
+  body.scrollTop = where === 'start' ? 0 : body.scrollHeight
+  if (where === 'start') { stopFollow(); toast('演示：已跳到开头（跟随已暂停）') }
+}
+
+applyHash()
+renderSpaceNav()
+renderPorts()
+renderEnv()
+initCeEvents()
+</script>
+</body>
+</html>

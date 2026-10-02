@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { useAuth } from '@/contexts/auth-context'
+import { useWorkMode } from '@/contexts/work-mode-context'
 import {
   CaseSensitive,
   Check,
+  Layers,
   LogOut,
   Minus,
   Palette,
@@ -10,6 +12,7 @@ import {
   UserCog,
   ZoomIn,
 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
@@ -35,7 +38,9 @@ const DISPLAY_SCALE_MAX = 120
 const DISPLAY_SCALE_STEP = 5
 
 export function UserMenu() {
+  const { t } = useTranslation()
   const { user, logout, hasGlobalSidebarPreference } = useAuth()
+  const { mode, setMode } = useWorkMode()
   const {
     colorTheme,
     setColorTheme,
@@ -149,6 +154,41 @@ export function UserMenu() {
               <DropdownMenuSeparator />
             </>
           )}
+
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>
+              <Layers className="mr-2 h-4 w-4" />
+              <span>{t('workMode.label')}</span>
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent>
+              <DropdownMenuItem
+                onClick={() => setMode('application')}
+                role="menuitemradio"
+                aria-checked={mode === 'application'}
+                className={`flex items-center justify-between gap-2 cursor-pointer ${
+                  mode === 'application' ? 'font-medium text-foreground' : ''
+                }`}
+              >
+                <span>{t('workMode.application')}</span>
+                {mode === 'application' && (
+                  <Check className="h-4 w-4 text-primary" />
+                )}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => setMode('professional')}
+                role="menuitemradio"
+                aria-checked={mode === 'professional'}
+                className={`flex items-center justify-between gap-2 cursor-pointer ${
+                  mode === 'professional' ? 'font-medium text-foreground' : ''
+                }`}
+              >
+                <span>{t('workMode.professional')}</span>
+                {mode === 'professional' && (
+                  <Check className="h-4 w-4 text-primary" />
+                )}
+              </DropdownMenuItem>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
 
           <DropdownMenuSub>
             <DropdownMenuSubTrigger>
