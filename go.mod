@@ -9,6 +9,7 @@ require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/funcx27/kite/modules/application v0.0.0-00010101000000-000000000000
 	github.com/funcx27/kite/modules/buildfleet v0.0.0-00010101000000-000000000000
+	github.com/funcx27/kite/modules/workflow v0.0.0-00010101000000-000000000000
 	github.com/gin-contrib/gzip v1.2.6
 	github.com/gin-gonic/gin v1.12.0
 	github.com/glebarez/sqlite v1.11.0
@@ -51,6 +52,8 @@ replace github.com/funcx27/kite/modules/application => ./modules/application
 replace github.com/rancher/remotedialer => github.com/zxh326/remotedialer v0.0.0-20260815085230-0ff84947e93f
 
 replace github.com/funcx27/kite/modules/buildfleet => ./modules/buildfleet
+
+replace github.com/funcx27/kite/modules/workflow => ./modules/workflow
 
 require (
 	github.com/Microsoft/go-winio v0.6.3-0.20251027160822-ad3df93bed29 // indirect

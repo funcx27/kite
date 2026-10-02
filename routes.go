@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/funcx27/kite/modules/application"
+	"github.com/funcx27/kite/modules/workflow"
 	"github.com/gin-gonic/gin"
 	promclient "github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -30,6 +31,7 @@ import (
 	"github.com/zxh326/kite/pkg/terminal"
 	"github.com/zxh326/kite/pkg/users"
 	"github.com/zxh326/kite/pkg/version"
+	"github.com/zxh326/kite/pkg/workflowadapter"
 	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
@@ -161,14 +163,24 @@ func registerProtectedRoutes(r *gin.RouterGroup, authHandler *auth.AuthHandler, 
 	if err := applicationadapter.Migrate(model.DB); err != nil {
 		panic("failed to migrate application module: " + err.Error())
 	}
-	registerClusterProtectedRoutes(defaultAPI, helmChartsHandler, appDeps, buildfleet)
+	wfDeps := workflowadapter.NewDeps(cm)
+	if err := workflowadapter.Migrate(model.DB); err != nil {
+		panic("failed to migrate workflow module: " + err.Error())
+	}
+	// Resume runs interrupted by a previous process (design §6 重启恢复);
+	// must run after Migrate so the module tables exist.
+	wfModule := workflow.New(wfDeps)
+	if err := wfModule.Start(); err != nil {
+		panic("failed to start workflow module: " + err.Error())
+	}
+	registerClusterProtectedRoutes(defaultAPI, helmChartsHandler, appDeps, buildfleet, wfModule)
 
 	clusterAPI := api.Group("/_clusters/:cluster")
 	clusterAPI.Use(authHandler.RequireAuth(), middleware.ClusterMiddleware(cm))
-	registerClusterProtectedRoutes(clusterAPI, helmChartsHandler, appDeps, buildfleet)
+	registerClusterProtectedRoutes(clusterAPI, helmChartsHandler, appDeps, buildfleet, wfModule)
 }
 
-func registerClusterProtectedRoutes(api *gin.RouterGroup, helmChartsHandler *helm.HelmChartHandler, appDeps *applicationadapter.Deps, buildfleet *buildfleetadapter.Deps) {
+func registerClusterProtectedRoutes(api *gin.RouterGroup, helmChartsHandler *helm.HelmChartHandler, appDeps *applicationadapter.Deps, buildfleet *buildfleetadapter.Deps, wfModule *workflow.Module) {
 	api.GET("/overview", system.GetOverview)
 
 	metricsHandler := metrics.NewHandler()
@@ -210,6 +222,9 @@ func registerClusterProtectedRoutes(api *gin.RouterGroup, helmChartsHandler *hel
 	if buildfleet != nil {
 		buildfleet.RegisterRoutes(api.Group("/buildfleet"))
 	}
+	// Same placement: workflow URLs are non-resource shapes and authorize
+	// themselves against the "workflows" pseudo-resource (design §8).
+	wfModule.RegisterRoutes(api)
 
 	api.Use(middleware.RBACMiddleware())
 	resources.RegisterRoutes(api)
