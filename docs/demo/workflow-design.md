@@ -13,7 +13,7 @@
 | 节点类型（MVP 四类） | **构建镜像**（buildfleet）、**部署应用**（application）、**人工审批**（门禁）、**通知**（webhook）。通用任务节点（跑任意镜像）进 Backlog |
 | 与发布门禁的关系 | **工作流不绕过应用模块的任何门禁**：deploy 节点经 application 的 deploy 语义执行，遇冲突（Live≠锚点）即节点失败并透出冲突明细——自动发布永远不覆盖集群手动修改，人工在应用模块合并后「从失败节点重试」 |
 | 定义与执行分离 | Workflow 定义带版本链（WorkflowRevision）；Run 钉住触发时的 rev，历史 run 永远可回溯当时定义 |
-| 凭证 | 节点以 `credentialRef` 引用**凭证中心**（独立前置模块，见 §9）；本模块不存凭证明文，只透传给执行器 |
+| 凭证 | 节点以 `credentialRef` 引用**凭证中心**（独立前置模块，见 §9）；本模块不存凭证明文，只透传给宿主能力侧 |
 | 触发器 | 手动（参数表单）/ git webhook（github、gitea、gitlab 载荷适配，每 workflow 独立 token）/ cron（模块内置轻量调度循环，不改 pkg/scheduler） |
 | 前端形态 | 住在 kite `ui/` 工程内，但**目录结构完全独立**：全部代码自包含在 `ui/src/workflow/` 单一目录（pages / components / api / i18n 自带），不向任何共享目录添加文件；风格复用同一套 Tailwind 主题与 shadcn 原语（import 而非修改）；宿主共享文件仅两处**追加式**改动：`routes.tsx` 一个路由块、`package.json` 一个依赖行（见 §2/§11） |
 | 可视化 | React Flow（`@xyflow/react`，MIT）自由画布：拖拽节点 + 连线 + 右侧属性抽屉；无显式 start/end 节点（无入边即起点）；DAG 无环校验 |
@@ -156,6 +156,12 @@ NodeRun(build)     NodeRun(approve)   NodeRun(deploy)
 
 ## 5. 节点类型（MVP 四类）
 
+实现分层（引擎内部）：
+
+- **宿主能力端口**：`Deps` 的 `BuildImage`/`DeployApp`/`Notify` 三个方法（见 §2），由 `pkg/workflowadapter` 注入；引擎不感知具体能力来源。
+- **内置 runner 注册表**：引擎为 build-image / deploy-app / notify 各实现一个内置 runner（`modules/workflow/internal/engine/runner.go`），装配时注册进 `Engine.runners`，并同步注册进 spec 校验的节点类型注册表；runner 负责 props 解码校验与宿主能力调用，节点级授权仅 build runner 承担（deploy 的授权由 application 部署语义内部逐文档承接，见 §8）。新增节点类型 = 实现一个 runner + 注册一行；只有节点需要新宿主能力时才扩 `Deps`。
+- **引擎原生 approval**：审批不经 runner——事件驱动等待 API 决定（见 §5.3），由引擎直接管理。
+
 ### 5.1 构建镜像（build-image）
 
 ```jsonc
@@ -260,13 +266,13 @@ node: pending ──> running ──┬─> succeeded ──(下游解锁)
 ## 8. 权限与审计
 
 - 伪资源 `"workflows"`，模块内自授权（挂载于 RBAC 中间件之前，同 applications/builds 模式）：CRUD → get/create/update/delete；run/cancel/retry/approve → `exec`。
-- **节点级映射**：build 节点派发前 `Authorize("builds", "create", cluster, "")`；deploy 节点由 application 模块内部的逐文档校验承接（Deps.DeployApp 传入触发用户身份）；无权限 → 节点失败并明确报错（不是静默跳过）。
+- **节点级映射**：build 节点派发前以触发用户身份检查 `AuthorizeUser(触发用户, "builds", "create", "", "")`——M1 的 build props 不携带 cluster，检查针对宿主级 builds 能力（空 cluster 仅匹配通配集群授权，M2 随 props 传入 cluster）；deploy 节点由 application 模块内部的逐文档校验承接（Deps.DeployApp 传入触发用户身份）；无权限 → 节点失败并明确报错（不是静默跳过）。
 - 审批：assignees 内用户或 admin（审批不检 workflows 资源 verb——assignees 列表本身就是授权）。
 - 审计：run 触发/取消/重试、审批决定、定义修订经 `Deps.RecordHistory` 写 ResourceHistory（`Source: "workflow"`，detail 含 workflow/run/node 标识）。
 
 ## 9. 凭证接口契约（凭证中心 = 独立前置模块）
 
-构建节点访问私有 git / 推送私有 registry 需要**凭证中心**先行落地（或至少最小实现）。本模块的对接形状：**节点只透传 `credentialRef` 字符串**（BuildRequest 的组成字段），凭证的解析与注入由宿主执行器侧完成——`pkg/workflowadapter` 实现 BuildImage 时经凭证中心按 ref 解析出 git/registry 凭证表，再填入 `fleet.Request.Creds`（进程内直调，SDK 原生支持按请求传递）。模块与引擎全程不接触凭证明文，也不感知凭证结构（解析失败 = 节点失败并透出来自 adapter 的明确错误）：
+构建节点访问私有 git / 推送私有 registry 需要**凭证中心**先行落地（或至少最小实现）。本模块的对接形状：**节点只透传 `credentialRef` 字符串**（BuildRequest 的组成字段），凭证的解析与注入由宿主能力实现侧完成——`pkg/workflowadapter` 实现 BuildImage 时经凭证中心按 ref 解析出 git/registry 凭证表，再填入 `fleet.Request.Creds`（进程内直调，SDK 原生支持按请求传递）。模块与引擎全程不接触凭证明文，也不感知凭证结构（解析失败 = 节点失败并透出来自 adapter 的明确错误）：
 
 ```go
 // exec.BuildRequest 的凭证字段（模块侧只有这一形状）
@@ -316,11 +322,11 @@ type Credential struct {
 |---|---|---|
 | M0 | UI demo + 设计定稿 | ✅（本文档 + workflow.html） |
 | M1 | 模型与引擎骨架：go.mod、Deps、Migrate、定义 CRUD + 版本链 + 乐观锁、DAGSpec 解析与校验、进程内调度状态机（并发/失败策略/取消/重启恢复）、run 展开与保留裁剪 | 待启动 |
-| M2 | 节点执行器：BuildImage（buildfleet 直调 + 凭证注入，**前置：凭证中心最小实现**）、DeployApp（application 模块导出门面）、notify webhook、SSE run 事件流与 LogTail | 待启动 |
+| M2 | 宿主能力实现（引擎内置 runner 消费这些端口）：BuildImage（buildfleet 直调 + 凭证注入，**前置：凭证中心最小实现**）、DeployApp（application 模块导出门面）、notify webhook、SSE run 事件流与 LogTail | 待启动 |
 | M3 | 触发与审批：webhook 公开端点 + token + 三家载荷适配、cron 循环、审批交互与超时巡检、从失败节点重试 | 待启动 |
 | M4 | 前端：`ui/src/workflow/` 自包含目录骨架（pages/components/api/i18n 自带）、React Flow 编辑器（属性抽屉/校验）、run 视图（着色/日志抽屉/审批内联）、列表页、`routes.tsx` 单块接入 + `package.json` 依赖 | 待启动 |
 
-**Backlog（不承诺）**：通用任务节点（跑任意镜像，承载单测/trivy 扫描；需 k8s Job 执行器或 buildfleet 扩展）；画布 ⇄ YAML 双模编辑；通知渠道扩展（钉钉/企微/飞书/邮件，待通知中心）；PR 触发（v1 仅 push）；run 定时清理策略（当前 50 条保留）；手动构建页 REST 层 credentialRef 透传（与凭证中心同期）。
+**Backlog（不承诺）**：通用任务节点（跑任意镜像，承载单测/trivy 扫描；需 k8s Job 宿主能力——新内置 runner + 新 Deps 方法——或 buildfleet 扩展）；画布 ⇄ YAML 双模编辑；通知渠道扩展（钉钉/企微/飞书/邮件，待通知中心）；PR 触发（v1 仅 push）；run 定时清理策略（当前 50 条保留）；手动构建页 REST 层 credentialRef 透传（与凭证中心同期）。
 
 ## 13. 验证口径
 

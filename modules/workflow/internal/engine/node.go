@@ -7,11 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
-	"github.com/funcx27/kite/modules/workflow/exec"
 	"github.com/funcx27/kite/modules/workflow/internal/spec"
 	"github.com/funcx27/kite/modules/workflow/internal/store"
 )
@@ -39,7 +37,8 @@ func (l *logBuffer) tail() string {
 }
 
 // execNode runs one task node to a terminal state: render the template
-// inputs, execute via the injected executor, persist Outputs/Error/LogTail.
+// inputs, execute via the node type's registered runner, persist
+// Outputs/Error/LogTail.
 // Approval nodes never reach here — the driver parks them running and the
 // approve/reject API decides them (design §5.3). Runs on its own goroutine
 // holding one global dispatch slot.
@@ -86,16 +85,11 @@ func (e *Engine) execNode(parent context.Context, state *runState, node spec.Nod
 
 	logs := &logBuffer{}
 	var outputs map[string]any
-	switch node.Type {
-	case spec.NodeBuildImage:
-		outputs, err = e.runBuild(ctx, rendered, state.run, logs)
-	case spec.NodeDeployApp:
-		outputs, err = e.runDeploy(ctx, rendered, state.run)
-	case spec.NodeNotify:
-		outputs, err = e.runNotify(ctx, rendered)
-	case "":
+	if node.Type == "" {
 		err = fmt.Errorf("node %q has no type", node.ID)
-	default:
+	} else if runner, ok := e.runners[node.Type]; ok {
+		outputs, err = runner.Run(ctx, rendered, state.run, logs.write)
+	} else {
 		err = fmt.Errorf("unknown node type %q", node.Type)
 	}
 	if err != nil {
@@ -110,140 +104,6 @@ func (e *Engine) execNode(parent context.Context, state *runState, node spec.Nod
 		return
 	}
 	e.completeNode(row.ID, row.Attempt, store.NodeSucceeded, outputs, nil, logs.tail())
-}
-
-// runBuild drives a build-image node (design §5.1).
-func (e *Engine) runBuild(ctx context.Context, rendered spec.Props, run store.WorkflowRun, logs *logBuffer) (map[string]any, error) {
-	// Node-level authorization (design §8): the run executes with its
-	// trigger user's RBAC identity; missing permission fails the node
-	// loudly rather than skipping it. Buildfleet builds carry no cluster in
-	// M1 props, so the check targets the host-wide builds capability — an
-	// empty cluster only matches wildcard-cluster grants until M2 threads a
-	// cluster through the build props.
-	if !e.deps.AuthorizeUser(run.TriggeredBy, "builds", "create", "", "") {
-		return nil, fmt.Errorf("user %d does not have permission to create builds", run.TriggeredBy)
-	}
-	var p spec.BuildProps
-	if err := decodeProps(rendered, &p); err != nil {
-		return nil, fmt.Errorf("decode build props: %w", err)
-	}
-	var source *exec.GitSource
-	var httpSource *exec.HTTPSource
-	switch {
-	case p.Git != nil && p.Git.URL != "":
-		source = &exec.GitSource{URL: p.Git.URL, Ref: p.Git.Ref, Subdir: p.Git.Subdir}
-	case p.HTTP != nil && p.HTTP.URL != "":
-		httpSource = &exec.HTTPSource{URL: p.HTTP.URL}
-	default:
-		return nil, fmt.Errorf("build node needs a git or http source")
-	}
-	if p.OutputRef == "" {
-		return nil, fmt.Errorf("build node needs outputRef")
-	}
-	dockerfile := p.Dockerfile
-	if dockerfile == "" && p.DockerfileContent == "" {
-		dockerfile = "Dockerfile"
-	}
-	res, err := e.deps.BuildImage(ctx, exec.BuildRequest{
-		Git:               source,
-		HTTP:              httpSource,
-		Dockerfile:        dockerfile,
-		DockerfileContent: p.DockerfileContent,
-		Args:              p.Args,
-		Platforms:         p.Platforms,
-		OutputRef:         p.OutputRef,
-		CredentialRef:     p.CredentialRef,
-		Provider:          p.Provider,
-	}, logs.write)
-	if err != nil {
-		return nil, err
-	}
-	return buildOutputs(res), nil
-}
-
-// buildOutputs shapes the build executor result into the node Outputs; the
-// digest-carrying reference is the one downstream deploy nodes should
-// consume (design §5.1).
-func buildOutputs(res exec.BuildResult) map[string]any {
-	out := map[string]any{
-		"imageRef": res.ImageRef,
-		"digest":   res.Digest,
-	}
-	if res.ImageRef != "" && res.Digest != "" {
-		base := res.ImageRef
-		if i := strings.LastIndex(base, ":"); i > strings.LastIndex(base, "/") {
-			base = base[:i]
-		}
-		out["imageRefWithDigest"] = base + "@" + res.Digest
-	}
-	return out
-}
-
-// runDeploy drives a deploy-app node (design §5.2). The run executes with
-// its trigger user's RBAC identity (design §7).
-func (e *Engine) runDeploy(ctx context.Context, rendered spec.Props, run store.WorkflowRun) (map[string]any, error) {
-	var p spec.DeployProps
-	if err := decodeProps(rendered, &p); err != nil {
-		return nil, fmt.Errorf("decode deploy props: %w", err)
-	}
-	if p.App == "" || p.Cluster == "" {
-		return nil, fmt.Errorf("deploy node needs app and cluster")
-	}
-	res, err := e.deps.DeployApp(ctx, exec.DeployRequest{
-		App:        p.App,
-		Cluster:    p.Cluster,
-		Image:      p.Image,
-		DryRun:     p.DryRun,
-		OperatorID: run.TriggeredBy,
-	})
-	if err != nil {
-		return nil, err
-	}
-	var preview any = res.Preview
-	if len(res.Preview) > 0 {
-		var docs any
-		if json.Unmarshal(res.Preview, &docs) == nil {
-			preview = docs
-		}
-	}
-	return map[string]any{"revision": res.Revision, "preview": preview}, nil
-}
-
-// runNotify drives a notify node (design §5.4). The executor's failure fails
-// the node but never blocks the pipeline — notify nodes carry forced continue
-// semantics.
-func (e *Engine) runNotify(ctx context.Context, rendered spec.Props) (map[string]any, error) {
-	var p spec.NotifyProps
-	if err := decodeProps(rendered, &p); err != nil {
-		return nil, fmt.Errorf("decode notify props: %w", err)
-	}
-	if p.URL == "" {
-		return nil, fmt.Errorf("notify node needs url")
-	}
-	payload, err := notifyPayload(p.PayloadTemplate)
-	if err != nil {
-		return nil, err
-	}
-	if err := e.deps.Notify(ctx, exec.NotifyRequest{URL: p.URL, Payload: payload}); err != nil {
-		return nil, fmt.Errorf("notify: %w", err)
-	}
-	return map[string]any{"delivered": true}, nil
-}
-
-// notifyPayload wraps the rendered template into the webhook body: a valid
-// JSON template is sent as-is, plain text becomes {"text": ...}.
-func notifyPayload(template string) ([]byte, error) {
-	if template == "" {
-		return []byte(`{}`), nil
-	}
-	if json.Valid([]byte(template)) {
-		return []byte(template), nil
-	}
-	b, err := json.Marshal(map[string]string{"text": template})
-	if err != nil {
-		return nil, err
-	}
-	return b, nil
 }
 
 // completeNode writes a node's terminal state via a conditional update,

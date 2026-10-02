@@ -91,6 +91,9 @@ func (e *Engine) load(runID uint) (*runState, error) {
 
 // effectiveOnFailure: notify nodes are best-effort — they always run with
 // continue semantics regardless of their configured policy (design §5.4).
+// Deliberate driver-level policy, outside the runner registry: runners
+// execute nodes but do not shape dispatch; approval is engine-native for the
+// same reason (design §5).
 func effectiveOnFailure(n spec.Node) string {
 	if n.Type == spec.NodeNotify {
 		return spec.OnFailureContinue

@@ -33,15 +33,19 @@ var (
 	ErrConflict = errors.New("workflow run is not in a state allowing this action")
 )
 
-// Executors are the node execution capabilities injected from the module
-// entry (design §5).
+// Executors are the host capability ports injected from the module entry
+// (design §5): image build, app deploy and webhook notification. They are
+// consumed by the engine's built-in node runners, not dispatched by node type
+// here — the node-type vocabulary is the engine's runner registry, so adding
+// a node type means implementing one runner; extend this interface only when
+// a node needs a new host capability.
 type Executors interface {
 	BuildImage(ctx context.Context, req exec.BuildRequest, onLog func(string)) (exec.BuildResult, error)
 	DeployApp(ctx context.Context, req exec.DeployRequest) (exec.DeployResult, error)
 	Notify(ctx context.Context, req exec.NotifyRequest) error
 }
 
-// Deps is what the engine needs beyond the executors: identity-based
+// Deps is what the engine needs beyond the host capabilities: identity-based
 // authorization for node dispatch. Runs execute outside any request, so the
 // check goes by user id, never a gin context (design §7/§8).
 type Deps interface {
@@ -53,9 +57,9 @@ type Deps interface {
 
 // Engine schedules runs. One host process owns one Engine.
 type Engine struct {
-	deps   Deps
-	db     *gorm.DB
-	slots  chan struct{}
+	runners map[string]NodeRunner
+	db      *gorm.DB
+	slots   chan struct{}
 	drivers map[uint]*driverHandle
 
 	mu sync.Mutex
@@ -81,8 +85,12 @@ type driverHandle struct {
 
 // New builds an Engine over the module tables and the injected capabilities.
 func New(db *gorm.DB, deps Deps) *Engine {
-	return &Engine{
-		deps:    deps,
+	e := &Engine{
+		runners: map[string]NodeRunner{
+			spec.NodeBuildImage: buildRunner{deps: deps},
+			spec.NodeDeployApp:  deployRunner{deps: deps},
+			spec.NodeNotify:     notifyRunner{deps: deps},
+		},
 		db:      db,
 		slots:   make(chan struct{}, MaxConcurrentNodes),
 		drivers: map[uint]*driverHandle{},
@@ -90,6 +98,15 @@ func New(db *gorm.DB, deps Deps) *Engine {
 		queue:   map[uint][]uint{},
 		limits:  map[uint]int{},
 	}
+	// Keep spec's node-type vocabulary in lockstep with the runner registry
+	// so new runner types become saveable without touching spec. Idempotent;
+	// the built-in types (including engine-native approval) are pre-registered
+	// by spec itself, and registration must happen at wiring time (see
+	// spec.RegisterNodeType).
+	for typ := range e.runners {
+		spec.RegisterNodeType(typ)
+	}
+	return e
 }
 
 // Start resumes non-terminal runs after a restart (design §6 重启恢复):

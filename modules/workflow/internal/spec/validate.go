@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 // dns1123Pattern matches an RFC 1123 label: lowercase alphanumerics and
@@ -152,6 +153,38 @@ func hasIncoming(edges []Edge, id string) bool {
 	return false
 }
 
+// knownNodeTypes is the node-type vocabulary Validate accepts. The four
+// built-in types are pre-registered so the spec package is complete on its
+// own; the engine mirrors its runner registry into it via RegisterNodeType.
+// Registration happens at wiring time — the mutex keeps the exported setter
+// race-free against Validate's reads, it is not a license for runtime
+// registration.
+var (
+	nodeTypeMu     sync.RWMutex
+	knownNodeTypes = map[string]bool{
+		NodeBuildImage: true,
+		NodeDeployApp:  true,
+		NodeApproval:   true,
+		NodeNotify:     true,
+	}
+)
+
+// RegisterNodeType adds a node type to the validation vocabulary. Call it at
+// package init or module wiring time only, before any spec is validated, so
+// the vocabulary stays stable at request time.
+func RegisterNodeType(nodeType string) {
+	nodeTypeMu.Lock()
+	defer nodeTypeMu.Unlock()
+	knownNodeTypes[nodeType] = true
+}
+
+// isKnownNodeType reports whether nodeType is in the validation vocabulary.
+func isKnownNodeType(nodeType string) bool {
+	nodeTypeMu.RLock()
+	defer nodeTypeMu.RUnlock()
+	return knownNodeTypes[nodeType]
+}
+
 // validateTemplates checks every {{ ... }} reference in the node's props:
 // params.<name> must exist in the schema, steps.<id>.outputs.<key> must
 // target an existing node (runtime resolves outputs, design §4).
@@ -178,9 +211,7 @@ func validateTemplates(n Node, nodeIDs, paramNames map[string]bool) []string {
 			errs = append(errs, fmt.Sprintf("node %q: malformed template reference %q (want params.<name>, steps.<id>.outputs.<key> or run.<number|status|url>)", n.ID, ref))
 		}
 	}
-	switch n.Type {
-	case NodeBuildImage, NodeDeployApp, NodeApproval, NodeNotify, "":
-	default:
+	if n.Type != "" && !isKnownNodeType(n.Type) {
 		errs = append(errs, fmt.Sprintf("node %q has unknown type %q", n.ID, n.Type))
 	}
 	switch n.OnFailure {

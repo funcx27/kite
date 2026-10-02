@@ -24,7 +24,10 @@ type HistoryEntry = store.HistoryEntry
 
 // Deps is the set of host capabilities the module depends on. It is one
 // injection point by design (docs/demo/workflow-design.md §2); the methods
-// mirror the application module's Deps plus the three executors of §5.
+// mirror the application module's Deps plus the three host capability ports
+// of §5 (BuildImage/DeployApp/Notify, consumed by the engine's built-in node
+// runners). Adding a node type needs only an engine runner; extend Deps only
+// when a node needs a new host capability.
 type Deps interface {
 	// Authorize reports whether the request may perform verb on resource in
 	// cluster/namespace, judged against the host RBAC roles carried in the
@@ -124,6 +127,6 @@ func (h handlerDeps) IsAdmin(c *gin.Context) bool { return h.d.IsAdmin(c) }
 
 func (h handlerDeps) RecordHistory(entry store.HistoryEntry) { h.d.RecordHistory(entry) }
 
-// The injected Deps always satisfies the engine's full surface (executors
-// plus identity-based authorization).
+// The injected Deps always satisfies the engine's full surface (host
+// capability ports plus identity-based authorization).
 var _ engine.Deps = (Deps)(nil)

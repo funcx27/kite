@@ -11,6 +11,7 @@ Kite 宿主（主 module `github.com/zxh326/kite`）之外的独立 Go module �
 |------|------|----------|----------|--------------|
 | `application` | 应用发布：逻辑应用、按集群配置及其 revision 链 | 本仓库 `feat/application` 分支开发 | 已接线：`pkg/applicationadapter` 桥接 + `routes.go` 装配 | 无（随宿主单二进制发布） |
 | `buildfleet` | 池化可复现容器构建系统（类似 docker buildx），Connect RPC + `buildfleetd` 守护进程 | `github.com/funcx27/buildfleet`，迁入 commit `0c9c922b6d354bb214414e530b848c68d40cac35`（2026-09-11） | 已接线（REST+SSE 门面 + 进程内嵌入） | `modules/buildfleet/cmd/buildfleetd` |
+| `workflow` | CI/CD 编排：DAG 工作流定义（构建镜像/审批/部署应用/通知）、revision 链与进程内调度引擎（设计文档 `docs/demo/workflow-design.md`） | 本仓库 `feat/platform` 分支开发 | 已接线：`pkg/workflowadapter` 桥接 + `routes.go` 装配（Migrate 显式触发 + 启动恢复） | 无（随宿主单二进制发布） |
 
 ## 模块契约
 
