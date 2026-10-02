@@ -15,6 +15,7 @@
 | 定义与执行分离 | Workflow 定义带版本链（WorkflowRevision）；Run 钉住触发时的 rev，历史 run 永远可回溯当时定义 |
 | 凭证 | 节点以 `credentialRef` 引用**凭证中心**（独立前置模块，见 §9）；本模块不存凭证明文，只透传给执行器 |
 | 触发器 | 手动（参数表单）/ git webhook（github、gitea、gitlab 载荷适配，每 workflow 独立 token）/ cron（模块内置轻量调度循环，不改 pkg/scheduler） |
+| 前端形态 | **完全独立的 Vite 应用**（`modules/workflow/ui/`）：视觉风格对齐 kite，但代码零共享——不 import kite `ui/` 任何文件、不改其任何共享文件；构建产物由模块自行 go:embed，在 `/workflow` 前缀下自服务（见 §2/§11） |
 | 可视化 | React Flow（`@xyflow/react`，MIT）自由画布：拖拽节点 + 连线 + 右侧属性抽屉；无显式 start/end 节点（无入边即起点）；DAG 无环校验 |
 
 **为什么不集成 Argo Workflows / Tekton**：工作流的执行原语（构建、部署）已是平台内能力（buildfleet SDK 进程内可用、application deploy 是库调用），引入集群内 CRD 引擎反而要求每集群安装、多集群编排与审批绕远，与 kite 单二进制自包含理念冲突。自研引擎的复杂度收敛在一个拓扑遍历状态机（参考 DolphinScheduler/Kestra 的 run 语义，见 §14）。
@@ -39,11 +40,15 @@ ui (React) ── /api/v1/workflows* ──> kite routes.go（挂载点，RBAC �
 
 - 后端严格走 [modules/README.md](../../modules/README.md) 契约：宿主触点白名单仅 ①主 `go.mod`（require+replace）、②`routes.go` 装配（含 Migrate 显式触发与 webhook 公开挂载）、③`pkg/workflowadapter/`。`pkg/model`、`pkg/common/resource.go` 等宿主共享文件**零改动**。
 - 模块不 import 宿主、不 import application/buildfleet 模块。构建与部署能力以 Deps 接口注入：`BuildImage(ctx, req)`、`DeployApp(ctx, req)`、`Notify(ctx, req)`、`ResolveCredential(ctx, ref)`——全部由 workflowadapter 实现（它 import buildfleet/application 模块并组装，进程内直调，不走 HTTP）。
-- 前端全部收敛模块自有目录：组件 `ui/src/components/workflow/`、页面 `ui/src/pages/workflow-*.tsx`；**API 客户端独立成 `ui/src/lib/workflow-api.ts`，不动共享的 `ui/src/lib/api.ts`**；i18n 全部 `workflow.*` 命名空间、新 key 插在对象末位 key 之前、en/zh 同步；共享组件（日志流、YAML diff）需要定制就 fork 进模块目录不改共享版；`routes.tsx` 单块插入；侧边栏走 `SIDEBAR_CONFIG_VERSION` bump。
+- **前端是完全独立的应用，不是 kite `ui/` 里的页面**（用户明确原则：风格可相似，代码必须独立）：
+  - 独立 Vite 工程住模块内：`modules/workflow/ui/`（自带 `package.json`、`vite.config.ts`、`tsconfig`、i18n 资源），不 import kite `ui/` 任何文件，也**不修改** kite `ui/` 的任何文件（routes.tsx / sidebar / api.ts / i18n 全部不碰）。
+  - 构建产物由**模块自己的包** `//go:embed all:ui/dist` 打包（go:embed 不能跨 go module 边界，因此 embed 必须在模块内做——这恰好强化了所有权：UI 属于模块），`RegisterRoutes` 时在 `/workflow` 前缀挂载 SPA 与历史回退；宿主侧源文件零改动，唯一新增触点是 Makefile 一条构建步骤。
+  - 视觉对齐的实现方式：**复制设计 token 与所需原语**（Tailwind 主题、色板、shadcn 风格基础组件拷入模块 ui）——shadcn 本就是 copy-paste 哲学，复制即正道；不做 workspace 共享包、不做 npm link，保证两条前端代码线永不相交。
+  - 入口：不修改 kite 侧边栏。用 kite 既有的**自定义侧边栏**能力配一个 `/workflow` 链接（零代码触点），或直接收藏 URL；同源部署，浏览器会话 cookie 自然携带，API 调用无需任何鉴权改造。
 - 持久化：模块自带 GORM 模型，`routes.go` 装配处追加 `workflow.Migrate(DB)`（同 application 模式）。
 
 **上游同步回归检查点**（每次 merge 上游后必查，在既有三条之上新增）：
-① `pkg/workflowadapter` 编译（Deps 签名依赖 fleet.Request / application 门面 / rbac / model API）；② `rbac.CanAccess` 对伪资源 `"workflows"` 的行为；③ webhook 公开挂载点在 routes.go 的位置漂移；④ 侧边栏版本号与 i18n 插入规则。
+① `pkg/workflowadapter` 编译（Deps 签名依赖 fleet.Request / application 门面 / rbac / model API）；② `rbac.CanAccess` 对伪资源 `"workflows"` 的行为；③ webhook 公开挂载点与 `/workflow` SPA 挂载在 routes.go 的位置漂移；④ Makefile 中模块 ui 构建步骤是否仍被 `make build` 链调用。
 
 ## 3. 数据持久化模型
 
@@ -292,15 +297,16 @@ type Credential struct {
 | `POST /hooks/workflows/:name` | webhook 接收（公开组，token 鉴权，三家载荷适配） |
 | `GET /workflows/:name/webhook-token` · `POST .../webhook-token/reset` | token 查看/重置（update 权限） |
 
-## 11. 前端（视觉与交互以 demo 为准）
+## 11. 前端：独立应用（视觉以 demo 为准，代码与 kite 零共享）
 
 - demo：`docs/demo/workflow.html`（顶部工具条切三视图：列表 / 画布编辑器 / run 视图；支持 `#view=editor&node=deploy`、`#view=run&node=approve` 深链）。
-- **入口**：应用模式侧边栏「工作流」分组（研发的 CI/CD 工作台）；专业模式侧边栏同款入口。列表页含空间范围（对齐应用列表的空间切换模式）。
-- **编辑器**（`/workflows/:name/edit`）：React Flow 画布——左侧节点面板（四类可拖入）、中央画布（节点卡 + 贝塞尔连线 + 小地图）、右侧属性抽屉（按节点类型出表单，模板变量插入器）；顶部工具条：参数 / 触发器 / 校验 / 保存（校验规则见 §4，错误定位到节点）。画布 ⇄ YAML 双模切换进 Backlog（先画布单向）。
-- **run 视图**（`/workflows/:name/runs/:runId`）：只读画布按节点状态着色（绿成功/红失败/蓝运行/黄等待审批/灰跳过）+ 底部节点日志抽屉（SSE 实时流，复用构建日志流的展示形态）；**审批节点内联操作**（通过/拒绝 + 评论框，仅 assignees 可见按钮）；头部：run 序号、触发者与来源（git SHA 链接）、参数 chips、耗时、取消/从失败节点重试按钮。
+- **工程形态**：`modules/workflow/ui/` 独立 Vite + React + TS 应用——自有 `package.json`（依赖自管，含 `@xyflow/react`）、`vite.config.ts`（`base: '/workflow/'`）、`tsconfig`、路由（react-router，basename `/workflow`）、TanStack Query 实例、fetch 封装、i18n（自带 zh/en 资源文件）。与 kite `ui/` 无任何 import 关系；升级互不影响。
+- **视觉对齐**：从 kite `ui/` 拷贝设计 token（Tailwind 主题变量、色板、间距/圆角约定）与所需基础组件（按钮/输入/弹窗等 shadcn 风格原语）进模块 ui 的 `src/components/ui/`——shadcn 的 copy-paste 哲学使这是惯用法而非 fork 负担；日志流等复杂展示组件同样按需拷贝后自有演化。
+- **交付形态**：`pnpm --dir modules/workflow/ui build` → `ui/dist`；模块内 `webui` 包 `//go:embed all:ui/dist` 导出 `http.FileSystem`，`RegisterRoutes` 在 `/workflow` 前缀挂载（静态资源 + SPA 历史回退）；Makefile 的 frontend/build 链增加该步骤（唯一宿主触点）。同源部署：浏览器会话 cookie 自动携带，`/api/v1/workflows*` 调用无需改造；登出态访问由 API 401 引导至 kite 登录页。
+- **入口**：kite 侧零改动。用 kite 既有「自定义侧边栏」加 `/workflow` 链接（管理配置，无代码），或直接访问 `/workflow`。
+- **编辑器**（`/workflow/:name/edit`）：React Flow 画布——左侧节点面板（四类可拖入）、中央画布（节点卡 + 贝塞尔连线 + 小地图）、右侧属性抽屉（按节点类型出表单，模板变量插入器）；顶部工具条：参数 / 触发器 / 校验 / 保存（校验规则见 §4，错误定位到节点）。画布 ⇄ YAML 双模切换进 Backlog（先画布单向）。
+- **run 视图**（`/workflow/:name/runs/:runId`）：只读画布按节点状态着色（绿成功/红失败/蓝运行/黄等待审批/灰跳过）+ 底部节点日志抽屉（SSE 实时流，EventSource 自带同源 cookie）；**审批节点内联操作**（通过/拒绝 + 评论框，仅 assignees 可见按钮）；头部：run 序号、触发者与来源（git SHA 链接）、参数 chips、耗时、取消/从失败节点重试按钮。notify 模板的 `{{run.url}}` 即 `/workflow/:name/runs/:runId` 深链。
 - 列表页：工作流名/描述/最近 run 状态与序号/触发器徽标（手动/webhook/cron）；行内「运行」（弹参数表单）与「编辑」。
-- 复用与 fork：日志流展示 fork 自 buildfleet 接线页的流式组件；表单原语复用 shadcn；**不修改任何共享组件**。
-- 接入：`routes.tsx` 单块插入三条路由（workflows、workflows/:name、workflows/:name/runs/:runId，置于 `:resource` 通配之前）；`SIDEBAR_CONFIG_VERSION` 递增；`ui/src/lib/workflow-api.ts` 独立 API 客户端；i18n `workflow.*` 命名空间。
 
 ## 12. 里程碑
 
@@ -310,7 +316,7 @@ type Credential struct {
 | M1 | 模型与引擎骨架：go.mod、Deps、Migrate、定义 CRUD + 版本链 + 乐观锁、DAGSpec 解析与校验、进程内调度状态机（并发/失败策略/取消/重启恢复）、run 展开与保留裁剪 | 待启动 |
 | M2 | 节点执行器：BuildImage（buildfleet 直调 + 凭证注入，**前置：凭证中心最小实现**）、DeployApp（application 模块导出门面）、notify webhook、SSE run 事件流与 LogTail | 待启动 |
 | M3 | 触发与审批：webhook 公开端点 + token + 三家载荷适配、cron 循环、审批交互与超时巡检、从失败节点重试 | 待启动 |
-| M4 | 前端：React Flow 编辑器（属性抽屉/校验）、run 视图（着色/日志抽屉/审批内联）、列表与详情、i18n、侧边栏接入 | 待启动 |
+| M4 | 前端独立应用：`modules/workflow/ui/` 工程骨架（vite/ts/tailwind/设计 token 与原语拷贝）、React Flow 编辑器（属性抽屉/校验）、run 视图（着色/日志抽屉/审批内联）、列表页、模块内 go:embed + `/workflow` 挂载 + Makefile 构建链接入 | 待启动 |
 
 **Backlog（不承诺）**：通用任务节点（跑任意镜像，承载单测/trivy 扫描；需 k8s Job 执行器或 buildfleet 扩展）；画布 ⇄ YAML 双模编辑；通知渠道扩展（钉钉/企微/飞书/邮件，待通知中心）；PR 触发（v1 仅 push）；run 定时清理策略（当前 50 条保留）；手动构建页 REST 层 credentialRef 透传（与凭证中心同期）。
 
@@ -318,7 +324,7 @@ type Credential struct {
 
 - 模块独立：`cd modules/workflow && go build ./... && go vet ./... && go test ./...`；
 - 宿主：`go build ./... && go vet ./...`、既有测试通过（不新增测试）；
-- UI：`pnpm --dir ui exec tsc --noEmit -p tsconfig.app.json`；
+- 模块 UI：`pnpm --dir modules/workflow/ui exec tsc --noEmit`（宿主 `ui/` 不受本模块影响，无需检查）；
 - 提交前 `make pre-commit`。
 
 ## 14. 开源参考（仅借鉴架构，不抄代码；AGPL 项目除外）
