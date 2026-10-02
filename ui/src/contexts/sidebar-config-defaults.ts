@@ -71,15 +71,7 @@ defaultMenus['sidebar.groups.application'].push({
   icon: getResourceIconComponent('IconPackage'),
 })
 
-defaultMenus['sidebar.groups.application'].push({
-  titleKey: 'nav.buildfleet',
-  url: '/buildfleet',
-  icon: getResourceIconComponent('IconRocket'),
-})
-
-// Bump when defaults change so saved sidebar_preference configs surface the
-// update (hasUpdate) instead of silently missing new entries like buildfleet.
-export const SIDEBAR_CONFIG_VERSION = 5
+export const SIDEBAR_CONFIG_VERSION = 4
 
 function getIconName(iconComponent: ComponentType<{ className?: string }>) {
   const entry = Object.entries(sidebarIconMap).find(

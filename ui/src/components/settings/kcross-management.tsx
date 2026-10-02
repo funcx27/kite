@@ -1,4 +1,14 @@
+import '@/kcross/i18n'
+
 import { useMemo, useState } from 'react'
+import {
+  KcrossPeer,
+  testKcrossSetting,
+  updateKcrossSetting,
+  useCreateKcrossBinding,
+  useKcrossPeers,
+  useKcrossSetting,
+} from '@/kcross/api'
 import {
   IconLink,
   IconPlug,
@@ -15,14 +25,6 @@ import { toast } from 'sonner'
 import { Cluster } from '@/types/api'
 import { createCluster, deleteCluster } from '@/lib/api'
 import { fetchClusterList, updateCluster } from '@/lib/api/admin'
-import {
-  KcrossPeer,
-  testKcrossSetting,
-  updateKcrossSetting,
-  useCreateKcrossBinding,
-  useKcrossPeers,
-  useKcrossSetting,
-} from '@/lib/api/kcross'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'

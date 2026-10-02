@@ -1,0 +1,68 @@
+{
+  "common": {
+    "actions": {
+      "testing": "测试中…",
+      "unbind": "解绑"
+    },
+    "messages": {
+      "saved": "设置已保存"
+    }
+  },
+  "settings": {
+    "tabs": {
+      "kcross": "kcross 网关"
+    }
+  },
+  "kcrossManagement": {
+    "title": "kcross 网关",
+    "enabled": "启用",
+    "enabledDescription": "通过 kcross 网关发现节点，集群流量经隧道接入",
+    "adminToken": "管理 Token",
+    "tokenKeepPlaceholder": "留空保留当前 Token",
+    "testConnection": "测试连接",
+    "discoveredPeers": "发现的节点",
+    "notConfigured": "请先配置并启用网关，才能发现节点。",
+    "peer": "节点",
+    "connectedAt": "接入时间",
+    "capabilities": "能力",
+    "prometheus": "Prometheus",
+    "bound": "已纳管",
+    "actionUncapable": "无法纳管（无 kubernetes 能力）",
+    "onboard": "纳管",
+    "editCluster": "编辑集群配置",
+    "clusterMissing": "集群已不存在",
+    "unbound": "未纳管",
+    "boundPeerHint": "已从该节点纳管集群",
+    "unboundPeerHint": "已发现，尚未纳管",
+    "searchPlaceholder": "搜索节点 / 能力 / 集群",
+    "filterAll": "全部",
+    "filterUnbound": "未纳管",
+    "filterBound": "已纳管",
+    "filterOnline": "在线",
+    "filterOffline": "离线",
+    "cycleTheme": "切换主题",
+    "clearTerminal": "清屏",
+    "peerDetail": "节点 {{peer}}",
+    "peerStatus": "状态",
+    "gateway": "网关",
+    "capName": "名称",
+    "capKind": "类型",
+    "capHealth": "健康",
+    "capEndpoint": "端点",
+    "openTerminal": "打开终端",
+    "terminalTitle": "终端 — {{peer}}",
+    "terminalConnected": "已连接 {{peer}}",
+    "terminalConnecting": "正在连接 {{peer}}…",
+    "terminalClosed": "会话已关闭",
+    "terminalExited": "会话已退出（退出码 {{code}}）",
+    "addCluster": "从节点 {{peer}} 纳管集群",
+    "messages": {
+      "testOk": "连接成功，发现 {{count}} 个节点",
+      "added": "集群已添加并绑定节点",
+      "deleted": "集群已移除"
+    },
+    "gateways": "网关地址",
+    "gatewaysHint": "多个网关用英文逗号分隔",
+    "zeroCredHint": "无需任何凭证：集群经网关代理接入，由 Peer 注入其 ServiceAccount。有效权限 = kite RBAC ∩ peer SA RBAC。"
+  }
+}

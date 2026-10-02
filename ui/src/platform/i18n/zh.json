@@ -1,0 +1,14 @@
+{
+  "nav": {
+    "applications": "应用"
+  },
+  "workMode": {
+    "label": "工作模式",
+    "application": "应用模式",
+    "professional": "专业模式",
+    "switchToApplication": "切换到应用模式",
+    "switchToProfessional": "切换到专业模式",
+    "currentApplication": "当前：应用模式",
+    "currentProfessional": "当前：专业模式"
+  }
+}

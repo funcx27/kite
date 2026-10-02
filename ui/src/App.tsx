@@ -18,10 +18,11 @@ import { SidebarInset, SidebarProvider } from './components/ui/sidebar'
 import { Toaster } from './components/ui/sonner'
 import { AIChatProvider } from './contexts/ai-chat-context'
 import { ClusterProvider } from './contexts/cluster-context'
-import { SpaceProvider } from './contexts/space-context'
 import { TerminalProvider, useTerminal } from './contexts/terminal-context'
-import { WorkModeProvider } from './contexts/work-mode-context'
 import { useCluster } from './hooks/use-cluster'
+import { ApplicationSidebar } from './platform/application-sidebar'
+import { PlatformProviders } from './platform/providers'
+import { useWorkMode } from './platform/work-mode-context'
 
 function ClusterGate({ children }: { children: ReactNode }) {
   const { t } = useTranslation()
@@ -54,6 +55,7 @@ function ClusterGate({ children }: { children: ReactNode }) {
 function AppContent() {
   const { isOpen, closeSearch } = useGlobalSearch()
   const { isOpen: isTerminalOpen } = useTerminal()
+  const { isApplicationMode } = useWorkMode()
   const [searchParams] = useSearchParams()
   const isIframe = searchParams.get('iframe') === 'true'
 
@@ -64,7 +66,11 @@ function AppContent() {
   return (
     <>
       <SidebarProvider>
-        <AppSidebar variant="inset" />
+        {isApplicationMode ? (
+          <ApplicationSidebar variant="inset" />
+        ) : (
+          <AppSidebar variant="inset" />
+        )}
         <SidebarInset className="h-dvh overflow-y-auto overscroll-none scrollbar-hide">
           <SiteHeader />
           <div className="@container/main flex min-h-0 flex-1 flex-col">
@@ -97,15 +103,13 @@ function AppContent() {
 function AppProviders({ children }: { children: ReactNode }) {
   return (
     <TerminalProvider>
-      <WorkModeProvider>
-        <ClusterProvider>
-          <SpaceProvider>
-            <GlobalSearchProvider>
-              <AIChatProvider>{children}</AIChatProvider>
-            </GlobalSearchProvider>
-          </SpaceProvider>
-        </ClusterProvider>
-      </WorkModeProvider>
+      <ClusterProvider>
+        <PlatformProviders>
+          <GlobalSearchProvider>
+            <AIChatProvider>{children}</AIChatProvider>
+          </GlobalSearchProvider>
+        </PlatformProviders>
+      </ClusterProvider>
     </TerminalProvider>
   )
 }

@@ -1,0 +1,68 @@
+{
+  "common": {
+    "actions": {
+      "testing": "Testing…",
+      "unbind": "Unbind"
+    },
+    "messages": {
+      "saved": "Settings saved"
+    }
+  },
+  "settings": {
+    "tabs": {
+      "kcross": "kcross"
+    }
+  },
+  "kcrossManagement": {
+    "title": "kcross Gateway",
+    "enabled": "Enabled",
+    "enabledDescription": "Discover peers through the kcross gateway and connect clusters via tunnel",
+    "adminToken": "Admin Token",
+    "tokenKeepPlaceholder": "Leave empty to keep current token",
+    "testConnection": "Test Connection",
+    "discoveredPeers": "Discovered Peers",
+    "notConfigured": "Configure and enable the gateway first to discover peers.",
+    "peer": "Peer",
+    "connectedAt": "Connected At",
+    "capabilities": "Capabilities",
+    "prometheus": "Prometheus",
+    "bound": "Onboarded",
+    "actionUncapable": "Cannot onboard (no kubernetes capability)",
+    "onboard": "Onboard",
+    "editCluster": "Edit cluster config",
+    "clusterMissing": "Cluster no longer exists",
+    "unbound": "Unbound",
+    "boundPeerHint": "Onboarded from this peer",
+    "unboundPeerHint": "Discovered, not onboarded yet",
+    "searchPlaceholder": "Search peer / capability / cluster",
+    "filterAll": "All",
+    "filterUnbound": "Unbound",
+    "filterBound": "Bound",
+    "filterOnline": "Online",
+    "filterOffline": "Offline",
+    "cycleTheme": "Cycle theme",
+    "clearTerminal": "Clear",
+    "peerDetail": "Peer {{peer}}",
+    "peerStatus": "Status",
+    "gateway": "Gateway",
+    "capName": "Name",
+    "capKind": "Kind",
+    "capHealth": "Health",
+    "capEndpoint": "Endpoint",
+    "openTerminal": "Open Terminal",
+    "terminalTitle": "Terminal — {{peer}}",
+    "terminalConnected": "Connected to {{peer}}",
+    "terminalConnecting": "Connecting to {{peer}}…",
+    "terminalClosed": "Session closed",
+    "terminalExited": "Session exited ({{code}})",
+    "addCluster": "Onboard Cluster from Peer {{peer}}",
+    "messages": {
+      "testOk": "Connected, {{count}} peers found",
+      "added": "Cluster added and bound to peer",
+      "deleted": "Cluster removed"
+    },
+    "gateways": "Gateway URLs",
+    "gatewaysHint": "Multiple gateways separated by commas",
+    "zeroCredHint": "No credentials needed: the cluster connects through the gateway proxy and the peer injects its service account. Effective permissions = kite RBAC ∩ peer SA RBAC."
+  }
+}
