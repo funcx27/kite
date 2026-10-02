@@ -172,7 +172,7 @@ func resolvePathValue(root interface{}, path string) (interface{}, bool) {
 		return root, true
 	}
 	tokens := strings.Split(path, ".")
-	var cur interface{} = root
+	var cur = root
 	for i := 0; i < len(tokens); {
 		m, ok := store.AsMap(cur)
 		if !ok {
@@ -266,7 +266,7 @@ func nameKeyedPath(root interface{}, path string) (string, bool) {
 		return path, true
 	}
 	tokens := strings.Split(path, ".")
-	var cur interface{} = root
+	var cur = root
 	nameKeyed := make([]string, 0, len(tokens))
 	for _, tok := range tokens {
 		key, idx, name, hasSelector := splitSelector(tok)

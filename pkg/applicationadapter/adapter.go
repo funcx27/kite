@@ -60,6 +60,25 @@ func (d *Deps) Authorize(c *gin.Context, resource, verb, cluster, namespace stri
 	return rbac.CanAccess(user, resource, verb, cluster, namespace)
 }
 
+// AuthorizeUser reports whether the named user may perform verb on resource
+// in cluster/namespace — the identity-based check the deploy facade uses,
+// since workflow runs deploy outside any request (workflow design §7). The
+// user is loaded fresh: CanAccess judges by username/OIDC groups against the
+// current role config, and an unknown or disabled user is denied — disabled
+// users are rejected at auth on the HTTP path (RequireAuth) and hold no
+// valid identity here either.
+func (d *Deps) AuthorizeUser(userID uint, resource, verb, cluster, namespace string) bool {
+	var user model.User
+	if err := model.DB.First(&user, userID).Error; err != nil {
+		klog.Errorf("Failed to load user %d for application authorization: %v", userID, err)
+		return false
+	}
+	if !user.Enabled {
+		return false
+	}
+	return rbac.CanAccess(user, resource, verb, cluster, namespace)
+}
+
 func (d *Deps) OperatorID(c *gin.Context) uint {
 	user := c.MustGet("user").(model.User)
 	return user.ID

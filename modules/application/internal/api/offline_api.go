@@ -95,7 +95,7 @@ func (h *Handler) OfflineConfig(c *gin.Context) {
 			resp.Success = false
 			resp.Failed = append(resp.Failed, offlineFailure{Doc: key, Error: delErr.Error()})
 		}
-		h.recordOperation(c, store.HistoryEntry{
+		h.recordOperation(h.requestIdentity(c), store.HistoryEntry{
 			Cluster: cfg.Cluster, ResourceType: mapping.Resource.Resource, ResourceName: doc.GetName(),
 			Namespace: doc.GetNamespace(), Operation: "delete", YAML: redactedDoc(doc),
 		}, delErr == nil || apierrors.IsNotFound(delErr), errString(delErr))

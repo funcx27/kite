@@ -152,7 +152,7 @@ func (h *Handler) CreateConfig(c *gin.Context) {
 		h.fail(c, http.StatusInternalServerError, txErr, "")
 		return
 	}
-	h.recordAudit(c, store.HistoryEntry{
+	h.recordAudit(h.requestIdentity(c), store.HistoryEntry{
 		Cluster: req.Cluster, ResourceType: authzResource, ResourceName: app.Name,
 		Namespace: cfg.Namespace, Operation: "create", YAML: redacted(manifests),
 	})
@@ -211,6 +211,42 @@ func (h *Handler) GetConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
+// validateUpdateConfigReq parses and validates one update request's payload
+// (spec or manifests) into spec, writing the 400 response itself; false means
+// the caller must stop.
+func (h *Handler) validateUpdateConfigReq(c *gin.Context, appName string, req updateConfigRequest, spec *render.AppSpec) bool {
+	if req.ExpectedRev == nil {
+		h.fail(c, http.StatusBadRequest, nil, "expectedRev is required")
+		return false
+	}
+	switch {
+	case req.Spec != nil && req.Manifests != nil:
+		h.fail(c, http.StatusBadRequest, nil, "provide either spec or manifests, not both")
+		return false
+	case req.Spec != nil:
+		if !json.Valid(req.Spec) {
+			h.fail(c, http.StatusBadRequest, nil, "spec must be valid JSON")
+			return false
+		}
+		if err := json.Unmarshal(req.Spec, spec); err != nil {
+			h.fail(c, http.StatusBadRequest, nil, "spec must be a valid AppSpec JSON object: "+err.Error())
+			return false
+		}
+		spec.Normalize(appName)
+		if err := spec.Validate(); err != nil {
+			h.fail(c, http.StatusBadRequest, nil, "invalid spec: "+err.Error())
+			return false
+		}
+	case req.Manifests == nil:
+		h.fail(c, http.StatusBadRequest, nil, "manifests or spec is required")
+		return false
+	case !isManifestList(req.Manifests):
+		h.fail(c, http.StatusBadRequest, nil, "manifests must be a JSON array of documents")
+		return false
+	}
+	return true
+}
+
 // UpdateConfig replaces the config under an optimistic lock: expectedRev must
 // equal the config's newest revision number, otherwise the config is reported
 // as modified (409). The body carries either {spec} — injected onto the
@@ -241,33 +277,7 @@ func (h *Handler) UpdateConfig(c *gin.Context) {
 		return
 	}
 	var spec render.AppSpec
-	if req.ExpectedRev == nil {
-		h.fail(c, http.StatusBadRequest, nil, "expectedRev is required")
-		return
-	}
-	switch {
-	case req.Spec != nil && req.Manifests != nil:
-		h.fail(c, http.StatusBadRequest, nil, "provide either spec or manifests, not both")
-		return
-	case req.Spec != nil:
-		if !json.Valid(req.Spec) {
-			h.fail(c, http.StatusBadRequest, nil, "spec must be valid JSON")
-			return
-		}
-		if err := json.Unmarshal(req.Spec, &spec); err != nil {
-			h.fail(c, http.StatusBadRequest, nil, "spec must be a valid AppSpec JSON object: "+err.Error())
-			return
-		}
-		spec.Normalize(app.Name)
-		if err := spec.Validate(); err != nil {
-			h.fail(c, http.StatusBadRequest, nil, "invalid spec: "+err.Error())
-			return
-		}
-	case req.Manifests == nil:
-		h.fail(c, http.StatusBadRequest, nil, "manifests or spec is required")
-		return
-	case !isManifestList(req.Manifests):
-		h.fail(c, http.StatusBadRequest, nil, "manifests must be a JSON array of documents")
+	if !h.validateUpdateConfigReq(c, app.Name, req, &spec) {
 		return
 	}
 	var incoming []unstructured.Unstructured
@@ -367,7 +377,7 @@ func (h *Handler) UpdateConfig(c *gin.Context) {
 		h.fail(c, http.StatusInternalServerError, txErr, "")
 		return
 	}
-	h.recordAudit(c, store.HistoryEntry{
+	h.recordAudit(h.requestIdentity(c), store.HistoryEntry{
 		Cluster: cfg.Cluster, ResourceType: authzResource, ResourceName: app.Name,
 		Namespace: cfg.Namespace, Operation: "update",
 		YAML:         redacted(req.Manifests),

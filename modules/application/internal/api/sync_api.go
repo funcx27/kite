@@ -158,7 +158,7 @@ func (h *Handler) SyncConfig(c *gin.Context) {
 		h.fail(c, http.StatusInternalServerError, txErr, "")
 		return
 	}
-	h.recordAudit(c, store.HistoryEntry{
+	h.recordAudit(h.requestIdentity(c), store.HistoryEntry{
 		Cluster: cfg.Cluster, ResourceType: authzResource, ResourceName: app.Name,
 		Namespace: cfg.Namespace, Operation: "update", YAML: redacted(data),
 		PreviousYAML: redacted(cfg.Manifests),

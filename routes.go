@@ -173,7 +173,9 @@ func registerProtectedRoutes(r *gin.RouterGroup, authHandler *auth.AuthHandler, 
 	if buildfleet != nil {
 		fleetCap = buildfleet
 	}
-	wfDeps := workflowadapter.NewDeps(cm, fleetCap, credDeps)
+	// appDeps backs both the application module API and the workflow
+	// adapter's DeployApp facade (same Deps wiring, same audit attribution).
+	wfDeps := workflowadapter.NewDeps(cm, fleetCap, credDeps, appDeps)
 	if err := workflowadapter.Migrate(model.DB); err != nil {
 		panic("failed to migrate workflow module: " + err.Error())
 	}

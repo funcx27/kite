@@ -58,11 +58,13 @@ type Deps interface {
 	DecryptSecret(encrypted string) (string, error)
 
 	// BuildImage runs one image build (design §5.1). onLog receives raw
-	// build output chunks for the node's LogTail. M1 ships the seam only.
+	// build output chunks for the node's LogTail and the run's SSE stream.
 	BuildImage(ctx context.Context, req exec.BuildRequest, onLog func(string)) (exec.BuildResult, error)
 	// DeployApp publishes an image through the application module's deploy
-	// semantics, gates included (design §5.2). M1 ships the seam only.
-	DeployApp(ctx context.Context, req exec.DeployRequest) (exec.DeployResult, error)
+	// semantics, gates included (design §5.2). onLog receives the publish
+	// header, per-document apply results and conflict details for the node's
+	// LogTail and the run's SSE stream.
+	DeployApp(ctx context.Context, req exec.DeployRequest, onLog func(string)) (exec.DeployResult, error)
 	// Notify delivers one webhook notification (design §5.4).
 	Notify(ctx context.Context, req exec.NotifyRequest) error
 }

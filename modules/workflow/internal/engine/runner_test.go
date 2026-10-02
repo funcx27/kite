@@ -146,7 +146,7 @@ type stubDeployDeps struct {
 	gotReq exec.DeployRequest
 }
 
-func (s *stubDeployDeps) DeployApp(_ context.Context, req exec.DeployRequest) (exec.DeployResult, error) {
+func (s *stubDeployDeps) DeployApp(_ context.Context, req exec.DeployRequest, _ func(string)) (exec.DeployResult, error) {
 	s.gotReq = req
 	return s.res, s.err
 }

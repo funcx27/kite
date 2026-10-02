@@ -29,6 +29,11 @@ type Deps interface {
 	// cluster/namespace, judged against the host RBAC roles carried in the
 	// gin context.
 	Authorize(c *gin.Context, resource, verb, cluster, namespace string) bool
+	// AuthorizeUser reports whether the given user may perform verb on
+	// resource in cluster/namespace. The exported deploy facade runs outside
+	// any request (workflow runs execute with their trigger user's identity),
+	// so its checks go by user id; unknown users are denied.
+	AuthorizeUser(userID uint, resource, verb, cluster, namespace string) bool
 	// OperatorID returns the ID of the authenticated user of the request.
 	OperatorID(c *gin.Context) uint
 	// UserNames resolves user IDs to display names for history views; deleted
@@ -151,16 +156,17 @@ func (h *Handler) latestRev(appConfigID uint) (int, error) {
 	return rev, err
 }
 
-func (h *Handler) recordAudit(c *gin.Context, entry store.HistoryEntry) {
-	entry.OperatorID = h.deps.OperatorID(c)
+// recordAudit persists an audit entry attributed to the acting identity.
+func (h *Handler) recordAudit(id identity, entry store.HistoryEntry) {
+	entry.OperatorID = id.operatorID
 	entry.Success = true
 	h.deps.RecordHistory(entry)
 }
 
 // recordOperation persists an audit entry with an explicit outcome: per-doc
 // deploy/sync/offline operations also record their failures (design §6).
-func (h *Handler) recordOperation(c *gin.Context, entry store.HistoryEntry, success bool, errMsg string) {
-	entry.OperatorID = h.deps.OperatorID(c)
+func (h *Handler) recordOperation(id identity, entry store.HistoryEntry, success bool, errMsg string) {
+	entry.OperatorID = id.operatorID
 	entry.Success = success
 	entry.Err = errMsg
 	h.deps.RecordHistory(entry)

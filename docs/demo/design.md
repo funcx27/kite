@@ -214,6 +214,10 @@ labels:
 
 权限：定义 CRUD 走 `Authorize(c,"applications",verb,cluster,ns)`（默认角色 admin `*` 全通过、viewer 仅 get）；deploy/sync/deleteResources 逐文档映射真实资源校验对应 verb；运行视图逐 section 校验（无权限段置 unauthorized 隐藏）。审计经 `RecordHistory` 钩子。
 
+**部署路径身份化（M2b）**：发布管线内部（persistImage/persistPendingConfig → 冲突门 → ensure namespace → 逐文档 apply → 读回锚定）一律收身份参数 `identity{operatorID, authorize}`，不再触碰 `*gin.Context`——HTTP handler 从请求上下文适配（`Deps.Authorize` + `Deps.OperatorID`），程序化调用方按用户 id 适配（`Deps.AuthorizeUser`，以 id 现查 RBAC，未知用户拒绝）。审计条目同样以身份归属操作者；HTTP 响应形状（409 冲突明细、错误文案）不变。
+
+**导出部署门面（M2b，供 workflow 进程内调用，见 workflow-design §5.2）**：`application.DeployWithImage(ctx, deps, appName, cluster, image, operatorID, dryRun) (*DeployOutcome, error)`——完整复用上述发布语义（镜像写 Manifests + Source=deploy-image 版本 → 冲突预检 → ensure namespace → 逐文档身份授权 apply → 读回锚定 → 变更 preview）。冲突命中返回 `*ConflictError{Details}`（每条含 kind/namespace/name/paths）；集群不存在、应用或配置缺失返回明确错误；dryRun 仅服务端校验不落库。模块不 import workflow 与宿主，deps 即模块 `Deps`。
+
 ## 8. 网络模型（简化：一张端口列表）
 
 **向导「网络访问」步骤只有一张端口列表**（不区分 Service/Ingress 两块）。每行 = 一个端口：

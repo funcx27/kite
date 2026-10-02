@@ -41,7 +41,7 @@ var (
 // a node needs a new host capability.
 type Executors interface {
 	BuildImage(ctx context.Context, req exec.BuildRequest, onLog func(string)) (exec.BuildResult, error)
-	DeployApp(ctx context.Context, req exec.DeployRequest) (exec.DeployResult, error)
+	DeployApp(ctx context.Context, req exec.DeployRequest, onLog func(string)) (exec.DeployResult, error)
 	Notify(ctx context.Context, req exec.NotifyRequest) error
 }
 
@@ -70,6 +70,11 @@ type Engine struct {
 	queue map[uint][]uint
 	// limits caches each workflow's per-run concurrency budget.
 	limits map[uint]int
+
+	// subMu guards the per-run SSE subscriber sets (events.go); a leaf lock
+	// the publish points never hold alongside mu.
+	subMu sync.Mutex
+	subs  map[uint]map[chan RunEvent]struct{}
 }
 
 // driverHandle is one live orchestration of a run: its context, wake channel
@@ -309,6 +314,7 @@ func (e *Engine) promote(runID uint) bool {
 		return false
 	}
 	if res.RowsAffected == 1 {
+		e.publishRun(runID, store.RunRunning)
 		return true
 	}
 	var status string

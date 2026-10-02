@@ -6,6 +6,8 @@ package workflowadapter
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -16,6 +18,7 @@ import (
 	"gorm.io/gorm"
 	"k8s.io/klog/v2"
 
+	"github.com/funcx27/kite/modules/application"
 	"github.com/funcx27/kite/modules/buildfleet/builder"
 	"github.com/funcx27/kite/modules/buildfleet/fleet"
 	"github.com/funcx27/kite/modules/buildfleet/gitctx"
@@ -42,8 +45,10 @@ const notifyTimeout = 10 * time.Second
 
 // Deps implements workflow.Deps on top of kite's RBAC roles, user model and
 // ResourceHistory audit log. BuildImage runs through the embedded buildfleet
-// fleet (nil capability = buildfleet not configured, nodes fail explicitly);
-// DeployApp is the M2 seam and still fails with an explicit not-wired error.
+// fleet (nil capability = buildfleet not configured, build nodes fail
+// explicitly) and DeployApp through the application module's deploy facade,
+// which reuses the application module's own Deps wiring (audit rows land
+// attributed to the application module, operator = run trigger user).
 type Deps struct {
 	cm *cluster.ClusterManager
 	// fleet is the in-process build capability; nil when the host config
@@ -51,6 +56,8 @@ type Deps struct {
 	fleet FleetBuilder
 	// creds injects CredentialRef references from the credential center.
 	creds credentialsadapter.FleetCredentialInjector
+	// app is the application module's Deps wiring for the deploy facade.
+	app application.Deps
 }
 
 // FleetBuilder is the in-process build capability BuildImage consumes:
@@ -65,9 +72,11 @@ var _ workflow.Deps = (*Deps)(nil)
 // NewDeps builds the adapter and wires the module's secret codec; it runs at
 // route registration, before any module table is read or written. fleet and
 // creds may be nil — buildfleet-unconfigured hosts keep starting, and build
-// nodes fail with an explicit error instead of silently no-oping.
-func NewDeps(cm *cluster.ClusterManager, fleet FleetBuilder, creds credentialsadapter.FleetCredentialInjector) *Deps {
-	d := &Deps{cm: cm, fleet: fleet, creds: creds}
+// nodes fail with an explicit error instead of silently no-oping. app is the
+// application module's Deps wiring backing the DeployApp facade; nil keeps
+// the host starting and fails deploy nodes explicitly.
+func NewDeps(cm *cluster.ClusterManager, fleet FleetBuilder, creds credentialsadapter.FleetCredentialInjector, app application.Deps) *Deps {
+	d := &Deps{cm: cm, fleet: fleet, creds: creds, app: app}
 	workflow.SetSecretCodec(d.EncryptSecret, d.DecryptSecret)
 	return d
 }
@@ -171,13 +180,6 @@ func (d *Deps) RecordHistory(entry workflow.HistoryEntry) {
 		// Never log the entry payload: run details may carry parameter values.
 		klog.Errorf("Failed to record workflow history: %v", err)
 	}
-}
-
-// errNotWired marks executors whose backing integration ships later
-// (design §12): nodes fail with this explicit reason instead of silently
-// no-oping.
-func errNotWired(capability string) error {
-	return fmt.Errorf("%s executor is not wired until workflow M2", capability)
 }
 
 // BuildImage runs one image build through the embedded buildfleet fleet
@@ -289,10 +291,36 @@ func vertexLine(v *client.Vertex) string {
 	return strings.TrimSpace(v.Name) + " " + status + "\n"
 }
 
-// DeployApp is the M2 seam: the application module deploy facade lands there
-// (design §5.2).
-func (d *Deps) DeployApp(ctx context.Context, req exec.DeployRequest) (exec.DeployResult, error) {
-	return exec.DeployResult{}, errNotWired("deploy")
+// DeployApp publishes an image through the application module's exported
+// deploy facade (design §5.2): full gate semantics — conflicts come back as
+// a typed error whose text enumerates each document's kind/namespace/name/
+// drift paths so the node failure points at the merge; per-document RBAC and
+// audit run with the run's trigger user inside the application module. The
+// facade streams the publish header and per-document apply results onto
+// onLog for the node's log.
+func (d *Deps) DeployApp(ctx context.Context, req exec.DeployRequest, onLog func(string)) (exec.DeployResult, error) {
+	if d.app == nil {
+		return exec.DeployResult{}, fmt.Errorf("application module is not wired: deploy nodes cannot run")
+	}
+	out, err := application.DeployWithImage(ctx, d.app, req.App, req.Cluster, req.Image, req.OperatorID, req.DryRun, onLog)
+	if err != nil {
+		var cf *application.ConflictError
+		if errors.As(err, &cf) {
+			return exec.DeployResult{}, fmt.Errorf(
+				"deploy app %q on cluster %q: %w (merge the conflicts in the application module, then retry the run)",
+				req.App, req.Cluster, err)
+		}
+		return exec.DeployResult{}, fmt.Errorf("deploy app %q on cluster %q: %w", req.App, req.Cluster, err)
+	}
+	res := exec.DeployResult{Revision: out.Revision}
+	if len(out.Preview) > 0 {
+		b, merr := json.Marshal(out.Preview)
+		if merr != nil {
+			return exec.DeployResult{}, fmt.Errorf("deploy app %q: encode preview: %w", req.App, merr)
+		}
+		res.Preview = b
+	}
+	return res, nil
 }
 
 // Notify delivers one webhook notification as a JSON POST with a timeout

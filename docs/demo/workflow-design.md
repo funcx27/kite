@@ -195,9 +195,9 @@ NodeRun(build)     NodeRun(approve)   NodeRun(deploy)
 }
 ```
 
-- 执行：`Deps.DeployApp(ctx, req)` → workflowadapter 调 **application 模块导出的服务门面**（M2 在 application 模块内新增导出入口，如 `syncops.DeployWithImage(ctx, app, cluster, image, operator)`——模块内部演进，不引入对 workflow 或宿主的依赖），等价于应用模块「改镜像即发布」路径：镜像写入 Manifests（追加 Source=deploy-image 版本）→ 冲突预检 → ensure namespace → Apply → 读回锚定 → 变更 preview。
+- 执行：`Deps.DeployApp(ctx, req)` → workflowadapter 调 **application 模块导出的服务门面** `application.DeployWithImage(ctx, deps, app, cluster, image, operatorID, dryRun, onLog)`（M2b 落地：模块内部演进，不引入对 workflow 或宿主的依赖），等价于应用模块「改镜像即发布」路径：镜像写入 Manifests（追加 Source=deploy-image 版本）→ 冲突预检 → ensure namespace → Apply → 读回锚定 → 变更 preview；发布头、逐文档 apply 结果与冲突明细按行写入 onLog（节点日志：SSE 实时 + LogTail，同 §5.1 的桥接方式）。
 - **门禁语义完整保留**：冲突（Live≠锚点）→ 节点失败，Error 含冲突明细与「去应用模块处理合并」指引；重试在人工合并后进行。create 归属校验、dry-run、逐文档权限同样生效。
-- **溯源闭环**：产生的 ConfigRevision（Source=deploy-image）与 ResourceHistory（Source=workflow，含 run 序号）把 镜像 digest ↔ run ↔ 应用版本 串起来；应用详情的历史版本可反查触发来源。
+- **溯源闭环（M2b 落地形状）**：产生的 ConfigRevision（Source=deploy-image，操作者=触发用户）与 ResourceHistory（归属 application 模块，操作者=触发用户）记录每次门面发布的镜像变更；run ↔ 应用版本的关联目前以操作者+时间定位——run 序号写入审计（Source=workflow）尚未落地，列为后续项。
 - **Outputs**：`{revision: <rev>, preview: [...]}`（deploy 响应的变更文档摘要）。
 
 ### 5.3 人工审批（approval）
@@ -301,7 +301,7 @@ type Credential struct {
 | `POST /workflows/:name/runs` | 手动触发 `{params}`（schema 校验） |
 | `GET /workflows/:name/runs` | run 列表（序号/状态/触发者/耗时，倒序分页） |
 | `GET /runs/:id` | run 详情（拓扑 + 全部 NodeRun 状态/输出/错误） |
-| `GET /runs/:id/events` | **SSE 实时流**：节点状态流转 + 节点日志行 + run 级事件（心跳 15s，复用 buildfleet 接线的 SSE 模式）；断线重连以 NodeRun 落库状态对齐 |
+| `GET /runs/:id/events` | **SSE 实时流（M2b 落地形状）**：`event: node/log/run/done` + `data` JSON（形状对齐 buildfleet 接线），15s `: ping` 心跳；连接时先订阅引擎事件流、再以落库快照对齐（run 现状一帧 `run` + 全部 NodeRun 逐帧 `node`），随后消费实时事件；run 到终态发 `done` 收流；授权同 run 动作（exec）；引擎侧 per-run 订阅为带缓冲 channel、慢订阅者丢弃溢出事件（绝不反压引擎）；断线重连以 NodeRun 落库状态对齐（快照即落库值） |
 | `POST /runs/:id/cancel` · `POST /runs/:id/retry` | 取消 / 从失败节点重试（仅 failed/cancelled/interrupted 态可重试） |
 | `POST /runs/:id/nodes/:nodeId/approve` · `.../reject` | 审批动作 `{comment}`（assignees/admin） |
 | `POST /hooks/workflows/:name` | webhook 接收（公开组，token 鉴权，三家载荷适配） |

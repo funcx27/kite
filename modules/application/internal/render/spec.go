@@ -156,6 +156,36 @@ func (s AppSpec) Validate() error {
 		}
 		envNames[e.Name] = true
 	}
+	if err := s.validatePorts(); err != nil {
+		return err
+	}
+	points := make(map[string]bool, len(s.MountPoints))
+	for _, m := range s.MountPoints {
+		if !strings.HasPrefix(m, "/") {
+			return fmt.Errorf("mount point %q must be an absolute path", m)
+		}
+		points[m] = true
+	}
+	files := make(map[string]bool, len(s.ConfigFiles))
+	for _, f := range s.ConfigFiles {
+		if f.Name == "." || f.Name == ".." || !configKeyNamePattern.MatchString(f.Name) {
+			return fmt.Errorf("config file name %q must consist of letters, digits, dashes, dots and underscores", f.Name)
+		}
+		key := strconv.FormatBool(f.Secret) + "/" + f.Name
+		if files[key] {
+			return fmt.Errorf("duplicate config file %q", f.Name)
+		}
+		files[key] = true
+		if f.MountPath != "" && !points[f.MountPath] {
+			return fmt.Errorf("config file %q: mount path %q is not in the mount point set", f.Name, f.MountPath)
+		}
+	}
+	return nil
+}
+
+// validatePorts checks the declared ports: range, type vocabulary, optional
+// name and duplication rules, host/path shape.
+func (s AppSpec) validatePorts() error {
 	portNames := make(map[string]bool, len(s.Ports))
 	portKeys := make(map[string]bool, len(s.Ports))
 	for _, p := range s.Ports {
@@ -188,27 +218,6 @@ func (s AppSpec) Validate() error {
 			if p.Path != "" && !strings.HasPrefix(p.Path, "/") {
 				return fmt.Errorf("path %q must start with /", p.Path)
 			}
-		}
-	}
-	points := make(map[string]bool, len(s.MountPoints))
-	for _, m := range s.MountPoints {
-		if !strings.HasPrefix(m, "/") {
-			return fmt.Errorf("mount point %q must be an absolute path", m)
-		}
-		points[m] = true
-	}
-	files := make(map[string]bool, len(s.ConfigFiles))
-	for _, f := range s.ConfigFiles {
-		if f.Name == "." || f.Name == ".." || !configKeyNamePattern.MatchString(f.Name) {
-			return fmt.Errorf("config file name %q must consist of letters, digits, dashes, dots and underscores", f.Name)
-		}
-		key := strconv.FormatBool(f.Secret) + "/" + f.Name
-		if files[key] {
-			return fmt.Errorf("duplicate config file %q", f.Name)
-		}
-		files[key] = true
-		if f.MountPath != "" && !points[f.MountPath] {
-			return fmt.Errorf("config file %q: mount path %q is not in the mount point set", f.Name, f.MountPath)
 		}
 	}
 	return nil

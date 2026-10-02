@@ -30,7 +30,7 @@ type mergeRequest struct {
 // (design §7): merged result, auto-adoptions, collisions and per-document
 // reports for the merge dialog.
 func (h *Handler) MergePreview(c *gin.Context) {
-	app, cfg, ok := h.findAppConfig(c)
+	_, cfg, ok := h.findAppConfig(c)
 	if !ok {
 		return
 	}
@@ -42,7 +42,7 @@ func (h *Handler) MergePreview(c *gin.Context) {
 		h.fail(c, http.StatusNotFound, nil, "cluster not found or offline: "+cfg.Cluster)
 		return
 	}
-	res, theirs, code, err := h.computeMerge(c, cli, app, cfg, nil)
+	res, theirs, code, err := h.computeMerge(c, cli, cfg, nil)
 	if err != nil {
 		h.fail(c, code, err, "")
 		return
@@ -121,7 +121,7 @@ func (h *Handler) MergeConfig(c *gin.Context) {
 		h.fail(c, http.StatusBadRequest, nil, err.Error())
 		return
 	}
-	res, theirs, code, err := h.computeMerge(c, cli, app, cfg, resolutions)
+	res, theirs, code, err := h.computeMerge(c, cli, cfg, resolutions)
 	if err != nil {
 		h.fail(c, code, err, "")
 		return
@@ -199,7 +199,7 @@ func (h *Handler) MergeConfig(c *gin.Context) {
 		h.fail(c, http.StatusInternalServerError, txErr, "")
 		return
 	}
-	h.recordAudit(c, store.HistoryEntry{
+	h.recordAudit(h.requestIdentity(c), store.HistoryEntry{
 		Cluster: cfg.Cluster, ResourceType: authzResource, ResourceName: app.Name,
 		Namespace: cfg.Namespace, Operation: "update",
 		YAML:         redacted(data),
@@ -241,7 +241,7 @@ func parseMergeResolutions(req mergeRequest) (syncops.MergeResolutions, error) {
 // runs the pure three-way merge. It also returns the normalized live docs
 // the merge ran against, so the caller can tell a pure adoption from a
 // merged set still awaiting publish. Failures surface as (nil, nil, code, err).
-func (h *Handler) computeMerge(c *gin.Context, cli client.Client, app *store.App, cfg *store.AppConfig, resolutions syncops.MergeResolutions) (*syncops.MergeResult, []unstructured.Unstructured, int, error) {
+func (h *Handler) computeMerge(c *gin.Context, cli client.Client, cfg *store.AppConfig, resolutions syncops.MergeResolutions) (*syncops.MergeResult, []unstructured.Unstructured, int, error) {
 	manifests, err := store.DecodeManifests(cfg.Manifests)
 	if err != nil {
 		return nil, nil, http.StatusInternalServerError, err

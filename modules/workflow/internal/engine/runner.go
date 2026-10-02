@@ -110,7 +110,7 @@ func buildOutputs(res exec.BuildResult) map[string]any {
 
 // deployDeps is the capability slice deployRunner consumes.
 type deployDeps interface {
-	DeployApp(ctx context.Context, req exec.DeployRequest) (exec.DeployResult, error)
+	DeployApp(ctx context.Context, req exec.DeployRequest, onLog func(string)) (exec.DeployResult, error)
 }
 
 // deployRunner drives a deploy-app node (design §5.2). The run executes with
@@ -134,7 +134,7 @@ func (r deployRunner) Run(ctx context.Context, rendered spec.Props, run store.Wo
 		Image:      p.Image,
 		DryRun:     p.DryRun,
 		OperatorID: run.TriggeredBy,
-	})
+	}, onLog)
 	if err != nil {
 		return nil, err
 	}

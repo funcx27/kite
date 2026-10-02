@@ -49,7 +49,7 @@ func (e *Engine) execNode(parent context.Context, state *runState, node spec.Nod
 			// Per-node isolation: an executor panic fails the node instead
 			// of leaking the dispatch slot and wedging the run.
 			slog.Error("workflow: node executor panicked", "run", state.run.ID, "node", node.ID, "panic", r)
-			e.completeNode(row.ID, row.Attempt, store.NodeFailed, nil, fmt.Errorf("node executor panicked: %v", r), "")
+			e.completeNode(state.run.ID, node.ID, row.ID, row.Attempt, store.NodeFailed, nil, fmt.Errorf("node executor panicked: %v", r), "")
 		}
 	}()
 
@@ -73,7 +73,7 @@ func (e *Engine) execNode(parent context.Context, state *runState, node spec.Nod
 	if err != nil {
 		// Template resolution failure = node failure with the reason
 		// spelled out (design §4).
-		e.completeNode(row.ID, row.Attempt, store.NodeFailed, nil, err, "")
+		e.completeNode(state.run.ID, node.ID, row.ID, row.Attempt, store.NodeFailed, nil, err, "")
 		return
 	}
 	inputs, err := json.Marshal(rendered)
@@ -83,12 +83,18 @@ func (e *Engine) execNode(parent context.Context, state *runState, node spec.Nod
 			Update("inputs", store.JSONField(inputs))
 	}
 
+	// Log chunks land in the bounded tail buffer and on the run's SSE stream
+	// at once (design §10); LogTail落库 keeps happening at completion only.
 	logs := &logBuffer{}
+	onLog := func(p string) {
+		logs.write(p)
+		e.publish(state.run.ID, RunEvent{Type: EventLog, NodeID: node.ID, Data: p})
+	}
 	var outputs map[string]any
 	if node.Type == "" {
 		err = fmt.Errorf("node %q has no type", node.ID)
 	} else if runner, ok := e.runners[node.Type]; ok {
-		outputs, err = runner.Run(ctx, rendered, state.run, logs.write)
+		outputs, err = runner.Run(ctx, rendered, state.run, onLog)
 	} else {
 		err = fmt.Errorf("unknown node type %q", node.Type)
 	}
@@ -97,20 +103,20 @@ func (e *Engine) execNode(parent context.Context, state *runState, node spec.Nod
 			// Run cancellation propagated into the executor: the node settles
 			// as cancelled, not failed (design §6 state machine). A node-level
 			// timeout surfaces as DeadlineExceeded and stays a failure.
-			e.completeNode(row.ID, row.Attempt, store.NodeCancelled, outputs, nil, logs.tail())
+			e.completeNode(state.run.ID, node.ID, row.ID, row.Attempt, store.NodeCancelled, outputs, nil, logs.tail())
 			return
 		}
-		e.completeNode(row.ID, row.Attempt, store.NodeFailed, outputs, err, logs.tail())
+		e.completeNode(state.run.ID, node.ID, row.ID, row.Attempt, store.NodeFailed, outputs, err, logs.tail())
 		return
 	}
-	e.completeNode(row.ID, row.Attempt, store.NodeSucceeded, outputs, nil, logs.tail())
+	e.completeNode(state.run.ID, node.ID, row.ID, row.Attempt, store.NodeSucceeded, outputs, nil, logs.tail())
 }
 
 // completeNode writes a node's terminal state via a conditional update,
 // guarded by the dispatch attempt: a cancelled/retried racing actor wins by
 // moving the row out of running first, and a stale executor goroutine from an
 // earlier attempt cannot overwrite the new one's row (design §6 幂等).
-func (e *Engine) completeNode(rowID uint, attempt int, status string, outputs map[string]any, err error, logTail string) {
+func (e *Engine) completeNode(runID uint, nodeID string, rowID uint, attempt int, status string, outputs map[string]any, err error, logTail string) {
 	updates := map[string]any{
 		"status":      status,
 		"finished_at": now(),
@@ -128,7 +134,9 @@ func (e *Engine) completeNode(rowID uint, attempt int, status string, outputs ma
 		Where("id = ? AND status = ? AND attempt = ?", rowID, store.NodeRunning, attempt).
 		Updates(updates).Error; uerr != nil {
 		slog.Error("workflow: persist node completion", "node", rowID, "err", uerr)
+		return
 	}
+	e.publishNode(runID, nodeID, status)
 }
 
 // decodeProps re-types rendered props (generic JSON) into a concrete props

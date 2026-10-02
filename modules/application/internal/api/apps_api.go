@@ -130,7 +130,7 @@ func (h *Handler) CreateApp(c *gin.Context) {
 		h.fail(c, http.StatusInternalServerError, err, "")
 		return
 	}
-	h.recordAudit(c, store.HistoryEntry{
+	h.recordAudit(h.requestIdentity(c), store.HistoryEntry{
 		Cluster: cluster, ResourceType: authzResource, ResourceName: app.Name,
 		Namespace: app.Namespace, Operation: "create", YAML: redacted(app.Spec),
 	})
@@ -174,7 +174,7 @@ func (h *Handler) UpdateApp(c *gin.Context) {
 		h.fail(c, http.StatusInternalServerError, err, "")
 		return
 	}
-	h.recordAudit(c, store.HistoryEntry{
+	h.recordAudit(h.requestIdentity(c), store.HistoryEntry{
 		Cluster: c.GetString(clusterNameContextKey), ResourceType: authzResource, ResourceName: app.Name,
 		Namespace: app.Namespace, Operation: "update",
 		YAML:         redacted(app.Spec),
@@ -210,7 +210,7 @@ func (h *Handler) DeleteApp(c *gin.Context) {
 		h.fail(c, http.StatusInternalServerError, err, "")
 		return
 	}
-	h.recordAudit(c, store.HistoryEntry{
+	h.recordAudit(h.requestIdentity(c), store.HistoryEntry{
 		Cluster: c.GetString(clusterNameContextKey), ResourceType: authzResource, ResourceName: app.Name,
 		Namespace: app.Namespace, Operation: "delete", YAML: redacted(app.Spec),
 	})

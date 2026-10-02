@@ -31,6 +31,12 @@ type Deps interface {
 	// cluster/namespace, judged against the host RBAC roles carried in the
 	// gin context.
 	Authorize(c *gin.Context, resource, verb, cluster, namespace string) bool
+	// AuthorizeUser reports whether the given user may perform verb on
+	// resource in cluster/namespace. The deploy facade (DeployWithImage)
+	// runs outside any request — workflow nodes execute with their trigger
+	// user's identity — so its permission checks go by user id; unknown
+	// users are denied.
+	AuthorizeUser(userID uint, resource, verb, cluster, namespace string) bool
 	// OperatorID returns the ID of the authenticated user of the request.
 	OperatorID(c *gin.Context) uint
 	// UserNames resolves user IDs to display names for history views; deleted

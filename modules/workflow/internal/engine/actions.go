@@ -3,6 +3,7 @@ package engine
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"time"
 
 	"gorm.io/gorm"
@@ -32,6 +33,7 @@ func (e *Engine) Cancel(runID uint) error {
 	if res.RowsAffected == 0 {
 		return ErrConflict
 	}
+	e.publishRun(runID, store.RunCancelled)
 	if dag, err := e.loadSpec(runID); err == nil {
 		e.sweepNodes(runID, dag)
 	}
@@ -42,20 +44,51 @@ func (e *Engine) Cancel(runID uint) error {
 
 // sweepNodes settles nodes that can never run: pending→skipped and waiting
 // approvals→cancelled. Task rows in running are left to their goroutines.
+// Each row settles through its own conditional update, so the event fires
+// only when this sweep actually moved that row — a concurrent dispatch or
+// decision winning the row first must not emit a stale transition.
 func (e *Engine) sweepNodes(runID uint, dag spec.DAGSpec) {
-	e.db.Model(&store.NodeRun{}).
-		Where("run_id = ? AND status = ?", runID, store.NodePending).
-		Updates(map[string]any{"status": store.NodeSkipped, "finished_at": now()})
+	var pending []store.NodeRun
+	if err := e.db.Where("run_id = ? AND status = ?", runID, store.NodePending).Find(&pending).Error; err != nil {
+		slog.Error("workflow: load nodes for sweep", "run", runID, "err", err)
+	} else {
+		for _, row := range pending {
+			e.settleNode(runID, row, store.NodeSkipped)
+		}
+	}
 	var approvalIDs []string
 	for _, n := range dag.Nodes {
 		if n.Type == spec.NodeApproval {
 			approvalIDs = append(approvalIDs, n.ID)
 		}
 	}
-	if len(approvalIDs) > 0 {
-		e.db.Model(&store.NodeRun{}).
-			Where("run_id = ? AND node_id IN ? AND status = ?", runID, approvalIDs, store.NodeRunning).
-			Updates(map[string]any{"status": store.NodeCancelled, "finished_at": now()})
+	if len(approvalIDs) == 0 {
+		return
+	}
+	var waiting []store.NodeRun
+	if err := e.db.Where("run_id = ? AND node_id IN ? AND status = ?", runID, approvalIDs, store.NodeRunning).
+		Find(&waiting).Error; err != nil {
+		slog.Error("workflow: load waiting approvals for sweep", "run", runID, "err", err)
+		return
+	}
+	for _, row := range waiting {
+		e.settleNode(runID, row, store.NodeCancelled)
+	}
+}
+
+// settleNode moves one swept node to status via a conditional update guarded
+// by the status the load saw, and publishes the transition only when the
+// update hit; a lost row was settled by a concurrent actor instead.
+func (e *Engine) settleNode(runID uint, row store.NodeRun, status string) {
+	res := e.db.Model(&store.NodeRun{}).
+		Where("id = ? AND status = ?", row.ID, row.Status).
+		Updates(map[string]any{"status": status, "finished_at": now()})
+	if res.Error != nil {
+		slog.Error("workflow: sweep node", "run", runID, "node", row.NodeID, "err", res.Error)
+		return
+	}
+	if res.RowsAffected == 1 {
+		e.publishNode(runID, row.NodeID, status)
 	}
 }
 
@@ -83,20 +116,34 @@ func (e *Engine) Retry(runID uint) error {
 	if err != nil {
 		return err
 	}
+	var reset []store.NodeRun
+	if err := e.db.Where("run_id = ? AND status IN ?", runID, []string{
+		store.NodeFailed, store.NodeInterrupted, store.NodeCancelled, store.NodeSkipped,
+	}).Find(&reset).Error; err != nil {
+		return err
+	}
+	// Rows this retry actually resets, published after the commit: each row
+	// updates conditionally on the status the load saw, so a row concurrently
+	// settled by another actor neither resets nor emits a stale transition.
+	var resetHit []store.NodeRun
 	txErr := e.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&store.NodeRun{}).
-			Where("run_id = ? AND status IN ?", runID, []string{
-				store.NodeFailed, store.NodeInterrupted, store.NodeCancelled, store.NodeSkipped,
-			}).
-			Updates(map[string]any{
-				"status":      store.NodePending,
-				"error":       "",
-				"log_tail":    "",
-				"outputs":     nil,
-				"started_at":  nil,
-				"finished_at": nil,
-			}).Error; err != nil {
-			return err
+		for _, row := range reset {
+			res := tx.Model(&store.NodeRun{}).
+				Where("id = ? AND status = ?", row.ID, row.Status).
+				Updates(map[string]any{
+					"status":      store.NodePending,
+					"error":       "",
+					"log_tail":    "",
+					"outputs":     nil,
+					"started_at":  nil,
+					"finished_at": nil,
+				})
+			if res.Error != nil {
+				return res.Error
+			}
+			if res.RowsAffected == 1 {
+				resetHit = append(resetHit, row)
+			}
 		}
 		res := tx.Model(&store.WorkflowRun{}).
 			Where("id = ? AND status IN ?", runID, []string{store.RunFailed, store.RunCancelled}).
@@ -115,6 +162,10 @@ func (e *Engine) Retry(runID uint) error {
 		}
 		return txErr
 	}
+	for _, row := range resetHit {
+		e.publishNode(runID, row.NodeID, store.NodePending)
+	}
+	e.publishRun(runID, store.RunQueued)
 	e.waitForDriver(runID)
 	e.Enqueue(runID, run.WorkflowID, rev.Triggers)
 	return nil
@@ -173,6 +224,7 @@ func (e *Engine) Decide(runID uint, nodeID string, approve bool, comment string,
 	if res.RowsAffected == 0 {
 		return ErrConflict
 	}
+	e.publishNode(runID, nodeID, status)
 	e.signal(runID)
 	return nil
 }

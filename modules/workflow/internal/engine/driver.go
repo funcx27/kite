@@ -193,6 +193,7 @@ func (e *Engine) markNodeRunning(row *store.NodeRun) bool {
 		Updates(map[string]any{"status": store.NodeRunning, "started_at": now(), "attempt": gorm.Expr("attempt + 1")})
 	if res.Error == nil && res.RowsAffected == 1 {
 		row.Attempt++
+		e.publishNode(row.RunID, row.NodeID, store.NodeRunning)
 		return true
 	}
 	return false
@@ -259,6 +260,10 @@ func (e *Engine) finalizeRun(runID uint, status string) {
 		Updates(map[string]any{"status": status, "finished_at": now()})
 	if res.Error != nil {
 		slog.Error("workflow: finalize run", "run", runID, "status", status, "err", res.Error)
+		return
+	}
+	if res.RowsAffected == 1 {
+		e.publishRun(runID, status)
 	}
 }
 

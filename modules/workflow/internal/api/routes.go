@@ -68,6 +68,7 @@ func RegisterRoutes(api *gin.RouterGroup, deps Deps, st *store.Store, eng *engin
 
 	runs := api.Group("/runs")
 	runs.GET("/:id", h.GetRun)
+	runs.GET("/:id/events", h.RunEvents)
 	runs.POST("/:id/cancel", h.CancelRun)
 	runs.POST("/:id/retry", h.RetryRun)
 	runs.POST("/:id/nodes/:nodeId/approve", h.Decide(true))

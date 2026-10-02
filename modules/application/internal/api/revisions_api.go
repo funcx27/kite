@@ -84,7 +84,7 @@ func (h *Handler) GetRevision(c *gin.Context) {
 	}
 	var row store.ConfigRevision
 	if err := h.store.DB().Where("app_config_id = ? AND rev = ?", cfg.ID, rev).First(&row).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			h.fail(c, http.StatusNotFound, nil, "revision not found")
 			return
 		}
@@ -123,7 +123,7 @@ func (h *Handler) RollbackConfig(c *gin.Context) {
 	}
 	var row store.ConfigRevision
 	if err := h.store.DB().Where("app_config_id = ? AND rev = ?", cfg.ID, *req.Rev).First(&row).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			h.fail(c, http.StatusNotFound, nil, "revision not found")
 			return
 		}
@@ -160,7 +160,7 @@ func (h *Handler) RollbackConfig(c *gin.Context) {
 		h.fail(c, http.StatusInternalServerError, txErr, "")
 		return
 	}
-	h.recordAudit(c, store.HistoryEntry{
+	h.recordAudit(h.requestIdentity(c), store.HistoryEntry{
 		Cluster: cfg.Cluster, ResourceType: authzResource, ResourceName: app.Name,
 		Namespace: cfg.Namespace, Operation: "update",
 		YAML:         redacted(data),
@@ -181,7 +181,7 @@ func (h *Handler) RollbackConfig(c *gin.Context) {
 		h.fail(c, http.StatusInternalServerError, err, "")
 		return
 	}
-	resp, conflicts, err := h.runPublish(c, app, cfg, cli, rollbackDocs, false)
+	resp, conflicts, err := h.runPublish(c.Request.Context(), h.requestIdentity(c), app, cfg, cli, rollbackDocs, false)
 	var nf *namespaceForbiddenError
 	switch {
 	case errors.As(err, &nf):

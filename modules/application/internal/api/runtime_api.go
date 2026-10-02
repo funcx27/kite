@@ -70,7 +70,7 @@ func (h *Handler) RestartConfig(c *gin.Context) {
 		return
 	}
 	live, err := runtime.RestartWorkload(c.Request.Context(), cli, app.Name, cfg.Namespace, manifests)
-	h.recordOperation(c, store.HistoryEntry{
+	h.recordOperation(h.requestIdentity(c), store.HistoryEntry{
 		Cluster: cfg.Cluster, ResourceType: resource, ResourceName: wl.GetName(),
 		Namespace: cfg.Namespace, Operation: "update",
 	}, err == nil, errString(err))
@@ -119,7 +119,7 @@ func (h *Handler) deletePod(c *gin.Context, force bool) {
 	} else {
 		err = runtime.RestartPod(c.Request.Context(), cli, app.Name, cfg.Namespace, manifests, podName)
 	}
-	h.recordOperation(c, store.HistoryEntry{
+	h.recordOperation(h.requestIdentity(c), store.HistoryEntry{
 		Cluster: cfg.Cluster, ResourceType: "pods", ResourceName: podName,
 		Namespace: cfg.Namespace, Operation: "delete",
 	}, err == nil, errString(err))
