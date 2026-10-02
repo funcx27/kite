@@ -8,6 +8,7 @@ import { getSubPath } from './lib/subpath'
 import { ApplicationDetailPage } from './pages/application-detail-page'
 import { ApplicationListPage } from './pages/application-list-page'
 import { ApplicationPodPage } from './pages/application-pod-page'
+import { BuildFleetPage } from './pages/buildfleet-page'
 import { CRListPage } from './pages/cr-list-page'
 import { HelmChartDetailPage } from './pages/helm-chart-detail-page'
 import { HelmChartListPage } from './pages/helm-chart-list-page'
@@ -119,6 +120,10 @@ export const router = createBrowserRouter(
               <ApplicationPodPage />
             </ApplicationModeRoute>
           ),
+        },
+        {
+          path: 'buildfleet',
+          element: <BuildFleetPage />,
         },
         {
           path: ':resource/:name',

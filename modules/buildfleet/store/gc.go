@@ -24,11 +24,25 @@ func (g *GC) SetNow(fn func() time.Time) { g.now = fn }
 func (g *GC) Run(ctx context.Context) error {
 	cutoff := g.now().Add(-g.ttl)
 	return filepath.WalkDir(g.store.blobDir(), func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if err != nil {
+			// A blob removed between readdir and visit is already
+			// collected; only that entry is gone.
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		if d.IsDir() {
+			return nil
 		}
 		info, err := d.Info()
 		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
 			return err
 		}
 		if info.ModTime().After(cutoff) {
@@ -38,7 +52,10 @@ func (g *GC) Run(ctx context.Context) error {
 		if g.store.refCount(digest) > 0 {
 			return nil
 		}
-		return os.Remove(path)
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
 	})
 }
 

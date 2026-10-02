@@ -199,6 +199,21 @@ config:
   #     - name: admin
   #       users: ["alice"]
   #       oidcGroups: ["admins"]
+  # Buildfleet module (pooled reproducible container builds), embedded in the
+  # kite process; the subtree is passed to the module's config loader verbatim
+  # and unknown fields fail at startup. Omit the section to keep the module
+  # disabled. store should live under /data to reuse the existing persistent
+  # volume mount (same volume as the sqlite PVC); /data only exists when
+  # db.sqlite.persistence is enabled — with postgres/mysql, or persistence
+  # disabled, it is ephemeral container storage and blobs do not survive pod
+  # restarts. Multi-replica is not supported (in-memory runtime pool + local
+  # store): replicaCount must stay 1.
+  # buildfleet:
+  #   store: /data/buildfleet-store
+  #   providers:
+  #     - type: docker
+  #       name: local-docker
+  #       total: {cpu: 8, memory: 16Gi}
 
 # This section builds out the service account more information can be found here: https://kubernetes.io/docs/concepts/security/service-accounts/
 serviceAccount:

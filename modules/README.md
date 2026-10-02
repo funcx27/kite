@@ -10,11 +10,13 @@ Kite 宿主（主 module `github.com/zxh326/kite`）之外的独立 Go module �
 | 模块 | 用途 | 上游来源 | 接线状态 | 独立部署方式 |
 |------|------|----------|----------|--------------|
 | `application` | 应用发布：逻辑应用、按集群配置及其 revision 链 | 本仓库 `feat/application` 分支开发 | 已接线：`pkg/applicationadapter` 桥接 + `routes.go` 装配 | 无（随宿主单二进制发布） |
-| `buildfleet` | 池化可复现容器构建系统（类似 docker buildx），Connect RPC + `buildfleetd` 守护进程 | `github.com/funcx27/buildfleet`，迁入 commit `0c9c922b6d354bb214414e530b848c68d40cac35`（2026-09-11） | 未接线宿主 | `modules/buildfleet/cmd/buildfleetd` |
+| `buildfleet` | 池化可复现容器构建系统（类似 docker buildx），Connect RPC + `buildfleetd` 守护进程 | `github.com/funcx27/buildfleet`，迁入 commit `0c9c922b6d354bb214414e530b848c68d40cac35`（2026-09-11） | 已接线（REST+SSE 门面 + 进程内嵌入） | `modules/buildfleet/cmd/buildfleetd` |
 
 ## 模块契约
 
-1. 宿主侧改动白名单仅三处：主 `go.mod` 的 require+replace、`routes.go` 装配、
+1. 宿主侧改动白名单：主 `go.mod`（require+replace）与 `go.sum`、`routes.go` 装配、
+   进程装配点（`app.go`/`main.go`；模块配置节 `internal/config.go` 与生命周期
+   Close/Drain `app.go` 是装配点的合法延伸，同属其组成部分）、
    `pkg/<name>adapter/` 桥接包。模块自身初始化（含数据库迁移）一律在装配点显式触发。
 2. 宿主既有 `pkg/` 包禁止 import 模块或 adapter：adapter 已 import 宿主包，反向引用
    即成既成 import cycle，也扩大合并冲突面。
@@ -37,9 +39,24 @@ Kite 宿主（主 module `github.com/zxh326/kite`）之外的独立 Go module �
 ## buildfleet 专属注意事项
 
 - 模块 `go.mod` 声明 `go 1.26.3`（上游为 `go 1.27.1`，迁入时因宿主工具链仅到 1.26.x、
-  且 docker/docker v28.5.1 要求 go >= 1.26.3 而下调），宿主为 `go 1.26.0`：接线时需先统一工具链。
+  且 docker/docker v28.5.1 要求 go >= 1.26.3 而下调）；接线时宿主 `go.mod` 已同步提升至
+  `go 1.26.3`，两个 module 工具链一致。
 - 接线时须在装配点原样保序初始化链：config 加载 → providers → `runtime.Pool` →
-  Reconcile 认领 → store，不得重排或拆散。
+  Reconcile 认领 → store，不得重排或拆散。该链已收编进 `app.Setup`，接线直接调用；
+  `app.Setup` 以装配 ctx 启动 store GC 周期回收（宿主与守护进程均传入进程级长生命
+  周期 ctx，随 ctx 取消停止）；`app.Drain` 负责池排水并执行终局 GC 一趟。
+- 为宿主嵌入与接线新增三处上游 0c9c922 没有的代码：`app` 包（`Setup` 保序收编
+  `buildfleetd` 装配链并启动 store GC，`Drain` 池排水 + 终局 GC）；
+  `config.LoadFromBytes`（供无文件路径的嵌入方使用，与 `Load` 共用合并与 KnownFields
+  严格校验路径）；REST/SSE 门面 `pkg/buildfleetadapter`（`POST /builds` 以 SSE 流式
+  回传构建进度，`GET /status`、`GET /cachestat` 查询，挂载于宿主 RBAC 中间件之前、
+  逐请求自授权 `builds` 伪资源）。
+- 守护进程行为有一处变化：改经 `app.Setup` 装配后，`buildfleetd` 同样随装配 ctx
+  启动周期 store GC（上游 0c9c922 的独立守护进程从不运行 GC）。
+- 前端导航注册是对契约第 5 条的一处已登记偏差：菜单注册与已保存偏好迁移逻辑同在
+  `ui/src/contexts/sidebar-config-defaults.ts`，无法 fork，故就地新增 buildfleet 菜单项
+  并把 `SIDEBAR_CONFIG_VERSION` v4→v5（沿用 2bdd7c4 既有惯例，使已保存的 sidebar
+  偏好能感知新菜单项）。
 - api 层不得 import `provider/k8s`：跨层共享类型放 `runtime` 中立包，不用 k8s 的
   嵌入方不应被迫引入 client-go。
 - 与上游 0c9c922 的已知代码偏差仅一处：`provider/docker/docker.go` 的容器资源字段。

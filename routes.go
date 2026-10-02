@@ -12,6 +12,7 @@ import (
 	"github.com/zxh326/kite/pkg/applicationadapter"
 	"github.com/zxh326/kite/pkg/audit"
 	"github.com/zxh326/kite/pkg/auth"
+	"github.com/zxh326/kite/pkg/buildfleetadapter"
 	"github.com/zxh326/kite/pkg/cluster"
 	"github.com/zxh326/kite/pkg/helm"
 	"github.com/zxh326/kite/pkg/images"
@@ -31,7 +32,7 @@ import (
 	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
-func setupAPIRouter(r *gin.RouterGroup, cm *cluster.ClusterManager) {
+func setupAPIRouter(r *gin.RouterGroup, cm *cluster.ClusterManager, buildfleet *buildfleetadapter.Deps) {
 	authHandler := auth.NewAuthHandler()
 	helmChartsHandler := helm.NewHelmChartHandler()
 
@@ -43,7 +44,7 @@ func setupAPIRouter(r *gin.RouterGroup, cm *cluster.ClusterManager) {
 	registerAuthRoutes(r, authHandler)
 	registerUserRoutes(r, authHandler)
 	registerAdminRoutes(r, authHandler, cm, helmChartsHandler)
-	registerProtectedRoutes(r, authHandler, cm, helmChartsHandler)
+	registerProtectedRoutes(r, authHandler, cm, helmChartsHandler, buildfleet)
 }
 
 func registerBaseRoutes(r *gin.RouterGroup) {
@@ -145,23 +146,24 @@ func registerAdminRoutes(r *gin.RouterGroup, authHandler *auth.AuthHandler, cm *
 	helmChartsHandler.RegisterAdminRoutes(adminAPI)
 }
 
-func registerProtectedRoutes(r *gin.RouterGroup, authHandler *auth.AuthHandler, cm *cluster.ClusterManager, helmChartsHandler *helm.HelmChartHandler) {
+func registerProtectedRoutes(r *gin.RouterGroup, authHandler *auth.AuthHandler, cm *cluster.ClusterManager, helmChartsHandler *helm.HelmChartHandler, buildfleet *buildfleetadapter.Deps) {
 	api := r.Group("/api/v1")
 	api.GET("/clusters", authHandler.RequireAuth(), cm.GetClusters)
 	defaultAPI := api.Group("")
 	defaultAPI.Use(authHandler.RequireAuth(), middleware.ClusterMiddleware(cm))
-	clusterAPI := api.Group("/_clusters/:cluster")
-	clusterAPI.Use(authHandler.RequireAuth(), middleware.ClusterMiddleware(cm))
 
 	appDeps := applicationadapter.NewDeps(cm)
 	if err := applicationadapter.Migrate(model.DB); err != nil {
 		panic("failed to migrate application module: " + err.Error())
 	}
-	registerClusterProtectedRoutes(defaultAPI, helmChartsHandler, appDeps)
-	registerClusterProtectedRoutes(clusterAPI, helmChartsHandler, appDeps)
+	registerClusterProtectedRoutes(defaultAPI, helmChartsHandler, appDeps, buildfleet)
+
+	clusterAPI := api.Group("/_clusters/:cluster")
+	clusterAPI.Use(authHandler.RequireAuth(), middleware.ClusterMiddleware(cm))
+	registerClusterProtectedRoutes(clusterAPI, helmChartsHandler, appDeps, buildfleet)
 }
 
-func registerClusterProtectedRoutes(api *gin.RouterGroup, helmChartsHandler *helm.HelmChartHandler, appDeps *applicationadapter.Deps) {
+func registerClusterProtectedRoutes(api *gin.RouterGroup, helmChartsHandler *helm.HelmChartHandler, appDeps *applicationadapter.Deps, buildfleet *buildfleetadapter.Deps) {
 	api.GET("/overview", system.GetOverview)
 
 	metricsHandler := metrics.NewHandler()
@@ -198,6 +200,11 @@ func registerClusterProtectedRoutes(api *gin.RouterGroup, helmChartsHandler *hel
 	api.POST("/ai/continue", ai.HandleContinue)
 
 	application.RegisterRoutes(api, appDeps)
+	// Mounted before the RBAC middleware below: buildfleet URLs are
+	// non-resource shapes and authorize themselves against "builds".
+	if buildfleet != nil {
+		buildfleet.RegisterRoutes(api.Group("/buildfleet"))
+	}
 
 	api.Use(middleware.RBACMiddleware())
 	resources.RegisterRoutes(api)

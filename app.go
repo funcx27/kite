@@ -6,6 +6,7 @@ import (
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
 	"github.com/zxh326/kite/internal"
+	"github.com/zxh326/kite/pkg/buildfleetadapter"
 	"github.com/zxh326/kite/pkg/cluster"
 	"github.com/zxh326/kite/pkg/common"
 	"github.com/zxh326/kite/pkg/middleware"
@@ -16,7 +17,7 @@ import (
 	"k8s.io/klog/v2"
 )
 
-func initializeApp(ctx context.Context) (*cluster.ClusterManager, error) {
+func initializeApp(ctx context.Context) (*cluster.ClusterManager, *buildfleetadapter.Deps, error) {
 	common.LoadEnvs()
 	if klog.V(1).Enabled() {
 		gin.SetMode(gin.DebugMode)
@@ -38,16 +39,25 @@ func initializeApp(ctx context.Context) (*cluster.ClusterManager, error) {
 
 	cm, err := cluster.NewClusterManager()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	var buildfleet *buildfleetadapter.Deps
+	if node := internal.BuildFleetConfig(); node != nil {
+		// Fail fast: a present but broken buildfleet section must not
+		// silently start kite without the module.
+		buildfleet, err = buildfleetadapter.New(ctx, node)
+		if err != nil {
+			panic("failed to initialize buildfleet module: " + err.Error())
+		}
 	}
 	if err := internal.StartConfigWatcher(ctx, common.ConfigFilePath); err != nil {
 		klog.Warningf("Failed to watch config file: %v", err)
 	}
 	scheduler.Start(ctx, cm)
-	return cm, nil
+	return cm, buildfleet, nil
 }
 
-func buildEngine(cm *cluster.ClusterManager) *gin.Engine {
+func buildEngine(cm *cluster.ClusterManager, buildfleet *buildfleetadapter.Deps) *gin.Engine {
 	r := gin.New()
 	middleware.ConfigureRawPathRouting(r)
 	configureTrustedProxies(r)
@@ -61,7 +71,7 @@ func buildEngine(cm *cluster.ClusterManager) *gin.Engine {
 	r.Use(middleware.DevCORS(common.CORSAllowedOrigins))
 
 	base := r.Group(common.Base)
-	setupAPIRouter(base, cm)
+	setupAPIRouter(base, cm, buildfleet)
 	setupStatic(r)
 
 	return r
