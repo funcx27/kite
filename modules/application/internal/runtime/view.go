@@ -71,8 +71,8 @@ type ResourceValues struct {
 // PodInfo is one pod line: name / phase / live CPU (millicores) / memory
 // (bytes) / restarts / start time / node (design §10).
 type PodInfo struct {
-	Name      string `json:"name"`
-	Phase     string `json:"phase,omitempty"`
+	Name  string `json:"name"`
+	Phase string `json:"phase,omitempty"`
 	// Status is the kubectl-style display status (waiting/terminated reason
 	// over the raw phase, e.g. ImagePullBackOff while phase is Pending).
 	Status    string   `json:"status,omitempty"`
