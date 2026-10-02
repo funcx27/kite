@@ -48,6 +48,10 @@ func UpdateCluster(cluster *Cluster, updates map[string]interface{}) error {
 }
 
 func DeleteCluster(cluster *Cluster) error {
+	// kcross 绑定是集群的附属生命周期，随集群一并清理，避免发现页残留孤儿标记
+	if err := DB.Where("cluster_id = ?", cluster.ID).Delete(&KcrossBinding{}).Error; err != nil {
+		return err
+	}
 	return DB.Delete(cluster).Error
 }
 

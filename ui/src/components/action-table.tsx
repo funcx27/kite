@@ -27,6 +27,8 @@ interface ActionTableProps<T> {
   data: T[]
   columns: ColumnDef<T>[]
   actions: Action<T>[]
+  /** 操作列内、菜单按钮之前渲染的内容（如状态徽标） */
+  actionCellPrefix?: (item: T) => React.ReactNode
 }
 
 export interface Action<T> {
@@ -40,40 +42,51 @@ export function ActionTable<T>({
   data,
   columns,
   actions,
+  actionCellPrefix,
 }: ActionTableProps<T>) {
   const { t } = useTranslation()
   const tableColumns = useMemo(() => {
-    if (actions.length > 0) {
+    // 无 actions 但有前置内容（如状态徽标/直接操作按钮）时仍渲染操作列
+    if (actions.length > 0 || actionCellPrefix) {
       const actionColumn: ColumnDef<T> = {
         id: 'actions',
         header: t('common.fields.actions'),
         cell: ({ row }) => (
-          <div className="text-right">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  aria-label={t('common.fields.actions', 'Actions')}
-                >
-                  •••
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                {actions.map((action, index) => (
-                  <DropdownMenuItem
-                    key={index}
-                    disabled={action.shouldDisable?.(row.original)}
-                    onClick={() => action.onClick(row.original)}
-                    className="gap-2"
+          <div
+            className={
+              actionCellPrefix
+                ? 'flex items-center justify-end gap-2'
+                : 'text-right'
+            }
+          >
+            {actionCellPrefix?.(row.original)}
+            {actions.length > 0 && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    aria-label={t('common.fields.actions', 'Actions')}
                   >
-                    {action.dynamicLabel
-                      ? action.dynamicLabel(row.original)
-                      : action.label}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
+                    •••
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {actions.map((action, index) => (
+                    <DropdownMenuItem
+                      key={index}
+                      disabled={action.shouldDisable?.(row.original)}
+                      onClick={() => action.onClick(row.original)}
+                      className="gap-2"
+                    >
+                      {action.dynamicLabel
+                        ? action.dynamicLabel(row.original)
+                        : action.label}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
           </div>
         ),
       }

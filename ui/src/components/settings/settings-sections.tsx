@@ -6,6 +6,7 @@ import { AuditLog } from './audit-log'
 import { AuthenticationManagement } from './authentication-management'
 import { ClusterManagement } from './cluster-management'
 import { GeneralManagement } from './general-management'
+import { KcrossManagement } from './kcross-management'
 import { RBACManagement } from './rbac-management'
 import { TemplateManagement } from './template-management'
 import { UserManagement } from './user-management'
@@ -43,6 +44,12 @@ export const settingsSectionRegistry: SettingsSectionDefinition[] = [
     'settings.tabs.clusters',
     'Cluster',
     ClusterManagement
+  ),
+  createSettingsSectionDefinition(
+    'kcross',
+    'settings.tabs.kcross',
+    'kcross',
+    KcrossManagement
   ),
   createSettingsSectionDefinition(
     'oauth',

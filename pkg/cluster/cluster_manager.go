@@ -319,6 +319,23 @@ func syncClusters(cm *ClusterManager, readyCh chan<- struct{}) error {
 			cm.mu.Unlock()
 			continue
 		}
+		// kcross 隧道接入的在线门控（绑定与指纹见 kcross_hook.go）
+		if model.GetKcrossBindingByCluster(cluster.ID) != nil && !kcrossPeerOnline(cluster.ID) {
+			if currentExist {
+				cm.mu.Lock()
+				delete(cm.clusters, cluster.Name)
+				cm.mu.Unlock()
+				current.K8sClient.Stop(cluster.Name)
+			}
+			cm.mu.Lock()
+			if cluster.Enable {
+				cm.errors[cluster.Name] = "waiting for kcross peer connection"
+			} else {
+				delete(cm.errors, cluster.Name)
+			}
+			cm.mu.Unlock()
+			continue
+		}
 		clusterAgentConfigChanged := cluster.ClusterAgent && currentExist && current.clusterAgentGeneration != cm.clusterAgentManager.Generation(cluster.ID)
 		if clusterAgentConfigChanged {
 			klog.Infof("Cluster Agent transport configuration changed for cluster %s, updating", cluster.Name)

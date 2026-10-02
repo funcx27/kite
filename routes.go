@@ -16,6 +16,7 @@ import (
 	"github.com/zxh326/kite/pkg/cluster"
 	"github.com/zxh326/kite/pkg/helm"
 	"github.com/zxh326/kite/pkg/images"
+	"github.com/zxh326/kite/pkg/kcross"
 	"github.com/zxh326/kite/pkg/metrics"
 	"github.com/zxh326/kite/pkg/middleware"
 	"github.com/zxh326/kite/pkg/model"
@@ -109,6 +110,10 @@ func registerAdminRoutes(r *gin.RouterGroup, authHandler *auth.AuthHandler, cm *
 	clusterAPI.POST("/import", cm.ImportClustersFromKubeconfig)
 	clusterAPI.PUT("/:id", cm.UpdateCluster)
 	clusterAPI.DELETE("/:id", cm.DeleteCluster)
+
+	// kcross 集成（设置/发现/绑定，全部在 pkg/kcross 内实现）
+	kcrossAPI := adminAPI.Group("/kcross")
+	kcross.RegisterRoutes(kcrossAPI)
 
 	rbacAPI := adminAPI.Group("/roles")
 	rbacAPI.GET("/", rbac.ListRoles)
