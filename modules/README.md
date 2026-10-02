@@ -53,7 +53,7 @@ Kite 宿主（主 module `github.com/zxh326/kite`）之外的独立 Go module �
 | `ui/src/routes.tsx` | 每模块一个路由块（import 模块 `routes.tsx` 并展开） | 各模块 |
 | `ui/src/App.tsx` | `PlatformProviders` 包裹 + 应用模式侧边栏切换（集中式壳集成） | platform |
 | `ui/src/components/user-menu.tsx` | `<WorkModeMenuItem />` 单点插入 | platform |
-| `ui/src/components/settings/settings-sections.tsx` | 设置页注册表条目（kcross tab；用户拍板留在统一设置界面） | kcross |
+| `ui/src/components/settings/settings-sections.tsx` | 设置页注册表条目（kcross tab；workflow credentials tab，M4 凭证管理段——tab label 键 `settings.tabs.credentials` 由 workflow 模块 i18n 资源注册；用户拍板留在统一设置界面） | kcross / workflow |
 
 其余仍在宿主共享文件中的 diff 均为**加法式通用增强**（可选 prop / i18n 化 / 开发环境修复），
 登记备查：`editors/{environment,image}-editor`（i18n 化，键 `editors.*` 由 application 模块资源

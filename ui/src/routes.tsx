@@ -15,6 +15,7 @@ import { ResourceDetail } from './pages/resource-detail'
 import { ResourceList } from './pages/resource-list'
 import { SettingsPage } from './pages/settings'
 import { HomeRoute } from './platform/home-route'
+import { workflowRoutes } from './workflow/routes'
 
 const subPath = getSubPath()
 
@@ -89,6 +90,7 @@ export const router = createBrowserRouter(
         // module directory.
         ...applicationRoutes,
         ...buildfleetRoutes,
+        ...workflowRoutes,
         {
           path: ':resource/:name',
           element: <ResourceDetail />,

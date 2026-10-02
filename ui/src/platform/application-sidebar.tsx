@@ -1,6 +1,6 @@
 import { useCallback } from 'react'
 import Icon from '@/assets/icon.svg'
-import { IconApps } from '@tabler/icons-react'
+import { IconApps, IconGitMerge } from '@tabler/icons-react'
 import { useTranslation } from 'react-i18next'
 import { Link, useLocation } from 'react-router-dom'
 
@@ -53,6 +53,19 @@ export function ApplicationSidebar(
                 <Link to="/applications" onClick={handleMenuItemClick}>
                   <IconApps className="text-sidebar-primary" />
                   <span className="font-medium">{t('nav.applications')}</span>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                tooltip={t('workflow.title')}
+                asChild
+                isActive={location.pathname.startsWith('/workflows')}
+                className="transition-all duration-200 hover:bg-accent/60 active:scale-95 data-[active=true]:bg-primary/10 data-[active=true]:text-primary data-[active=true]:shadow-sm"
+              >
+                <Link to="/workflows" onClick={handleMenuItemClick}>
+                  <IconGitMerge className="text-sidebar-primary" />
+                  <span className="font-medium">{t('workflow.title')}</span>
                 </Link>
               </SidebarMenuButton>
             </SidebarMenuItem>

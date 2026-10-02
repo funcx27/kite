@@ -1,0 +1,522 @@
+// Workflow editor (design §11 视图②): React Flow canvas with a left node
+// palette (four built-in types, drag onto canvas), a right property drawer
+// per spec.go props fields, params/triggers dialogs, client-side cycle check
+// and save via POST/PUT (a save on an existing workflow appends a revision).
+// /workflows/new renders the create variant; /workflows/:name the editor.
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import {
+  addEdge,
+  applyEdgeChanges,
+  applyNodeChanges,
+  type Connection,
+  type EdgeChange,
+  type Edge as FlowEdge,
+  type NodeChange,
+} from '@xyflow/react'
+import { useTranslation } from 'react-i18next'
+import { useNavigate, useParams } from 'react-router-dom'
+import { toast } from 'sonner'
+
+import { usePageTitle } from '@/hooks/use-page-title'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+
+import { useSaveWorkflowMutation, useWorkflow, WorkflowApiError } from '../api'
+import { ParamsDialog, TriggersDialog } from '../components/definition-dialogs'
+import { FlowCanvas } from '../components/flow'
+import { PropertyDrawer } from '../components/property-drawer'
+import { WebhookTokenDialog } from '../components/run-dialogs'
+import {
+  flowToSpecNode,
+  WORKFLOW_NODE_CARD,
+  WORKFLOW_NODE_MIME,
+  type WorkflowFlowNode,
+} from '../flow-model'
+import {
+  autoLayout,
+  findCycle,
+  isValidNodeNodeId,
+  nodeLayout,
+  nodeTypeAccent,
+  WORKFLOW_NODE_TYPES,
+} from '../lib'
+import type {
+  DAGSpec,
+  ParamSpec,
+  TriggerConfig,
+  WorkflowNode,
+  WorkflowNodeType,
+} from '../types'
+
+function nextNodeId(type: WorkflowNodeType, taken: Set<string>): string {
+  const prefix = type.replace(/-/g, '')
+  for (let i = 1; i < 10000; i++) {
+    const candidate = `${prefix}${i}`
+    if (!taken.has(candidate)) return candidate
+  }
+  return `${prefix}-${Date.now()}`
+}
+
+export function WorkflowEditorPage() {
+  const { name: routeName } = useParams()
+  const isCreate = routeName === undefined
+  const navigate = useNavigate()
+  const { t } = useTranslation()
+  usePageTitle(
+    isCreate ? t('workflow.editor.createTitle') : t('workflow.editor.editTitle')
+  )
+
+  const {
+    data: workflow,
+    isLoading,
+    error,
+  } = useWorkflow(isCreate ? undefined : routeName)
+  const saveMutation = useSaveWorkflowMutation()
+
+  const [draftName, setDraftName] = useState('')
+  const [draftNamespace, setDraftNamespace] = useState('default')
+  const [draftDescription, setDraftDescription] = useState('')
+  const [params, setParams] = useState<ParamSpec[]>([])
+  const [triggers, setTriggers] = useState<TriggerConfig>({})
+  const [flowNodes, setFlowNodes] = useState<WorkflowFlowNode[]>([])
+  const [flowEdges, setFlowEdges] = useState<FlowEdge[]>([])
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [expectedRev, setExpectedRev] = useState(0)
+  const [hydrated, setHydrated] = useState(false)
+  const [paramsOpen, setParamsOpen] = useState(false)
+  const [triggersOpen, setTriggersOpen] = useState(false)
+  const [tokenOpen, setTokenOpen] = useState(false)
+
+  // ':name' is one route object, so parameter-to-parameter navigation (e.g.
+  // history from /workflows/a to /workflows/b) reuses this component; drop
+  // the whole draft whenever the target workflow changes.
+  useEffect(() => {
+    setHydrated(false)
+    setSelectedId(null)
+    setDraftName('')
+    setDraftNamespace('default')
+    setDraftDescription('')
+    setParams([])
+    setTriggers({})
+    setFlowNodes([])
+    setFlowEdges([])
+    setExpectedRev(0)
+  }, [routeName])
+
+  // Load the definition once; edits live in local flow state afterwards.
+  useEffect(() => {
+    if (isCreate || !workflow || hydrated) return
+    const spec: DAGSpec = workflow.spec ?? { nodes: [], edges: [] }
+    const positions = new Map<string, { x: number; y: number }>()
+    for (const n of spec.nodes) {
+      const layout = nodeLayout(n.props)
+      if (layout) positions.set(n.id, layout)
+    }
+    if (positions.size < spec.nodes.length) {
+      for (const [id, p] of autoLayout(spec)) {
+        if (!positions.has(id)) positions.set(id, p)
+      }
+    }
+    setFlowNodes(
+      spec.nodes.map((n) => ({
+        id: n.id,
+        type: WORKFLOW_NODE_CARD,
+        position: positions.get(n.id) ?? { x: 40, y: 40 },
+        data: {
+          nodeType: n.type,
+          label: n.name,
+          onFailure: n.onFailure,
+          timeout: n.timeout,
+          props: n.props,
+        },
+      }))
+    )
+    setFlowEdges(
+      spec.edges.map((e) => ({
+        id: `${e.from}->${e.to}`,
+        source: e.from,
+        target: e.to,
+      }))
+    )
+    setDraftName(workflow.name)
+    setDraftNamespace(workflow.namespace)
+    setDraftDescription(workflow.description)
+    setParams(workflow.params ?? [])
+    setTriggers(workflow.triggers ?? {})
+    setExpectedRev(workflow.currentRev)
+    setHydrated(true)
+  }, [isCreate, workflow, hydrated])
+
+  const selectedNode = useMemo(
+    () => flowNodes.find((n) => n.id === selectedId) ?? null,
+    [flowNodes, selectedId]
+  )
+
+  const specFromFlow = useCallback((): DAGSpec => {
+    const nodes = flowNodes.map((n) => {
+      const specNode = flowToSpecNode(n)
+      // Canvas positions are deliberately NOT persisted: the engine's
+      // decodeProps rejects unknown props fields (DisallowUnknownFields), so
+      // any extra props key would fail the node at run time. Layout comes
+      // from the deterministic auto-layout in both editor and run view.
+      // Strip `layout` defensively — legacy revisions may still carry it.
+      const { layout: _legacy, ...props } = specNode.props ?? {}
+      void _legacy
+      return {
+        ...specNode,
+        props: Object.keys(props).length > 0 ? props : undefined,
+      }
+    })
+    const edges = flowEdges.map((e) => ({ from: e.source, to: e.target }))
+    return { nodes, edges }
+  }, [flowNodes, flowEdges])
+
+  const validate = (): string | null => {
+    if (flowNodes.length === 0) {
+      return t('workflow.editor.emptyGraph')
+    }
+    const ids = new Set<string>()
+    for (const n of flowNodes) {
+      if (!isValidNodeNodeId(n.id)) {
+        return t('workflow.editor.nodeIdInvalid', { id: n.id })
+      }
+      if (ids.has(n.id)) {
+        return t('workflow.editor.nodeIdDuplicate', { id: n.id })
+      }
+      ids.add(n.id)
+      if (n.data.label.trim() === '') {
+        return t('workflow.editor.nodeNameEmpty', { id: n.id })
+      }
+    }
+    const cycle = findCycle(specFromFlow())
+    if (cycle) {
+      return t('workflow.editor.cycleError', { path: cycle.join(' -> ') })
+    }
+    return null
+  }
+
+  const handleValidate = () => {
+    const problem = validate()
+    if (problem) {
+      toast.error(`${t('workflow.editor.validationFailed')}: ${problem}`)
+      return
+    }
+    toast.success(t('workflow.editor.validationOk'))
+  }
+
+  const handleSave = () => {
+    if (isCreate && draftName.trim() === '') return
+    const problem = validate()
+    if (problem) {
+      toast.error(`${t('workflow.editor.validationFailed')}: ${problem}`)
+      return
+    }
+    const spec = specFromFlow()
+    const onSuccess = (saved: { name: string; currentRev: number }) => {
+      toast.success(t('workflow.editor.saved', { rev: saved.currentRev }))
+      if (isCreate) {
+        navigate(`/workflows/${saved.name}`, { replace: true })
+      } else {
+        setExpectedRev(saved.currentRev)
+      }
+    }
+    const onError = (err: Error) => {
+      // 400 carries the joined server validation problems; 409 is the
+      // expectedRev optimistic-lock mismatch (design §10).
+      if (err instanceof WorkflowApiError && err.status === 409) {
+        toast.error(t('workflow.editor.conflict'))
+        return
+      }
+      toast.error(err.message)
+    }
+    if (isCreate) {
+      saveMutation.mutate(
+        {
+          req: {
+            name: draftName.trim(),
+            namespace: draftNamespace.trim() || 'default',
+            description: draftDescription,
+            spec,
+            params,
+            triggers,
+          },
+        },
+        { onSuccess, onError }
+      )
+      return
+    }
+    saveMutation.mutate(
+      {
+        name: routeName,
+        req: {
+          description: draftDescription,
+          spec,
+          params,
+          triggers,
+          expectedRev,
+        },
+      },
+      { onSuccess, onError }
+    )
+  }
+
+  const onNodesChange = useCallback(
+    (changes: NodeChange<WorkflowFlowNode>[]) =>
+      setFlowNodes((prev) => applyNodeChanges(changes, prev)),
+    []
+  )
+
+  const onEdgesChange = useCallback(
+    (changes: EdgeChange<FlowEdge>[]) =>
+      setFlowEdges((prev) => applyEdgeChanges(changes, prev)),
+    []
+  )
+
+  const onConnect = useCallback((connection: Connection) => {
+    if (!connection.source || !connection.target) return
+    setFlowEdges((prev) => {
+      // One dependency per node pair; duplicates carry no extra semantics.
+      if (
+        prev.some(
+          (e) =>
+            e.source === connection.source && e.target === connection.target
+        )
+      ) {
+        return prev
+      }
+      return addEdge(
+        { ...connection, id: `${connection.source}->${connection.target}` },
+        prev
+      )
+    })
+  }, [])
+
+  const onDropNode = useCallback(
+    (nodeType: WorkflowNodeType, position: { x: number; y: number }) => {
+      setFlowNodes((prev) => [
+        ...prev,
+        {
+          id: nextNodeId(nodeType, new Set(prev.map((n) => n.id))),
+          type: WORKFLOW_NODE_CARD,
+          position,
+          data: { nodeType, label: t(`workflow.nodeTypes.${nodeType}`) },
+        },
+      ])
+    },
+    [t]
+  )
+
+  // Renaming a node id rewires its edges so template paths (steps.<id>.*)
+  // stay valid.
+  const updateSelectedNode = (updated: WorkflowNode) => {
+    const previousId = selectedId
+    setFlowNodes((prev) =>
+      prev.map((n) =>
+        n.id === previousId
+          ? {
+              ...n,
+              id: updated.id,
+              data: {
+                ...n.data,
+                label: updated.name,
+                onFailure: updated.onFailure,
+                timeout: updated.timeout,
+                props: updated.props,
+              },
+            }
+          : n
+      )
+    )
+    if (previousId && updated.id !== previousId) {
+      setFlowEdges((prev) =>
+        prev.map((e) => ({
+          ...e,
+          id: `${e.source === previousId ? updated.id : e.source}->${e.target === previousId ? updated.id : e.target}`,
+          source: e.source === previousId ? updated.id : e.source,
+          target: e.target === previousId ? updated.id : e.target,
+        }))
+      )
+      setSelectedId(updated.id)
+    }
+  }
+
+  const deleteNode = (id: string) => {
+    setFlowNodes((prev) => prev.filter((n) => n.id !== id))
+    setFlowEdges((prev) =>
+      prev.filter((e) => e.source !== id && e.target !== id)
+    )
+    if (selectedId === id) setSelectedId(null)
+  }
+
+  if (!isCreate && error) {
+    return (
+      <div className="py-10 text-center text-sm text-destructive">
+        {(error as Error).message}
+      </div>
+    )
+  }
+  if (!isCreate && (isLoading || !hydrated)) {
+    return (
+      <div className="py-10 text-center text-sm text-muted-foreground">
+        {t('common.messages.loading')}
+      </div>
+    )
+  }
+
+  const selectedSpecNode: WorkflowNode | null = selectedNode
+    ? flowToSpecNode(selectedNode)
+    : null
+
+  return (
+    <div className="flex h-[calc(100dvh-11rem)] flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-2">
+        {isCreate ? (
+          <div className="flex flex-1 flex-wrap items-center gap-2">
+            <Input
+              value={draftName}
+              onChange={(e) => setDraftName(e.target.value)}
+              placeholder={t('workflow.editor.name')}
+              className="w-48 font-mono"
+            />
+            <Input
+              value={draftNamespace}
+              onChange={(e) => setDraftNamespace(e.target.value)}
+              placeholder={t('workflow.editor.namespace')}
+              className="w-36 font-mono"
+            />
+            <Input
+              value={draftDescription}
+              onChange={(e) => setDraftDescription(e.target.value)}
+              placeholder={t('workflow.editor.description')}
+              className="w-56"
+            />
+          </div>
+        ) : (
+          <div className="flex min-w-0 flex-1 items-center gap-3">
+            <span className="truncate text-sm font-semibold">{draftName}</span>
+            <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">
+              rev {expectedRev}
+            </span>
+            <span className="hidden truncate text-xs text-muted-foreground md:inline">
+              {draftNamespace} · {flowNodes.length} {t('workflow.editor.nodes')}
+            </span>
+            <Input
+              value={draftDescription}
+              onChange={(e) => setDraftDescription(e.target.value)}
+              placeholder={t('workflow.editor.description')}
+              className="hidden w-56 lg:inline-flex"
+            />
+          </div>
+        )}
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setParamsOpen(true)}
+          >
+            {t('workflow.editor.params')}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setTriggersOpen(true)}
+          >
+            {t('workflow.editor.triggers')}
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleValidate}>
+            ✓ {t('workflow.editor.validate')}
+          </Button>
+          <Button
+            size="sm"
+            disabled={
+              saveMutation.isPending || (isCreate && draftName.trim() === '')
+            }
+            onClick={handleSave}
+          >
+            {saveMutation.isPending
+              ? t('workflow.editor.saving')
+              : t('workflow.editor.save')}
+          </Button>
+        </div>
+      </div>
+
+      <div className="flex min-h-0 flex-1 overflow-hidden rounded-lg border">
+        <aside className="flex w-52 shrink-0 flex-col gap-2 border-r bg-muted/30 p-3">
+          <div className="px-1 text-xs font-medium text-muted-foreground">
+            {t('workflow.editor.nodes')} · {t('workflow.editor.nodesHint')}
+          </div>
+          {WORKFLOW_NODE_TYPES.map((type) => (
+            <div
+              key={type}
+              draggable
+              onDragStart={(e) => {
+                e.dataTransfer.setData(WORKFLOW_NODE_MIME, type)
+                e.dataTransfer.effectAllowed = 'move'
+              }}
+              className="flex cursor-grab items-center gap-2.5 rounded-lg border bg-card p-2 text-sm shadow-sm transition-colors hover:bg-accent active:cursor-grabbing"
+            >
+              <span
+                className={`h-6 w-6 shrink-0 rounded-md ${nodeTypeAccent[type]}`}
+              />
+              {t(`workflow.nodeTypes.${type}`)}
+            </div>
+          ))}
+          <div className="mt-2 rounded-lg bg-card p-2.5 text-[11px] leading-4 text-muted-foreground">
+            {t('workflow.editor.paletteHint')}
+          </div>
+        </aside>
+
+        <div className="min-w-0 flex-1">
+          <FlowCanvas
+            nodes={flowNodes}
+            edges={flowEdges}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onConnect={onConnect}
+            onNodesDelete={(nodes) => {
+              for (const n of nodes) deleteNode(n.id)
+            }}
+            onSelectNode={setSelectedId}
+            onDropNode={onDropNode}
+          />
+        </div>
+
+        <aside className="w-80 shrink-0 border-l bg-card">
+          <PropertyDrawer
+            node={selectedSpecNode}
+            params={params}
+            nodes={flowNodes.map(flowToSpecNode)}
+            onChange={updateSelectedNode}
+            onDelete={() => selectedNode && deleteNode(selectedNode.id)}
+          />
+        </aside>
+      </div>
+
+      <ParamsDialog
+        open={paramsOpen}
+        onOpenChange={setParamsOpen}
+        params={params}
+        onSave={setParams}
+      />
+      <TriggersDialog
+        open={triggersOpen}
+        onOpenChange={setTriggersOpen}
+        triggers={triggers}
+        onSave={setTriggers}
+        onManageToken={
+          isCreate
+            ? undefined
+            : () => {
+                setTriggersOpen(false)
+                setTokenOpen(true)
+              }
+        }
+      />
+      <WebhookTokenDialog
+        name={routeName ?? ''}
+        open={tokenOpen}
+        onOpenChange={setTokenOpen}
+      />
+    </div>
+  )
+}
