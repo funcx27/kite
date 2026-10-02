@@ -12,12 +12,18 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/moby/buildkit/client"
 	"gorm.io/gorm"
 	"k8s.io/klog/v2"
 
+	"github.com/funcx27/kite/modules/buildfleet/builder"
+	"github.com/funcx27/kite/modules/buildfleet/fleet"
+	"github.com/funcx27/kite/modules/buildfleet/gitctx"
+	"github.com/funcx27/kite/modules/buildfleet/httpctx"
 	"github.com/funcx27/kite/modules/workflow"
 	"github.com/funcx27/kite/modules/workflow/exec"
 	"github.com/zxh326/kite/pkg/cluster"
+	"github.com/zxh326/kite/pkg/credentialsadapter"
 	"github.com/zxh326/kite/pkg/model"
 	"github.com/zxh326/kite/pkg/rbac"
 	"github.com/zxh326/kite/pkg/utils"
@@ -35,19 +41,33 @@ const encryptionErrorPrefix = "encryption_error: "
 const notifyTimeout = 10 * time.Second
 
 // Deps implements workflow.Deps on top of kite's RBAC roles, user model and
-// ResourceHistory audit log. The M2 executors (buildfleet BuildImage,
-// application DeployApp) are not wired yet: they fail nodes with an explicit
-// not-wired error while the engine path stays complete.
+// ResourceHistory audit log. BuildImage runs through the embedded buildfleet
+// fleet (nil capability = buildfleet not configured, nodes fail explicitly);
+// DeployApp is the M2 seam and still fails with an explicit not-wired error.
 type Deps struct {
 	cm *cluster.ClusterManager
+	// fleet is the in-process build capability; nil when the host config
+	// has no buildfleet section.
+	fleet FleetBuilder
+	// creds injects CredentialRef references from the credential center.
+	creds credentialsadapter.FleetCredentialInjector
+}
+
+// FleetBuilder is the in-process build capability BuildImage consumes:
+// one synchronous fleet build streaming builder events (consumer-side
+// interface; satisfied by *buildfleetadapter.Deps).
+type FleetBuilder interface {
+	Build(ctx context.Context, req fleet.Request, progress func(builder.Event) bool) (*fleet.BuildResult, error)
 }
 
 var _ workflow.Deps = (*Deps)(nil)
 
 // NewDeps builds the adapter and wires the module's secret codec; it runs at
-// route registration, before any module table is read or written.
-func NewDeps(cm *cluster.ClusterManager) *Deps {
-	d := &Deps{cm: cm}
+// route registration, before any module table is read or written. fleet and
+// creds may be nil — buildfleet-unconfigured hosts keep starting, and build
+// nodes fail with an explicit error instead of silently no-oping.
+func NewDeps(cm *cluster.ClusterManager, fleet FleetBuilder, creds credentialsadapter.FleetCredentialInjector) *Deps {
+	d := &Deps{cm: cm, fleet: fleet, creds: creds}
 	workflow.SetSecretCodec(d.EncryptSecret, d.DecryptSecret)
 	return d
 }
@@ -153,17 +173,120 @@ func (d *Deps) RecordHistory(entry workflow.HistoryEntry) {
 	}
 }
 
-// errNotWired marks executors whose backing integration ships in M2
+// errNotWired marks executors whose backing integration ships later
 // (design §12): nodes fail with this explicit reason instead of silently
 // no-oping.
 func errNotWired(capability string) error {
 	return fmt.Errorf("%s executor is not wired until workflow M2", capability)
 }
 
-// BuildImage is the M2 seam: buildfleet integration lands with the credential
-// center (design §5.1/§9).
+// BuildImage runs one image build through the embedded buildfleet fleet
+// (design §5.1/§9): the request maps onto fleet.Request, CredentialRef
+// resolves into git source auth and the per-request registry table, and
+// builder events bridge to onLog text lines for the node's LogTail.
 func (d *Deps) BuildImage(ctx context.Context, req exec.BuildRequest, onLog func(string)) (exec.BuildResult, error) {
-	return exec.BuildResult{}, errNotWired("build")
+	if d.fleet == nil {
+		return exec.BuildResult{}, fmt.Errorf("buildfleet is not configured: add a buildfleet section to the kite config to enable build nodes")
+	}
+	freq, err := d.toFleetRequest(req)
+	if err != nil {
+		return exec.BuildResult{}, err
+	}
+	res, err := d.fleet.Build(ctx, freq, progressLines(onLog))
+	if err != nil {
+		// Source errors embed the raw client URL (gitctx.Clone), which may
+		// carry basic-auth userinfo; node errors are persisted in
+		// NodeRun.error and served via the runs API, so redact the same way
+		// the REST facade redacts audit rows.
+		return exec.BuildResult{}, fmt.Errorf("build image: %s", credentialsadapter.RedactCredentials(err.Error()))
+	}
+	return exec.BuildResult{ImageRef: res.ImageRef, Digest: res.Digest}, nil
+}
+
+// toFleetRequest maps exec.BuildRequest onto fleet.Request, resolving the
+// credential reference when present. Resolution failures carry the ref name
+// so node errors point at the misconfigured credential.
+func (d *Deps) toFleetRequest(req exec.BuildRequest) (fleet.Request, error) {
+	freq := fleet.Request{
+		Dockerfile:        req.Dockerfile,
+		DockerfileContent: req.DockerfileContent,
+		Args:              req.Args,
+		Platforms:         req.Platforms,
+		OutputRef:         req.OutputRef,
+		Provider:          req.Provider,
+	}
+	if freq.Dockerfile == "" && freq.DockerfileContent == "" {
+		freq.Dockerfile = "Dockerfile"
+	}
+	switch {
+	case req.Git != nil && req.Git.URL != "":
+		freq.Git = &gitctx.Source{URL: req.Git.URL, Ref: req.Git.Ref, Subdir: req.Git.Subdir}
+	case req.HTTP != nil && req.HTTP.URL != "":
+		freq.HTTP = &httpctx.Source{URL: req.HTTP.URL}
+	default:
+		return freq, fmt.Errorf("build request needs a git or http source")
+	}
+	if req.CredentialRef != "" {
+		if err := d.applyCredentials(&freq, req.CredentialRef); err != nil {
+			return freq, err
+		}
+	}
+	return freq, nil
+}
+
+// applyCredentials injects the resolved payload via the credential center's
+// shared resolver (git auth onto the git source, registry entries into the
+// per-request creds table).
+func (d *Deps) applyCredentials(freq *fleet.Request, ref string) error {
+	if d.creds == nil {
+		return fmt.Errorf("credential %q cannot be resolved: credential center is not wired", ref)
+	}
+	return d.creds.InjectFleetCredentials(freq, ref)
+}
+
+// progressLines bridges builder events to onLog text lines: one line per
+// acquired runtime, one per finished vertex, log chunks verbatim (design
+// §5.1: the engine keeps only a bounded tail, so keep lines short).
+func progressLines(onLog func(string)) func(builder.Event) bool {
+	// atLineStart tracks whether the previous log chunk ended with a
+	// newline, so synthetic status lines never glue onto a partial line.
+	atLineStart := true
+	return func(ev builder.Event) bool {
+		switch {
+		case ev.Start != nil:
+			if !atLineStart {
+				onLog("\n")
+			}
+			onLog(fmt.Sprintf("runtime %s ready (provider %s, attempt %d)\n",
+				ev.Start.RuntimeID, ev.Start.Provider, ev.Start.Attempt))
+			atLineStart = true
+		case ev.Vertex != nil && ev.Vertex.Completed != nil:
+			if !atLineStart {
+				onLog("\n")
+			}
+			onLog(vertexLine(ev.Vertex))
+			atLineStart = true
+		case ev.Log != nil:
+			onLog(string(ev.Log.Data))
+			if n := len(ev.Log.Data); n > 0 {
+				atLineStart = ev.Log.Data[n-1] == '\n'
+			}
+		}
+		return true
+	}
+}
+
+// vertexLine renders one finished vertex as "name status" (status mirrored
+// from buildkit lifecycle fields, same derivation as the REST facade).
+func vertexLine(v *client.Vertex) string {
+	status := "complete"
+	switch {
+	case v.Error != "":
+		status = "failed"
+	case v.Cached:
+		status = "cached"
+	}
+	return strings.TrimSpace(v.Name) + " " + status + "\n"
 }
 
 // DeployApp is the M2 seam: the application module deploy facade lands there

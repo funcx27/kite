@@ -9,6 +9,7 @@ import (
 	"github.com/zxh326/kite/pkg/buildfleetadapter"
 	"github.com/zxh326/kite/pkg/cluster"
 	"github.com/zxh326/kite/pkg/common"
+	"github.com/zxh326/kite/pkg/credentialsadapter"
 	"github.com/zxh326/kite/pkg/middleware"
 	"github.com/zxh326/kite/pkg/model"
 	"github.com/zxh326/kite/pkg/rbac"
@@ -17,7 +18,7 @@ import (
 	"k8s.io/klog/v2"
 )
 
-func initializeApp(ctx context.Context) (*cluster.ClusterManager, *buildfleetadapter.Deps, error) {
+func initializeApp(ctx context.Context) (*cluster.ClusterManager, *buildfleetadapter.Deps, *credentialsadapter.Deps, error) {
 	common.LoadEnvs()
 	if klog.V(1).Enabled() {
 		gin.SetMode(gin.DebugMode)
@@ -39,13 +40,16 @@ func initializeApp(ctx context.Context) (*cluster.ClusterManager, *buildfleetada
 
 	cm, err := cluster.NewClusterManager()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
+	// The credentials adapter must exist before the buildfleet runtime: the
+	// module's Resolver flows into the buildfleet adapter at construction.
+	credDeps := credentialsadapter.New()
 	var buildfleet *buildfleetadapter.Deps
 	if node := internal.BuildFleetConfig(); node != nil {
 		// Fail fast: a present but broken buildfleet section must not
 		// silently start kite without the module.
-		buildfleet, err = buildfleetadapter.New(ctx, node)
+		buildfleet, err = buildfleetadapter.New(ctx, node, credDeps)
 		if err != nil {
 			panic("failed to initialize buildfleet module: " + err.Error())
 		}
@@ -54,10 +58,10 @@ func initializeApp(ctx context.Context) (*cluster.ClusterManager, *buildfleetada
 		klog.Warningf("Failed to watch config file: %v", err)
 	}
 	scheduler.Start(ctx, cm)
-	return cm, buildfleet, nil
+	return cm, buildfleet, credDeps, nil
 }
 
-func buildEngine(cm *cluster.ClusterManager, buildfleet *buildfleetadapter.Deps) *gin.Engine {
+func buildEngine(cm *cluster.ClusterManager, buildfleet *buildfleetadapter.Deps, credDeps *credentialsadapter.Deps) *gin.Engine {
 	r := gin.New()
 	middleware.ConfigureRawPathRouting(r)
 	configureTrustedProxies(r)
@@ -71,7 +75,7 @@ func buildEngine(cm *cluster.ClusterManager, buildfleet *buildfleetadapter.Deps)
 	r.Use(middleware.DevCORS(common.CORSAllowedOrigins))
 
 	base := r.Group(common.Base)
-	setupAPIRouter(base, cm, buildfleet)
+	setupAPIRouter(base, cm, buildfleet, credDeps)
 	setupStatic(r)
 
 	return r

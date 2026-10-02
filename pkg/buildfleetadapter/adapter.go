@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"regexp"
 	"sort"
 	"time"
 
@@ -23,6 +22,7 @@ import (
 	"github.com/funcx27/kite/modules/buildfleet/gitctx"
 	"github.com/funcx27/kite/modules/buildfleet/httpctx"
 	"github.com/zxh326/kite/pkg/cluster"
+	"github.com/zxh326/kite/pkg/credentialsadapter"
 	"github.com/zxh326/kite/pkg/model"
 	"github.com/zxh326/kite/pkg/rbac"
 )
@@ -30,6 +30,11 @@ import (
 const (
 	// authzResource is the pseudo-resource all endpoints authorize against.
 	authzResource = "builds"
+	// credentialsResource is the credential center pseudo-resource: a build
+	// referencing a credentialRef consumes that credential, which requires
+	// get on the center (usage authorization, design §9) beyond the builds
+	// capability — judged host-wide like the center's own CRUD.
+	credentialsResource = "credentials"
 	// historySource marks audit rows written by the buildfleet module.
 	historySource = "buildfleet"
 	// heartbeatInterval paces the SSE keep-alive comment lines.
@@ -43,12 +48,16 @@ const (
 // Deps holds the assembled buildfleet runtime a host serves over REST.
 type Deps struct {
 	app *app.App
+	// creds injects credentialRef references from the credential center;
+	// nil when the center is not wired and credential passthrough is off.
+	creds credentialsadapter.FleetCredentialInjector
 }
 
 // New resolves the raw buildfleet config subtree (internal.BuildFleetConfig)
 // through the module's own config loader — preserving its env-expansion and
-// KnownFields validation — and assembles the runtime via app.Setup.
-func New(ctx context.Context, cfgNode *yaml.Node) (*Deps, error) {
+// KnownFields validation — and assembles the runtime via app.Setup. creds
+// may be nil: requests without credentialRef stay anonymous either way.
+func New(ctx context.Context, cfgNode *yaml.Node, creds credentialsadapter.FleetCredentialInjector) (*Deps, error) {
 	data, err := yaml.Marshal(cfgNode)
 	if err != nil {
 		return nil, fmt.Errorf("marshal buildfleet config: %w", err)
@@ -63,13 +72,21 @@ func New(ctx context.Context, cfgNode *yaml.Node) (*Deps, error) {
 	if err != nil {
 		return nil, fmt.Errorf("setup buildfleet: %w", err)
 	}
-	return &Deps{app: a}, nil
+	return &Deps{app: a, creds: creds}, nil
 }
 
 // Close drains the module's buildkitd instances; the host calls it when its
 // application context is cancelled, after in-flight requests have drained.
 func (d *Deps) Close(ctx context.Context) error {
 	return d.app.Drain(ctx)
+}
+
+// Build runs one build on the embedded fleet, streaming builder events to
+// progress (return false stops forwarding). It backs the workflow adapter's
+// in-process build path, which maps exec.BuildRequest onto fleet.Request
+// itself.
+func (d *Deps) Build(ctx context.Context, req fleet.Request, progress func(builder.Event) bool) (*fleet.BuildResult, error) {
+	return d.app.Fleet.Build(ctx, req, fleet.WithProgress(progress))
 }
 
 // RegisterRoutes mounts the module API under /buildfleet. The host must call
@@ -96,8 +113,21 @@ func authorize(c *gin.Context, verb string) bool {
 	return false
 }
 
-// buildRequest is the POST /builds body, mapped onto fleet.Request without
-// the credential table: clients cannot pass credentials to the host yet.
+// canUseCredentials reports whether the request's user may consume
+// credential center entries; writes the 403 body when denied.
+func canUseCredentials(c *gin.Context) bool {
+	user := c.MustGet("user").(model.User)
+	if rbac.CanAccess(user, credentialsResource, "get", "", "") {
+		return true
+	}
+	c.AbortWithStatusJSON(http.StatusForbidden,
+		gin.H{"error": rbac.NoAccess(user.Key(), "get", credentialsResource, "", "")})
+	return false
+}
+
+// buildRequest is the POST /builds body, mapped onto fleet.Request. Git and
+// registry credentials are not accepted inline: CredentialRef names a
+// credential center entry resolved server-side (design §9).
 type buildRequest struct {
 	Git           *gitSource  `json:"git"`
 	HTTP          *httpSource `json:"http"`
@@ -110,6 +140,9 @@ type buildRequest struct {
 	OutputRef         string            `json:"outputRef"`
 	// Provider pins the build to the named provider; empty = any.
 	Provider string `json:"provider"`
+	// CredentialRef names the credential center entry used for the git
+	// fetch and the registry push; empty = anonymous (legacy clients).
+	CredentialRef string `json:"credentialRef"`
 }
 
 type gitSource struct {
@@ -179,10 +212,19 @@ func (d *Deps) handleBuild(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid request body: %v", err)})
 		return
 	}
+	if req.CredentialRef != "" && !canUseCredentials(c) {
+		return
+	}
 	freq, err := req.toFleetRequest()
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+	if req.CredentialRef != "" {
+		if err := d.injectCredentials(&freq, req.CredentialRef); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 	}
 	user := c.MustGet("user").(model.User)
 	cs := c.MustGet("cluster").(*cluster.ClientSet)
@@ -203,6 +245,15 @@ func (d *Deps) handleBuild(c *gin.Context) {
 type buildOutcome struct {
 	res *fleet.BuildResult
 	err error
+}
+
+// injectCredentials resolves ref into the request via the credential
+// center's shared resolver; resolution failures are client errors.
+func (d *Deps) injectCredentials(freq *fleet.Request, ref string) error {
+	if d.creds == nil {
+		return fmt.Errorf("credential %q cannot be resolved: credential center is not wired", ref)
+	}
+	return d.creds.InjectFleetCredentials(freq, ref)
 }
 
 // startBuild runs Fleet.Build on a background goroutine: progress events
@@ -393,10 +444,11 @@ func writeSSE(c *gin.Context, flusher http.Flusher, event string, payload any) b
 }
 
 // recordHistory persists one audit row when a build terminates. Request
-// payloads are never stored: they may carry Dockerfile content or source URLs
-// with embedded tokens, and credentials are not accepted from clients. Error
-// text goes through redactCredentials, because module-side clone errors embed
-// the full client-supplied source URL.
+// payloads are never stored: they may carry Dockerfile content or source
+// URLs with embedded tokens, and credentialRef (a credential center
+// reference, not secret material) adds nothing worth persisting. Error
+// text goes through credentialsadapter.RedactCredentials, because
+// module-side clone errors embed the full client-supplied source URL.
 func (d *Deps) recordHistory(operatorID uint, clusterName, outputRef string, res *fleet.BuildResult, err error) {
 	name := outputRef
 	if name == "" && res != nil {
@@ -412,7 +464,7 @@ func (d *Deps) recordHistory(operatorID uint, clusterName, outputRef string, res
 		OperationType:   "create",
 		OperationSource: historySource,
 		Success:         err == nil,
-		ErrorMessage:    redactCredentials(errString(err)),
+		ErrorMessage:    credentialsadapter.RedactCredentials(errString(err)),
 		OperatorID:      operatorID,
 	}
 	if e := model.DB.Create(&row).Error; e != nil {
@@ -425,16 +477,6 @@ func errString(err error) string {
 		return ""
 	}
 	return err.Error()
-}
-
-// urlCredentialPattern matches scheme://userinfo@ — module-side source errors
-// embed the raw client URL, which may carry basic-auth credentials.
-var urlCredentialPattern = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.\-]*://)[^/@\s]+@`)
-
-// redactCredentials masks the userinfo of any URL in s with ***, for error
-// text that is persisted (ResourceHistory.ErrorMessage).
-func redactCredentials(s string) string {
-	return urlCredentialPattern.ReplaceAllString(s, "${1}***@")
 }
 
 type runtimeStatusJSON struct {

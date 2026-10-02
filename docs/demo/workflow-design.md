@@ -290,6 +290,7 @@ type Credential struct {
 
 - 凭证中心自身（存储 `model.SecretString` 加密、管理 UI、RBAC）定位为独立模块/独立里程碑，不在本文档展开；落地形态可以是 `modules/credentials/` 或宿主 settings 页扩展，由其自身设计定。模块侧消费面即上文 `BuildRequest.CredentialRef` + adapter 内的解析注入。
 - buildfleet **REST 接线层的凭证缺口**（手动构建页暂不能传凭证）是同根问题的另一面：fleet SDK 的 `Request.Creds` 原生支持（git 进 clone、registry 进 solve 会话），workflow 走进程内直调天然可用；REST 门面的 `buildRequest` 补 `credentialRef` 字段即可复用同一 Resolver，建议与凭证中心同期修复。
+- **已落地（M2a）**：凭证中心住 `modules/credentials/`（payload SecretJSON 加密存储 + 按名 Resolve），宿主桥接 `pkg/credentialsadapter`；`pkg/buildfleetadapter`（REST `buildRequest.credentialRef`）与 `pkg/workflowadapter`（进程内 `BuildImage`）经其注入的同一 Resolver 解析后填入 `fleet.Request`（git 源认证 + registry 凭证表）。使用侧授权：引用凭据要求 `credentials` 资源 `get`（REST 逐请求检查 / workflow 节点以触发用户身份检查）。M2a 仅落地 Git basic auth（`Username`/`Password`）；`SSHKey` 形状留待后续里程碑（fleet gitctx 目前仅支持 http(s) basic auth）。
 
 ## 10. API 设计（模块内自查权限）
 

@@ -4,7 +4,9 @@ package fleet
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -313,8 +315,9 @@ func (f *Fleet) endFlight(fl *flight, res *BuildResult, err error) {
 }
 
 // flightKey identifies requests whose concurrent execution would be
-// duplicate work: same source, dockerfile, args, platforms and push
-// target. Provider is excluded (scheduling detail, same artifact).
+// duplicate work: same source, dockerfile, args, platforms, push target
+// and credential material. Provider is excluded (scheduling detail, same
+// artifact).
 func flightKey(req Request) string {
 	parts := []string{req.ContextDigest, req.Dockerfile, req.OutputRef, req.Provider}
 	parts = append(parts, sortedKV(req.Args)...)
@@ -325,7 +328,39 @@ func flightKey(req Request) string {
 	if r := req.HTTP; r != nil {
 		parts = append(parts, r.URL, r.Mode)
 	}
+	if k := credentialKey(req); k != "" {
+		parts = append(parts, k)
+	}
 	return strings.Join(parts, "\x00")
+}
+
+// credentialKey fingerprints the per-request credential material so builds
+// differing only by credentials never share a flight (result or error reuse
+// would silently run with the wrong credential). Hashed, because the key
+// lives in a long-lived map and must not carry secret material. Only Direct
+// secrets are fingerprinted: env-referenced (AuthRef) material is not known
+// at key time.
+func credentialKey(req Request) string {
+	h := sha256.New()
+	if r := req.Git; r != nil {
+		_, _ = h.Write([]byte(r.Username + "\x00" + r.Password + "\x00"))
+	}
+	entries := make([]string, 0, len(req.Creds))
+	for _, c := range req.Creds {
+		user, secret := "", ""
+		if c.Direct != nil {
+			user, secret = c.Direct.Username, c.Direct.Secret
+		}
+		entries = append(entries, string(c.Kind)+"\x00"+c.Match+"\x00"+user+"\x00"+secret)
+	}
+	sort.Strings(entries)
+	for _, e := range entries {
+		_, _ = h.Write([]byte(e))
+	}
+	if req.Git == nil && len(entries) == 0 {
+		return ""
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 func sortedKV(m map[string]string) []string {

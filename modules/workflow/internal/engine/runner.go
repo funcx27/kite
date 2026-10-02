@@ -30,6 +30,12 @@ type buildRunner struct {
 	deps buildDeps
 }
 
+// credentialsResource is the credential center pseudo-resource: a build
+// referencing a credential consumes that credential, which requires read
+// access on the center (usage authorization, design §9) beyond the builds
+// capability.
+const credentialsResource = "credentials"
+
 // Run implements NodeRunner for spec.NodeBuildImage.
 func (r buildRunner) Run(ctx context.Context, rendered spec.Props, run store.WorkflowRun, onLog func(string)) (map[string]any, error) {
 	// Node-level authorization (design §8): the run executes with its
@@ -44,6 +50,11 @@ func (r buildRunner) Run(ctx context.Context, rendered spec.Props, run store.Wor
 	var p spec.BuildProps
 	if err := decodeProps(rendered, &p); err != nil {
 		return nil, fmt.Errorf("decode build props: %w", err)
+	}
+	// Referencing a credential consumes its material — the same gate the
+	// REST build path applies (credentials:get, host-wide).
+	if p.CredentialRef != "" && !r.deps.AuthorizeUser(run.TriggeredBy, credentialsResource, "get", "", "") {
+		return nil, fmt.Errorf("user %d does not have permission to use credential %q", run.TriggeredBy, p.CredentialRef)
 	}
 	var source *exec.GitSource
 	var httpSource *exec.HTTPSource

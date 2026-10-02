@@ -36,7 +36,7 @@ func main() {
 
 	appCtx, cancelApp := context.WithCancel(context.Background())
 
-	cm, buildfleet, err := initializeApp(appCtx)
+	cm, buildfleet, credDeps, err := initializeApp(appCtx)
 	if err != nil {
 		cancelApp()
 		log.Fatalf("Failed to initialize app: %v", err)
@@ -45,7 +45,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              ":" + common.Port,
-		Handler:           buildEngine(cm, buildfleet).Handler(),
+		Handler:           buildEngine(cm, buildfleet, credDeps).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
