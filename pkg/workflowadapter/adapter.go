@@ -102,6 +102,12 @@ func (d *Deps) AuthorizeUser(userID uint, resource, verb, cluster, namespace str
 		klog.Errorf("Failed to load user %d for workflow authorization: %v", userID, err)
 		return false
 	}
+	// Disabled users keep their role mappings, so mirror RequireAuth's
+	// explicit rejection: in-flight runs of a disabled user must not pass
+	// node-level authorization.
+	if !user.Enabled {
+		return false
+	}
 	return rbac.CanAccess(user, resource, verb, cluster, namespace)
 }
 
