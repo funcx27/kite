@@ -266,21 +266,23 @@ node: pending ──> running ──┬─> succeeded ──(下游解锁)
 
 ## 9. 凭证接口契约（凭证中心 = 独立前置模块）
 
-构建节点访问私有 git / 推送私有 registry 需要**凭证中心**先行落地（或至少最小实现）。本模块只定义接口：
+构建节点访问私有 git / 推送私有 registry 需要**凭证中心**先行落地（或至少最小实现）。本模块的对接形状：**节点只透传 `credentialRef` 字符串**（BuildRequest 的组成字段），凭证的解析与注入由宿主执行器侧完成——`pkg/workflowadapter` 实现 BuildImage 时经凭证中心按 ref 解析出 git/registry 凭证表，再填入 `fleet.Request.Creds`（进程内直调，SDK 原生支持按请求传递）。模块与引擎全程不接触凭证明文，也不感知凭证结构（解析失败 = 节点失败并透出来自 adapter 的明确错误）：
 
 ```go
-// modules/workflow 的 Deps 之一；由宿主适配层实现
-type CredentialResolver interface {
-    // Resolve 按 credentialRef 返回凭证表；ref 不存在返回明确 error（节点失败）
-    Resolve(ctx context.Context, ref string) (Credential, error)
+// exec.BuildRequest 的凭证字段（模块侧只有这一形状）
+type BuildRequest struct {
+    // ...
+    CredentialRef string // 凭证中心引用；空 = 匿名构建
 }
+
+// 凭证中心自身的接口契约（宿主侧，由其自身设计文档定稿；此处仅约定被消费面）
 type Credential struct {
-    Git     *GitCred     // {Username, Password} 或 {SSHKey}
+    Git      *GitCred    // {Username, Password} 或 {SSHKey}
     Registry []RegCred   // [{Host, Username, Password}]，最长前缀匹配（对齐 fleet.Creds.Table）
 }
 ```
 
-- 凭证中心自身（存储 `model.SecretString` 加密、管理 UI、RBAC）定位为独立模块/独立里程碑，不在本文档展开；落地形态可以是 `modules/credentials/` 或宿主 settings 页扩展，由其自身设计定。
+- 凭证中心自身（存储 `model.SecretString` 加密、管理 UI、RBAC）定位为独立模块/独立里程碑，不在本文档展开；落地形态可以是 `modules/credentials/` 或宿主 settings 页扩展，由其自身设计定。模块侧消费面即上文 `BuildRequest.CredentialRef` + adapter 内的解析注入。
 - buildfleet **REST 接线层的凭证缺口**（手动构建页暂不能传凭证）是同根问题的另一面：fleet SDK 的 `Request.Creds` 原生支持（git 进 clone、registry 进 solve 会话），workflow 走进程内直调天然可用；REST 门面的 `buildRequest` 补 `credentialRef` 字段即可复用同一 Resolver，建议与凭证中心同期修复。
 
 ## 10. API 设计（模块内自查权限）

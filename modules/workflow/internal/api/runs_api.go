@@ -406,7 +406,10 @@ func (h *Handler) canDecide(c *gin.Context, wf store.Workflow, runID uint, nodeI
 			continue
 		}
 		var p spec.ApprovalProps
-		b, _ := json.Marshal(n.Props)
+		b, err := json.Marshal(n.Props)
+		if err != nil {
+			break
+		}
 		if json.Unmarshal(b, &p) != nil {
 			break
 		}

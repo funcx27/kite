@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -64,7 +65,7 @@ func (e *Engine) loadSpec(runID uint) (spec.DAGSpec, error) {
 func (e *Engine) load(runID uint) (*runState, error) {
 	var run store.WorkflowRun
 	if err := e.db.First(&run, runID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrNotFound
 		}
 		return nil, err
@@ -181,13 +182,17 @@ func ready(state *runState, byID map[string]store.NodeRun, id string) bool {
 }
 
 // markNodeRunning transitions a dispatchable node into running via a
-// conditional update; false means a concurrent actor (cancel sweep, retry)
-// already moved it.
+// conditional update, bumping its attempt counter; false means a concurrent
+// actor (cancel sweep, retry) already moved it.
 func (e *Engine) markNodeRunning(row *store.NodeRun) bool {
 	res := e.db.Model(&store.NodeRun{}).
 		Where("id = ? AND status IN ?", row.ID, []string{store.NodePending, store.NodeInterrupted}).
-		Updates(map[string]any{"status": store.NodeRunning, "started_at": now()})
-	return res.Error == nil && res.RowsAffected == 1
+		Updates(map[string]any{"status": store.NodeRunning, "started_at": now(), "attempt": gorm.Expr("attempt + 1")})
+	if res.Error == nil && res.RowsAffected == 1 {
+		row.Attempt++
+		return true
+	}
+	return false
 }
 
 // checkTerminal finalizes the run when no further progress is possible and
@@ -236,10 +241,10 @@ func (e *Engine) checkTerminal(runID uint) bool {
 // cancelRunContext aborts in-flight node executions of a finalizing run.
 func (e *Engine) cancelRunContext(runID uint) {
 	e.mu.Lock()
-	cancel := e.cancels[runID]
+	h := e.drivers[runID]
 	e.mu.Unlock()
-	if cancel != nil {
-		cancel()
+	if h != nil {
+		h.cancel()
 	}
 }
 

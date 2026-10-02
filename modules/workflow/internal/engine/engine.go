@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"slices"
 	"sync"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -52,9 +53,10 @@ type Deps interface {
 
 // Engine schedules runs. One host process owns one Engine.
 type Engine struct {
-	deps  Deps
-	db    *gorm.DB
-	slots chan struct{}
+	deps   Deps
+	db     *gorm.DB
+	slots  chan struct{}
+	drivers map[uint]*driverHandle
 
 	mu sync.Mutex
 	// active counts live orchestration goroutines per workflow (running and
@@ -64,9 +66,17 @@ type Engine struct {
 	queue map[uint][]uint
 	// limits caches each workflow's per-run concurrency budget.
 	limits map[uint]int
-	// cancels and notify track live runs for API-driven cancel/approve.
-	cancels map[uint]context.CancelFunc
-	notify  map[uint]chan struct{}
+}
+
+// driverHandle is one live orchestration of a run: its context, wake channel
+// and completion signal. It is registered in Engine.drivers so API-driven
+// actions can reach the live driver; the exiting driver deletes its
+// registration only when it still owns it, so a superseding retry can never
+// have its registration torn down by the predecessor it replaces.
+type driverHandle struct {
+	cancel context.CancelFunc
+	wake   chan struct{}
+	done   chan struct{}
 }
 
 // New builds an Engine over the module tables and the injected capabilities.
@@ -75,11 +85,10 @@ func New(db *gorm.DB, deps Deps) *Engine {
 		deps:    deps,
 		db:      db,
 		slots:   make(chan struct{}, MaxConcurrentNodes),
+		drivers: map[uint]*driverHandle{},
 		active:  map[uint]int{},
 		queue:   map[uint][]uint{},
 		limits:  map[uint]int{},
-		cancels: map[uint]context.CancelFunc{},
-		notify:  map[uint]chan struct{}{},
 	}
 }
 
@@ -211,10 +220,9 @@ func (e *Engine) drainLocked(workflowID uint, limit int) []uint {
 // (design §6).
 func (e *Engine) orchestrate(runID, workflowID uint) {
 	ctx, cancel := context.WithCancel(context.Background())
-	wake := make(chan struct{}, 1)
+	h := &driverHandle{cancel: cancel, wake: make(chan struct{}, 1), done: make(chan struct{})}
 	e.mu.Lock()
-	e.cancels[runID] = cancel
-	e.notify[runID] = wake
+	e.drivers[runID] = h
 	e.mu.Unlock()
 
 	defer func() {
@@ -225,9 +233,11 @@ func (e *Engine) orchestrate(runID, workflowID uint) {
 			e.finalizeRun(runID, store.RunFailed)
 		}
 		cancel()
+		close(h.done)
 		e.mu.Lock()
-		delete(e.cancels, runID)
-		delete(e.notify, runID)
+		if e.drivers[runID] == h {
+			delete(e.drivers, runID)
+		}
 		e.mu.Unlock()
 		e.finishRun(workflowID)
 	}()
@@ -237,13 +247,27 @@ func (e *Engine) orchestrate(runID, workflowID uint) {
 		// the next recovery pass.
 		return
 	}
+	errStreak := 0
 	for {
 		progressed, err := e.dispatchPass(ctx, runID)
 		if err != nil {
-			// Transient DB failure: leave the run running; the next API
-			// signal or a restart recovery re-drives it.
-			return
+			// Transient DB failures get a short bounded retry; past the
+			// streak cap the run fails visibly — a bare return here would
+			// leave it forever-running with no live wake channel, stranding
+			// later API signals.
+			errStreak++
+			if errStreak >= 5 {
+				slog.Error("workflow: run driver gave up after repeated dispatch errors", "run", runID, "err", err)
+				e.finalizeRun(runID, store.RunFailed)
+				return
+			}
+			select {
+			case <-time.After(500 * time.Millisecond):
+			case <-ctx.Done():
+			}
+			continue
 		}
+		errStreak = 0
 		if e.checkTerminal(runID) {
 			return
 		}
@@ -251,7 +275,7 @@ func (e *Engine) orchestrate(runID, workflowID uint) {
 			continue
 		}
 		select {
-		case <-wake:
+		case <-h.wake:
 		case <-ctx.Done():
 		}
 	}
@@ -281,12 +305,29 @@ func (e *Engine) promote(runID uint) bool {
 // signal wakes a run's driver loop; coalesced via the buffered channel.
 func (e *Engine) signal(runID uint) {
 	e.mu.Lock()
-	ch := e.notify[runID]
+	h := e.drivers[runID]
 	e.mu.Unlock()
-	if ch != nil {
+	if h != nil {
 		select {
-		case ch <- struct{}{}:
+		case h.wake <- struct{}{}:
 		default:
 		}
+	}
+}
+
+// waitForDriver blocks until the run's current orchestration exits (bounded
+// wait), so a retry never overlaps the driver it supersedes — two live
+// drivers on one run would race their registrations and double-dispatch.
+func (e *Engine) waitForDriver(runID uint) {
+	e.mu.Lock()
+	h := e.drivers[runID]
+	e.mu.Unlock()
+	if h == nil {
+		return
+	}
+	select {
+	case <-h.done:
+	case <-time.After(5 * time.Second):
+		slog.Warn("workflow: timed out waiting for the previous run driver to exit", "run", runID)
 	}
 }

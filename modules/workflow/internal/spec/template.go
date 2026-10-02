@@ -117,7 +117,7 @@ func resolveString(s string, env ResolveEnv) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		b.WriteString(fmt.Sprintf("%v", v))
+		fmt.Fprintf(&b, "%v", v)
 		last = m[1]
 	}
 	b.WriteString(s[last:])

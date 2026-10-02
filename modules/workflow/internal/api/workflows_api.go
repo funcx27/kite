@@ -334,6 +334,10 @@ func (h *Handler) DeleteWorkflow(c *gin.Context) {
 		h.fail(c, http.StatusConflict, nil, "workflow has running runs, cancel them first")
 		return
 	}
+	// Snapshot the definition before the delete: the revision rows cascade
+	// away with the workflow, and the audit entry must keep the content of
+	// what was deleted.
+	specSnapshot := h.currentSpecJSON(wf.ID, wf.CurrentRev)
 	if err := h.store.DB().Delete(wf).Error; err != nil {
 		h.fail(c, http.StatusInternalServerError, err, "")
 		return
@@ -341,7 +345,7 @@ func (h *Handler) DeleteWorkflow(c *gin.Context) {
 	h.recordAudit(c, store.HistoryEntry{
 		Cluster: c.GetString(clusterNameContextKey), ResourceType: authzResource, ResourceName: wf.Name,
 		Namespace: wf.Namespace, Operation: "delete",
-		YAML: h.currentSpecJSON(wf.ID, wf.CurrentRev),
+		YAML: specSnapshot,
 	})
 	c.JSON(http.StatusOK, gin.H{"message": "workflow deleted"})
 }

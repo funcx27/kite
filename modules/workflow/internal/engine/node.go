@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -49,7 +50,7 @@ func (e *Engine) execNode(parent context.Context, state *runState, node spec.Nod
 			// Per-node isolation: an executor panic fails the node instead
 			// of leaking the dispatch slot and wedging the run.
 			slog.Error("workflow: node executor panicked", "run", state.run.ID, "node", node.ID, "panic", r)
-			e.completeNode(row.ID, store.NodeFailed, nil, fmt.Errorf("node executor panicked: %v", r), "")
+			e.completeNode(row.ID, row.Attempt, store.NodeFailed, nil, fmt.Errorf("node executor panicked: %v", r), "")
 		}
 	}()
 
@@ -73,7 +74,7 @@ func (e *Engine) execNode(parent context.Context, state *runState, node spec.Nod
 	if err != nil {
 		// Template resolution failure = node failure with the reason
 		// spelled out (design §4).
-		e.completeNode(row.ID, store.NodeFailed, nil, err, "")
+		e.completeNode(row.ID, row.Attempt, store.NodeFailed, nil, err, "")
 		return
 	}
 	inputs, err := json.Marshal(rendered)
@@ -98,10 +99,17 @@ func (e *Engine) execNode(parent context.Context, state *runState, node spec.Nod
 		err = fmt.Errorf("unknown node type %q", node.Type)
 	}
 	if err != nil {
-		e.completeNode(row.ID, store.NodeFailed, outputs, err, logs.tail())
+		if errors.Is(ctx.Err(), context.Canceled) {
+			// Run cancellation propagated into the executor: the node settles
+			// as cancelled, not failed (design §6 state machine). A node-level
+			// timeout surfaces as DeadlineExceeded and stays a failure.
+			e.completeNode(row.ID, row.Attempt, store.NodeCancelled, outputs, nil, logs.tail())
+			return
+		}
+		e.completeNode(row.ID, row.Attempt, store.NodeFailed, outputs, err, logs.tail())
 		return
 	}
-	e.completeNode(row.ID, store.NodeSucceeded, outputs, nil, logs.tail())
+	e.completeNode(row.ID, row.Attempt, store.NodeSucceeded, outputs, nil, logs.tail())
 }
 
 // runBuild drives a build-image node (design §5.1).
@@ -238,10 +246,11 @@ func notifyPayload(template string) ([]byte, error) {
 	return b, nil
 }
 
-// completeNode writes a node's terminal state via a conditional update; a
-// cancelled/retried racing actor wins by moving the row out of running
-// first, discarding this write (design §6 幂等).
-func (e *Engine) completeNode(rowID uint, status string, outputs map[string]any, err error, logTail string) {
+// completeNode writes a node's terminal state via a conditional update,
+// guarded by the dispatch attempt: a cancelled/retried racing actor wins by
+// moving the row out of running first, and a stale executor goroutine from an
+// earlier attempt cannot overwrite the new one's row (design §6 幂等).
+func (e *Engine) completeNode(rowID uint, attempt int, status string, outputs map[string]any, err error, logTail string) {
 	updates := map[string]any{
 		"status":      status,
 		"finished_at": now(),
@@ -256,7 +265,7 @@ func (e *Engine) completeNode(rowID uint, status string, outputs map[string]any,
 		updates["error"] = store.Truncate(err.Error(), store.ErrorMaxBytes)
 	}
 	if uerr := e.db.Model(&store.NodeRun{}).
-		Where("id = ? AND status = ?", rowID, store.NodeRunning).
+		Where("id = ? AND status = ? AND attempt = ?", rowID, store.NodeRunning, attempt).
 		Updates(updates).Error; uerr != nil {
 		slog.Error("workflow: persist node completion", "node", rowID, "err", uerr)
 	}

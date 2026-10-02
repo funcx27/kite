@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"errors"
 	"time"
 
 	"gorm.io/gorm"
@@ -17,7 +18,7 @@ import (
 func (e *Engine) Cancel(runID uint) error {
 	var run store.WorkflowRun
 	if err := e.db.Select("id", "workflow_id", "status").First(&run, runID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ErrNotFound
 		}
 		return err
@@ -60,12 +61,15 @@ func (e *Engine) sweepNodes(runID uint, dag spec.DAGSpec) {
 
 // Retry resets a failed or cancelled run for re-execution (design §6 从失败
 // 节点重试): failed/interrupted/cancelled nodes and their skipped downstream
-// return to pending with Attempt+1; succeeded nodes are never replayed. The
-// run re-enters the queue and re-drives like a fresh trigger.
+// return to pending; succeeded nodes are never replayed. Attempt counters
+// increment at dispatch, so a never-executed skipped node starts its first
+// attempt at 1 like a fresh node. The run re-enters the queue and re-drives
+// like a fresh trigger — after the previous driver has fully exited, so the
+// two orchestrations never overlap.
 func (e *Engine) Retry(runID uint) error {
 	var run store.WorkflowRun
 	if err := e.db.Select("id", "workflow_id", "revision_rev", "status").First(&run, runID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ErrNotFound
 		}
 		return err
@@ -91,7 +95,6 @@ func (e *Engine) Retry(runID uint) error {
 				"outputs":     nil,
 				"started_at":  nil,
 				"finished_at": nil,
-				"attempt":     gorm.Expr("attempt + 1"),
 			}).Error; err != nil {
 			return err
 		}
@@ -107,11 +110,12 @@ func (e *Engine) Retry(runID uint) error {
 		return nil
 	})
 	if txErr != nil {
-		if txErr == ErrConflict {
+		if errors.Is(txErr, ErrConflict) {
 			return ErrConflict
 		}
 		return txErr
 	}
+	e.waitForDriver(runID)
 	e.Enqueue(runID, run.WorkflowID, rev.Triggers)
 	return nil
 }
@@ -124,7 +128,7 @@ func (e *Engine) Retry(runID uint) error {
 func (e *Engine) Decide(runID uint, nodeID string, approve bool, comment string, operatorID uint) error {
 	var row store.NodeRun
 	if err := e.db.Where("run_id = ? AND node_id = ?", runID, nodeID).First(&row).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ErrNotFound
 		}
 		return err
