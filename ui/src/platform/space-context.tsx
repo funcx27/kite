@@ -8,14 +8,30 @@ import { createResource, useResources } from '@/lib/api/core'
 
 const CURRENT_SPACE_STORAGE_KEY = 'current-space'
 
+export interface SpaceCreationFailure {
+  cluster: string
+  error: unknown
+}
+
+// Successful clusters are never rolled back when others fail.
+export interface SpaceCreationResult {
+  succeeded: string[]
+  failed: SpaceCreationFailure[]
+}
+
 interface SpaceContextType {
   // Names of the namespaces labeled kite.application/space=true.
   spaces: string[]
   // null means "all spaces".
   currentSpace: string | null
   setCurrentSpace: (space: string | null) => void
-  // Creates the namespace on the given cluster and labels it as a space.
-  createSpace: (name: string, cluster: string) => Promise<void>
+  // Creates the labeled namespace on every given cluster; never throws —
+  // per-cluster failures come back in the result so callers can report
+  // partial success.
+  createSpace: (
+    name: string,
+    clusters: string[]
+  ) => Promise<SpaceCreationResult>
   isLoading: boolean
   error: Error | null
 }
@@ -72,21 +88,38 @@ export function SpaceProvider({ children }: { children: React.ReactNode }) {
     setCurrentSpaceState(space)
   }
 
-  const createSpace = async (name: string, cluster: string) => {
-    await createResource(
-      'namespaces',
-      undefined,
-      {
-        apiVersion: 'v1',
-        kind: 'Namespace',
-        metadata: {
-          name,
-          labels: { [SPACE_LABEL]: 'true' },
-        },
-      },
-      { cluster }
+  const createSpace = async (
+    name: string,
+    clusterNames: string[]
+  ): Promise<SpaceCreationResult> => {
+    const results = await Promise.allSettled(
+      clusterNames.map((cluster) =>
+        createResource(
+          'namespaces',
+          undefined,
+          {
+            apiVersion: 'v1',
+            kind: 'Namespace',
+            metadata: {
+              name,
+              labels: { [SPACE_LABEL]: 'true' },
+            },
+          },
+          { cluster }
+        )
+      )
     )
+    const succeeded: string[] = []
+    const failed: SpaceCreationFailure[] = []
+    results.forEach((result, index) => {
+      if (result.status === 'fulfilled') {
+        succeeded.push(clusterNames[index])
+      } else {
+        failed.push({ cluster: clusterNames[index], error: result.reason })
+      }
+    })
     await queryClient.invalidateQueries({ queryKey: ['namespaces'] })
+    return { succeeded, failed }
   }
 
   const value: SpaceContextType = {

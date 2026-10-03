@@ -19,6 +19,10 @@ const (
 	LabelManagedBy = "app.kubernetes.io/managed-by"
 	LabelKiteName  = "kite.application/name"
 	LabelKiteSpace = "kite.application/space"
+	// AnnotationKiteManaged marks resources kite maintains outside the
+	// manifest sets (the per-config image pull secret): no identity label on
+	// purpose, so sync adoption and the anchor-based drift never see it.
+	AnnotationKiteManaged = "kite.application/managed"
 )
 
 // AsMap returns v as a JSON object tree node.

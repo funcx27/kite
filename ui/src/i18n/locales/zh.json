@@ -804,6 +804,9 @@
       "apikeys": "API 密钥"
     }
   },
+  "applicationSettings": {
+    "description": "管理应用模式的设置"
+  },
   "generalManagement": {
     "title": "通用设置",
     "description": "管理全局功能开关。",

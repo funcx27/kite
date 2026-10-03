@@ -2,6 +2,9 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,6 +37,10 @@ type deployRequest struct {
 	Spec        json.RawMessage `json:"spec,omitempty"`
 	Manifests   json.RawMessage `json:"manifests,omitempty"`
 	ExpectedRev *int            `json:"expectedRev,omitempty"`
+	// CredentialRef sets (empty string clears) the config's pull credential;
+	// nil leaves the stored value untouched. It persists with the publish and
+	// the upserted pull secret rides the same pipeline.
+	CredentialRef *string `json:"credentialRef,omitempty"`
 }
 
 type deployDocResult struct {
@@ -121,6 +128,24 @@ func (h *Handler) DeployConfig(c *gin.Context) {
 			h.fail(c, http.StatusBadRequest, err, "")
 			return
 		}
+	}
+	// Setting a pull credential consumes that credential's secret material, so
+	// the reference is gated on credentials:get (host-wide) before anything —
+	// neither the credential_ref write below nor the publish pipeline may run
+	// for a user the credential center's RBAC denies.
+	if !req.DryRun && req.CredentialRef != nil && *req.CredentialRef != "" &&
+		!id.authorize(credentialsResource, "get", "", "") {
+		h.fail(c, http.StatusForbidden, nil,
+			fmt.Sprintf("user does not have permission to use credential %q", *req.CredentialRef))
+		return
+	}
+	if !req.DryRun && req.CredentialRef != nil {
+		if err := h.store.DB().Model(&store.AppConfig{}).Where("id = ?", cfg.ID).
+			Update("credential_ref", *req.CredentialRef).Error; err != nil {
+			h.fail(c, http.StatusInternalServerError, err, "")
+			return
+		}
+		cfg.CredentialRef = *req.CredentialRef
 	}
 
 	resp, conflicts, err := h.runPublish(ctx, id, app, cfg, cli, manifests, req.DryRun)
@@ -291,6 +316,16 @@ func (h *Handler) runPublish(ctx context.Context, id identity, app *store.App, c
 		overridden := decodeScopedPaths(cfg.OverriddenPaths)
 		if conflicts := syncops.ConflictGate(manifests, anchor, liveForDiff, overridden); len(conflicts) > 0 {
 			return deployResponse{}, conflicts, nil
+		}
+	}
+
+	// The managed image pull secret rides every publish of a config with a
+	// credential: manual (DeployConfig), facade (DeployWithImage) and
+	// rollback all funnel here, so the namespace never publishes without it.
+	// After the gate: a conflicted publish keeps its no-writes guarantee.
+	if !dryRun && cfg.CredentialRef != "" {
+		if err := h.ensurePullSecret(ctx, id, cli, cfg); err != nil {
+			return deployResponse{}, nil, err
 		}
 	}
 
@@ -507,6 +542,130 @@ func (h *Handler) ensureNamespace(ctx context.Context, id identity, cli client.C
 	h.recordAudit(id, store.HistoryEntry{
 		Cluster: cluster, ResourceType: "namespaces", ResourceName: namespace, Operation: "create",
 	})
+	return nil
+}
+
+// pullSecretName derives the managed image pull secret's name from the
+// credential. Credential names are DNS-1123 labels of up to 63 chars, so
+// "kite-pull-"+name only fits the 63-char label limit for names up to 53
+// chars; longer refs are truncated to a fragment and suffixed with a short
+// SHA-256 of the full ref — deterministic across publishes (the update path
+// looks the secret up by name) and unique among refs sharing a prefix.
+func pullSecretName(credentialRef string) string {
+	const (
+		prefix    = "kite-pull-"
+		maxLabel  = 63
+		hashChars = 8 // hex-encoded SHA-256 fragment
+	)
+	if len(prefix)+len(credentialRef) <= maxLabel {
+		return prefix + credentialRef
+	}
+	fragment := strings.TrimRight(credentialRef[:maxLabel-len(prefix)-hashChars-1], "-")
+	sum := sha256.Sum256([]byte(credentialRef))
+	return prefix + fragment + "-" + hex.EncodeToString(sum[:hashChars/2])
+}
+
+const (
+	pullSecretType     = "kubernetes.io/dockerconfigjson"
+	pullSecretDataKey  = ".dockerconfigjson"
+	pullSecretResource = "secrets"
+)
+
+// ensurePullSecret upserts the config namespace's managed image pull secret
+// from the config credential's registry entries: .dockerconfigjson is built
+// as {"auths":{host:{"auth":base64(user:pass)}}}; git entries carry no pull
+// material and are ignored. The update path rewrites only type/data and the
+// managed annotation, keeping foreign fields of the live secret. Workloads
+// must reference the secret via their own imagePullSecrets — kite never
+// rewrites user manifests (form-rendered ones included).
+func (h *Handler) ensurePullSecret(ctx context.Context, id identity, cli client.Client, cfg *store.AppConfig) error {
+	// Resolving the config credential decrypts its registry entries — the
+	// publish consumes the credential, so the acting identity needs
+	// credentials:get (host-wide, design §9) before any material is touched.
+	// This is the shared gate for every publish funnel (manual deploy,
+	// facade, rollback); the facade judges the run's trigger user.
+	if !id.authorize(credentialsResource, "get", "", "") {
+		return fmt.Errorf("user does not have permission to use credential %q", cfg.CredentialRef)
+	}
+	auths, err := h.deps.PullSecretData(cfg.CredentialRef)
+	if err != nil {
+		return fmt.Errorf("resolve pull credential %q: %w", cfg.CredentialRef, err)
+	}
+	if len(auths) == 0 {
+		return fmt.Errorf("credential %q has no registry entries to build an image pull secret", cfg.CredentialRef)
+	}
+	authsJSON := map[string]interface{}{}
+	for host, auth := range auths {
+		authsJSON[host] = map[string]interface{}{
+			"auth": base64.StdEncoding.EncodeToString([]byte(auth.Username + ":" + auth.Password)),
+		}
+	}
+	payload, err := json.Marshal(map[string]interface{}{"auths": authsJSON})
+	if err != nil {
+		return fmt.Errorf("encode %s of pull secret: %w", pullSecretDataKey, err)
+	}
+	data := map[string]interface{}{
+		pullSecretDataKey: base64.StdEncoding.EncodeToString(payload),
+	}
+
+	name := pullSecretName(cfg.CredentialRef)
+	existing := syncops.BlankDoc(&unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "v1", "kind": "Secret",
+	}})
+	getErr := cli.Get(ctx, client.ObjectKey{Namespace: cfg.Namespace, Name: name}, existing)
+	switch {
+	case getErr == nil:
+	case apierrors.IsNotFound(getErr):
+		existing = nil
+	default:
+		return fmt.Errorf("get secret %s/%s: %w", cfg.Namespace, name, getErr)
+	}
+
+	verb, action := "create", "create"
+	if existing != nil {
+		verb, action = "update", "update"
+	}
+	if !id.authorize(pullSecretResource, verb, cfg.Cluster, cfg.Namespace) {
+		return fmt.Errorf("user does not have permission to %s %s in namespace %s on cluster %s",
+			verb, pullSecretResource, cfg.Namespace, cfg.Cluster)
+	}
+
+	secret := existing
+	if secret == nil {
+		secret = &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "Secret",
+			"metadata": map[string]interface{}{
+				"name":      name,
+				"namespace": cfg.Namespace,
+			},
+		}}
+	}
+	secret.Object["type"] = pullSecretType
+	secret.Object["data"] = data
+	// A stale stringData would win over data server-side; the managed
+	// secret's payload lives in data only.
+	delete(secret.Object, "stringData")
+	annotations := secret.GetAnnotations()
+	if annotations == nil {
+		annotations = map[string]string{}
+	}
+	annotations[store.AnnotationKiteManaged] = "true"
+	secret.SetAnnotations(annotations)
+
+	var applyErr error
+	if existing == nil {
+		applyErr = cli.Create(ctx, secret)
+	} else {
+		applyErr = cli.Update(ctx, secret)
+	}
+	h.recordOperation(id, store.HistoryEntry{
+		Cluster: cfg.Cluster, ResourceType: pullSecretResource, ResourceName: name,
+		Namespace: cfg.Namespace, Operation: action, YAML: redactedDoc(secret),
+	}, applyErr == nil, errString(applyErr))
+	if applyErr != nil {
+		return fmt.Errorf("%s secret %s/%s: %w", action, cfg.Namespace, name, applyErr)
+	}
 	return nil
 }
 

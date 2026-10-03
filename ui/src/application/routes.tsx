@@ -4,6 +4,7 @@ import type { RouteObject } from 'react-router-dom'
 import { ApplicationDetailPage } from './pages/application-detail-page'
 import { ApplicationListPage } from './pages/application-list-page'
 import { ApplicationPodPage } from './pages/application-pod-page'
+import { ApplicationSettingsPage } from './pages/application-settings-page'
 
 import './i18n'
 
@@ -39,6 +40,14 @@ export const applicationRoutes: RouteObject[] = [
     element: (
       <ApplicationModeRoute>
         <ApplicationPodPage />
+      </ApplicationModeRoute>
+    ),
+  },
+  {
+    path: 'application-settings',
+    element: (
+      <ApplicationModeRoute>
+        <ApplicationSettingsPage />
       </ApplicationModeRoute>
     ),
   },

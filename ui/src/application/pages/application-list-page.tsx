@@ -7,8 +7,11 @@ import {
 } from '@/application/api'
 import { ApplicationWizard } from '@/application/components/application-wizard'
 import { DeployDialog } from '@/application/components/deploy-dialog'
-import { SpacePicker } from '@/application/components/space-picker'
-import { ApplicationStatusChip } from '@/application/components/status-badge'
+import {
+  ClusterStatusDot,
+  StatusDotGlyph,
+} from '@/application/components/status-badge'
+import type { ApplicationDotState } from '@/application/lib'
 import type { Application } from '@/application/types'
 import { useSpaces } from '@/platform/space-context'
 import { ColumnDef } from '@tanstack/react-table'
@@ -187,7 +190,7 @@ export function ApplicationListPage() {
       cell: ({ row }) => {
         const configs = row.original.configs
         if (configs.length === 0) {
-          return <ApplicationStatusChip status="undeployed" />
+          return <ClusterStatusDot statusSummary="undeployed" />
         }
         return (
           <div className="flex flex-wrap gap-1.5">
@@ -195,9 +198,6 @@ export function ApplicationListPage() {
               <button
                 key={config.id}
                 type="button"
-                title={t('applications.list.filterByCluster', {
-                  cluster: config.cluster,
-                })}
                 onClick={() =>
                   setClusterFilters((prev) =>
                     prev.includes(config.cluster)
@@ -206,7 +206,10 @@ export function ApplicationListPage() {
                   )
                 }
               >
-                <ApplicationStatusChip status={config.statusSummary} />
+                <ClusterStatusDot
+                  cluster={config.cluster}
+                  statusSummary={config.statusSummary}
+                />
                 <span className="ml-1 font-mono text-xs text-muted-foreground">
                   {config.cluster}
                 </span>
@@ -238,11 +241,6 @@ export function ApplicationListPage() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
-          <SpacePicker
-            defaultCluster={
-              clusterFilters.length === 1 ? clusterFilters[0] : undefined
-            }
-          />
           <ClusterFilterPicker
             clusters={clusterNames}
             selected={clusterFilters}
@@ -304,22 +302,23 @@ export function ApplicationListPage() {
       />
 
       <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
-        <span className="flex items-center gap-1.5">
-          <span className="h-2 w-2 rounded-full bg-green-500" />
-          {t('applications.status.synced')}
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="h-2 w-2 rounded-full bg-amber-500" />
-          {t('applications.status.drift')} / {t('applications.status.conflict')}
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="h-2 w-2 rounded-full bg-red-500" />
-          {t('applications.status.error')}
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="h-2 w-2 rounded-full bg-zinc-400" />
-          {t('applications.status.undeployed')}
-        </span>
+        {(
+          [
+            ['synced', t('applications.status.synced')],
+            [
+              'attention',
+              `${t('applications.status.drift')} / ${t('applications.status.conflict')}`,
+            ],
+            ['error', t('applications.status.error')],
+            ['undeployed', t('applications.status.undeployed')],
+            ['clusterUnreachable', t('applications.status.clusterUnreachable')],
+          ] as [ApplicationDotState, string][]
+        ).map(([state, label]) => (
+          <span key={state} className="flex items-center gap-1.5">
+            <StatusDotGlyph state={state} />
+            {label}
+          </span>
+        ))}
         <span className="ml-auto">
           {t('applications.list.aggregationHint')}
         </span>

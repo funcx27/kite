@@ -1,5 +1,4 @@
 import type { ComponentType, ReactNode } from 'react'
-import { CredentialsManagement } from '@/workflow/components/credentials-management'
 import type { TFunction } from 'i18next'
 
 import { APIKeyManagement } from './apikey-management'
@@ -51,12 +50,6 @@ export const settingsSectionRegistry: SettingsSectionDefinition[] = [
     'settings.tabs.kcross',
     'kcross',
     KcrossManagement
-  ),
-  createSettingsSectionDefinition(
-    'credentials',
-    'settings.tabs.credentials',
-    'Credentials',
-    CredentialsManagement
   ),
   createSettingsSectionDefinition(
     'oauth',

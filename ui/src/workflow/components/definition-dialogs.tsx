@@ -35,6 +35,7 @@ interface DialogShellProps {
   onConfirm?: () => void
   confirmLabel?: string
   error?: string | null
+  contentClassName?: string
 }
 
 function DialogShell({
@@ -45,11 +46,12 @@ function DialogShell({
   onConfirm,
   confirmLabel,
   error,
+  contentClassName,
 }: DialogShellProps) {
   const { t } = useTranslation()
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className={contentClassName ?? 'max-w-2xl'}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
@@ -73,6 +75,10 @@ function DialogShell({
 // ── Params ──
 
 const PARAM_TYPES: ParamType[] = ['string', 'number', 'bool', 'enum']
+
+// One row per parameter: name | type | required | default | delete.
+const PARAM_ROW_GRID =
+  'grid grid-cols-[minmax(0,1fr)_120px_56px_minmax(0,1fr)_40px] items-center gap-2'
 
 export function ParamsDialog({
   open,
@@ -127,6 +133,7 @@ export function ParamsDialog({
       title={t('workflow.params.title')}
       onConfirm={confirm}
       error={error}
+      contentClassName="sm:max-w-4xl"
     >
       <p className="text-xs text-muted-foreground">
         {t('workflow.params.hint')}
@@ -136,37 +143,61 @@ export function ParamsDialog({
           {t('workflow.params.empty')}
         </p>
       )}
+      {draft.length > 0 && (
+        <div className={`${PARAM_ROW_GRID} px-1`}>
+          <Label className="text-xs">{t('workflow.params.name')}</Label>
+          <Label className="text-xs">{t('workflow.params.type')}</Label>
+          <Label className="text-xs">{t('workflow.params.required')}</Label>
+          <Label className="text-xs">{t('workflow.params.defaultValue')}</Label>
+          <span />
+        </div>
+      )}
       {draft.map((param, index) => (
         <div key={index} className="space-y-2 rounded-lg border p-3">
-          <div className="grid grid-cols-[1fr_120px_auto] items-end gap-2">
-            <div className="space-y-1">
-              <Label className="text-xs">{t('workflow.params.name')}</Label>
-              <Input
-                value={param.name}
-                onChange={(e) => patch(index, { name: e.target.value })}
-                className="font-mono"
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">{t('workflow.params.type')}</Label>
-              <Select
-                value={param.type}
-                onValueChange={(v) =>
-                  patch(index, { type: v as ParamType, options: undefined })
-                }
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {PARAM_TYPES.map((type) => (
-                    <SelectItem key={type} value={type}>
-                      {type}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+          <div className={PARAM_ROW_GRID}>
+            <Input
+              value={param.name}
+              onChange={(e) => patch(index, { name: e.target.value })}
+              className="font-mono"
+            />
+            <Select
+              value={param.type}
+              onValueChange={(v) =>
+                patch(index, { type: v as ParamType, options: undefined })
+              }
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PARAM_TYPES.map((type) => (
+                  <SelectItem key={type} value={type}>
+                    {type}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Checkbox
+              checked={param.required === true}
+              onCheckedChange={(checked) =>
+                patch(index, { required: checked === true })
+              }
+              aria-label={t('workflow.params.required')}
+              className="justify-self-center"
+            />
+            <Input
+              value={
+                param.default === undefined || param.default === null
+                  ? ''
+                  : String(param.default)
+              }
+              onChange={(e) =>
+                patch(index, {
+                  default: coerceDefault(e.target.value, param.type),
+                })
+              }
+              className="h-8 font-mono text-xs"
+            />
             <Button
               variant="ghost"
               size="icon"
@@ -177,35 +208,6 @@ export function ParamsDialog({
             >
               <IconTrash className="h-4 w-4" />
             </Button>
-          </div>
-          <div className="flex flex-wrap items-center gap-4">
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox
-                checked={param.required === true}
-                onCheckedChange={(checked) =>
-                  patch(index, { required: checked === true })
-                }
-              />
-              {t('workflow.params.required')}
-            </label>
-            <div className="flex flex-1 items-center gap-2">
-              <Label className="shrink-0 text-xs">
-                {t('workflow.params.defaultValue')}
-              </Label>
-              <Input
-                value={
-                  param.default === undefined || param.default === null
-                    ? ''
-                    : String(param.default)
-                }
-                onChange={(e) =>
-                  patch(index, {
-                    default: coerceDefault(e.target.value, param.type),
-                  })
-                }
-                className="h-8 font-mono text-xs"
-              />
-            </div>
           </div>
           {param.type === 'enum' && (
             <div className="space-y-1">

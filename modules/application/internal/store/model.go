@@ -38,6 +38,14 @@ const (
 // rows are pruned by a single DELETE after each insert.
 const MaxConfigRevisions = 50
 
+// RegistryAuth is one registry host's basic-auth pair, resolved from a
+// credential by Deps.PullSecretData. Secret material is in-memory only and
+// must never be logged or persisted outside the upserted pull secret.
+type RegistryAuth struct {
+	Username string
+	Password string
+}
+
 // App is a logical application: a grouping plus the draft spec produced by
 // the creation wizard. It is cluster-independent and unique by name.
 type App struct {
@@ -68,6 +76,12 @@ type AppConfig struct {
 	// (design §9); they arrive decrypted through GORM's Scanner.
 	Manifests   SecretJSON `json:"manifests" gorm:"type:text"`   // desired config, multi-doc
 	LastApplied SecretJSON `json:"lastApplied" gorm:"type:text"` // anchor read back after deploy/sync
+
+	// CredentialRef names the credential whose registry entries kite upserts
+	// into the namespace as a managed image pull secret before every publish;
+	// empty disables it. It never rides the manifests, so it stays outside
+	// the anchor and the drift set.
+	CredentialRef string `json:"credentialRef" gorm:"type:varchar(63);not null;default:''"`
 
 	StatusSummary   string     `json:"statusSummary" gorm:"type:varchar(20);not null;default:'';index"`
 	StatusCheckedAt *time.Time `json:"statusCheckedAt"`

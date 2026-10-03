@@ -23,19 +23,9 @@ import (
 // buildProviders instantiates providers in config order (provisioning
 // preference).
 func buildProviders(cfg *config.Config) ([]runtime.Provider, error) {
-	regTable, err := cfg.Runtimes["default"].RegistryTable()
+	regTable, err := effectiveRegTable(cfg)
 	if err != nil {
 		return nil, err
-	}
-	// In-cluster cache registries must be plain-http reachable from the
-	// buildkitd pods; declare them before the toml render below.
-	for _, pc := range cfg.Providers {
-		if pc.Type != "k8s" || pc.Cache == nil || !pc.Cache.Enabled {
-			continue
-		}
-		regTable = append(regTable, registry.Config{
-			Host: k8s.CacheRegistryHost(pc.Namespace), HTTP: true,
-		})
 	}
 	for name, rt := range cfg.Runtimes {
 		if rt.Rootless() && !strings.Contains(rt.Image(), "rootless") {
@@ -98,63 +88,98 @@ func buildProviders(cfg *config.Config) ([]runtime.Provider, error) {
 			}
 			out = append(out, dp)
 		case "k8s":
-			kcfg, err := k8s.NewRestConfig(pc.Kubeconfig)
-			if err != nil {
-				return nil, fmt.Errorf("k8s provider %s: %w", pc.Name, err)
-			}
-			cs, err := kubernetes.NewForConfig(kcfg)
+			p, err := buildK8sProvider(cfg, pc, regTable, hostAliases)
 			if err != nil {
 				return nil, err
 			}
-			readyTimeout, err := pc.ReadyTimeoutParsed()
-			if err != nil {
-				return nil, err
-			}
-			var cacheCfg *k8s.CacheRegistryConfig
-			if pc.Cache != nil && pc.Cache.Enabled {
-				cacheCfg = &k8s.CacheRegistryConfig{
-					Image:        pc.Cache.Image,
-					StorageClass: pc.Cache.StorageClass,
-					Size:         pc.Cache.Size,
-					GCSchedule:   pc.Cache.GCSchedule,
-				}
-			}
-			startupCost, err := pc.StartupCostParsed()
-			if err != nil {
-				return nil, err
-			}
-			// Effective pod shape = the declarative podTemplate under the
-			// cloud block's translation (e.g. ECI annotations) on top.
-			base := k8sPodTemplate(pc.PodTemplate)
-			if pc.ECI != nil {
-				base = k8s.Merge(base, k8sPodTemplate(pc.ECI.Template()))
-			}
-			if base != nil {
-				gen, err = extendGen(gen, base)
-				if err != nil {
-					return nil, err
-				}
-			}
-			out = append(out, k8s.New(k8s.Config{
-				Namespace:     pc.Namespace,
-				CacheRegistry: cacheCfg,
-				Clientset:     cs,
-				RestConfig:    kcfg,
-				PortForward:   pc.PortForward,
-				BasePod:       base,
-				StartupCost:   startupCost,
-				Privileged:    profile.Privileged(),
-				Rootless:      profile.Rootless(),
-				ConfigGen:     gen,
-				Total:         total, // Capacity() prefers the namespace ResourceQuota
-				Image:         profile.Image(),
-				Registries:    regTable,
-				HostAliases:   hostAliases,
-				ReadyTimeout:  readyTimeout,
-			}))
+			out = append(out, p)
 		}
 	}
 	return out, nil
+}
+
+// effectiveRegTable renders the shared registry table: insecure entries and
+// mirrors from the default runtime, plus every config k8s provider's
+// in-cluster cache registry (plain-http reachable from buildkitd pods).
+func effectiveRegTable(cfg *config.Config) (registry.Table, error) {
+	regTable, err := cfg.Runtimes["default"].RegistryTable()
+	if err != nil {
+		return nil, err
+	}
+	for _, pc := range cfg.Providers {
+		if pc.Type != "k8s" || pc.Cache == nil || !pc.Cache.Enabled {
+			continue
+		}
+		regTable = append(regTable, registry.Config{
+			Host: k8s.CacheRegistryHost(pc.Namespace), HTTP: true,
+		})
+	}
+	return regTable, nil
+}
+
+// buildK8sProvider constructs one k8s provider from its config entry; shared
+// by startup assembly and runtime registration (host-managed providers).
+func buildK8sProvider(cfg *config.Config, pc config.Provider, regTable registry.Table, hostAliases []corev1.HostAlias) (*k8s.Provider, error) {
+	profile := cfg.Profile(pc)
+	gen := profile.Gen(regTable)
+	total, err := pc.Total.Parse()
+	if err != nil {
+		return nil, err
+	}
+	kcfg, err := k8s.NewRestConfig(pc.Kubeconfig)
+	if err != nil {
+		return nil, fmt.Errorf("k8s provider %s: %w", pc.Name, err)
+	}
+	cs, err := kubernetes.NewForConfig(kcfg)
+	if err != nil {
+		return nil, err
+	}
+	readyTimeout, err := pc.ReadyTimeoutParsed()
+	if err != nil {
+		return nil, err
+	}
+	var cacheCfg *k8s.CacheRegistryConfig
+	if pc.Cache != nil && pc.Cache.Enabled {
+		cacheCfg = &k8s.CacheRegistryConfig{
+			Image:        pc.Cache.Image,
+			StorageClass: pc.Cache.StorageClass,
+			Size:         pc.Cache.Size,
+			GCSchedule:   pc.Cache.GCSchedule,
+		}
+	}
+	startupCost, err := pc.StartupCostParsed()
+	if err != nil {
+		return nil, err
+	}
+	// Effective pod shape = the declarative podTemplate under the
+	// cloud block's translation (e.g. ECI annotations) on top.
+	base := k8sPodTemplate(pc.PodTemplate)
+	if pc.ECI != nil {
+		base = k8s.Merge(base, k8sPodTemplate(pc.ECI.Template()))
+	}
+	if base != nil {
+		gen, err = extendGen(gen, base)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return k8s.New(k8s.Config{
+		Namespace:     pc.Namespace,
+		CacheRegistry: cacheCfg,
+		Clientset:     cs,
+		RestConfig:    kcfg,
+		PortForward:   pc.PortForward,
+		BasePod:       base,
+		StartupCost:   startupCost,
+		Privileged:    profile.Privileged(),
+		Rootless:      profile.Rootless(),
+		ConfigGen:     gen,
+		Total:         total, // Capacity() prefers the namespace ResourceQuota
+		Image:         profile.Image(),
+		Registries:    regTable,
+		HostAliases:   hostAliases,
+		ReadyTimeout:  readyTimeout,
+	}), nil
 }
 
 // k8sPodTemplate converts the config-layer template into the provider's

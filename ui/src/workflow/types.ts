@@ -52,6 +52,10 @@ export interface WorkflowListItem {
   namespace: string
   description: string
   currentRev: number
+  // Deploy-app targets aggregated from the current revision's spec (present
+  // only when the workflow has deploy-app nodes); used for list filtering.
+  apps?: string[]
+  clusters?: string[]
   createdAt: string
   updatedAt: string
 }
@@ -163,11 +167,18 @@ export type RunStreamEvent =
 
 // ── Credentials (shape summaries only; payloads are write-only) ──
 
+export interface RegistryAccountSummary {
+  host: string
+  username: string
+}
+
 export interface CredentialSummary {
   name: string
   description: string
   hasGit: boolean
+  gitUsername: string
   registryHosts: string[]
+  registryAccounts: RegistryAccountSummary[]
   createdAt: string
   updatedAt: string
 }
@@ -192,4 +203,42 @@ export interface CreateCredentialRequest {
   name: string
   description: string
   payload: CredentialPayload
+}
+
+// ── Build settings (namespace build-cluster defaults) ──
+
+export interface BuildSetting {
+  // '' = the global default row.
+  namespace: string
+  provider: string
+}
+
+export interface BuildSettingsResponse {
+  settings: BuildSetting[]
+  providers: string[]
+}
+
+// ── Managed build providers (settings-created k8s build providers) ──
+
+export interface BuildProvider {
+  name: string
+  cluster: string
+  namespace: string
+  cpu: number
+  memory: string
+}
+
+export interface BuildProvidersResponse {
+  providers: BuildProvider[]
+  // Read-only provider names from the buildfleet config file; they cannot be
+  // managed here and creation rejects their names.
+  configProviders: string[]
+}
+
+export interface CreateBuildProviderRequest {
+  name: string
+  cluster: string
+  namespace: string
+  cpu?: number
+  memory?: string
 }

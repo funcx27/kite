@@ -48,6 +48,11 @@ const (
 // Deps holds the assembled buildfleet runtime a host serves over REST.
 type Deps struct {
 	app *app.App
+	// cm validates managed build providers' target clusters.
+	cm *cluster.ClusterManager
+	// providerNames are the provider names of the loaded buildfleet config,
+	// served to the workflow module's build-settings API.
+	providerNames []string
 	// creds injects credentialRef references from the credential center;
 	// nil when the center is not wired and credential passthrough is off.
 	creds credentialsadapter.FleetCredentialInjector
@@ -55,9 +60,10 @@ type Deps struct {
 
 // New resolves the raw buildfleet config subtree (internal.BuildFleetConfig)
 // through the module's own config loader — preserving its env-expansion and
-// KnownFields validation — and assembles the runtime via app.Setup. creds
-// may be nil: requests without credentialRef stay anonymous either way.
-func New(ctx context.Context, cfgNode *yaml.Node, creds credentialsadapter.FleetCredentialInjector) (*Deps, error) {
+// KnownFields validation — and assembles the runtime via app.Setup. cm backs
+// the managed build provider API (cluster validation, kubeconfig export).
+// creds may be nil: requests without credentialRef stay anonymous either way.
+func New(ctx context.Context, cm *cluster.ClusterManager, cfgNode *yaml.Node, creds credentialsadapter.FleetCredentialInjector) (*Deps, error) {
 	data, err := yaml.Marshal(cfgNode)
 	if err != nil {
 		return nil, fmt.Errorf("marshal buildfleet config: %w", err)
@@ -72,7 +78,31 @@ func New(ctx context.Context, cfgNode *yaml.Node, creds credentialsadapter.Fleet
 	if err != nil {
 		return nil, fmt.Errorf("setup buildfleet: %w", err)
 	}
-	return &Deps{app: a, creds: creds}, nil
+	names := make([]string, 0, len(cfg.Providers))
+	for _, p := range cfg.Providers {
+		names = append(names, p.Name)
+	}
+	d := &Deps{app: a, cm: cm, providerNames: names, creds: creds}
+	d.restoreProviders(ctx)
+	return d, nil
+}
+
+// ProviderNames merges the config-file providers with the managed build
+// providers persisted in the database. It backs the workflow module's
+// build-settings API; on a database failure the config names are still
+// served.
+func (d *Deps) ProviderNames() []string {
+	names := append([]string(nil), d.providerNames...)
+	rows, err := model.ListBuildProviders()
+	if err != nil {
+		klog.Errorf("failed to list managed build providers: %v", err)
+	} else {
+		for _, row := range rows {
+			names = append(names, row.Name)
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 // Close drains the module's buildkitd instances; the host calls it when its
@@ -96,6 +126,7 @@ func (d *Deps) RegisterRoutes(api *gin.RouterGroup) {
 	api.POST("/builds", d.handleBuild)
 	api.GET("/status", d.handleStatus)
 	api.GET("/cachestat", d.handleCacheStat)
+	d.RegisterProviderRoutes(api)
 }
 
 // authorize writes the unified 403 body and returns false when the user may

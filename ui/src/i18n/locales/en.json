@@ -379,6 +379,8 @@
     "unsetGlobal": "Unset global sidebar",
     "unsetGlobalSuccess": "Global sidebar disabled successfully",
     "unsetGlobalError": "Failed to disable global sidebar",
+    "expand": "Expand",
+    "collapse": "Collapse",
     "updateAvailable": "A newer Kite version is available"
   },
   "nav": {
@@ -408,6 +410,7 @@
     "events": "Events",
     "crds": "CRDs",
     "kubectl": "Kubectl Terminal",
+    "settings": "Settings",
     "serviceaccounts": "Service Accounts",
     "roles": "Roles",
     "rolebindings": "Role Bindings",
@@ -792,6 +795,9 @@
       "rbac": "RBAC",
       "users": "User"
     }
+  },
+  "applicationSettings": {
+    "description": "Manage settings for application mode"
   },
   "generalManagement": {
     "title": "General",

@@ -15,6 +15,7 @@ import type {
   ApplicationDocDiff,
   ApplicationPendingChange,
 } from '@/application/types'
+import { useCredentials } from '@/workflow/api'
 import { useQueryClient } from '@tanstack/react-query'
 import * as yaml from 'js-yaml'
 import { useTranslation } from 'react-i18next'
@@ -83,6 +84,10 @@ const idleDryRun: DryRunState = {
   preview: [],
 }
 
+// Sentinel for "no pull credential" in the Select (radix Select cannot hold
+// an empty-string item value); sent to the backend as the empty string.
+const pullCredentialNone = '__none__'
+
 // The deploy dialog is the single entry for modify + publish (design §11):
 // quick image edit, pending wizard edits, a server-side dry-run preview with
 // expandable field-level detail, and the conflict state that only offers the
@@ -114,6 +119,7 @@ export function DeployDialog({
   const [creating, setCreating] = useState(false)
   const [image, setImage] = useState('')
   const [deploying, setDeploying] = useState(false)
+  const [pullCredential, setPullCredential] = useState(pullCredentialNone)
   const [conflicts, setConflicts] = useState<ApplicationConflict[] | null>(null)
   const [diffDoc, setDiffDoc] = useState<{
     kind: string
@@ -123,6 +129,9 @@ export function DeployDialog({
   // Tracks the last config-seeded image so the sync effect never clobbers a
   // user edit on a background refetch.
   const imageBaselineRef = useRef('')
+  // Same guard for the pull credential: seeded from the config only while the
+  // user has not picked one themselves.
+  const pullCredentialTouchedRef = useRef(false)
 
   // Reset per open / target change. The image baseline is the pending
   // wizard spec or the cluster config's image (never the retired birth
@@ -135,7 +144,9 @@ export function DeployDialog({
       setConflicts(null)
       setDiffDoc(null)
       setImage('')
+      setPullCredential(pullCredentialNone)
       setDryRun(idleDryRun)
+      pullCredentialTouchedRef.current = false
     }
   }, [open, cluster])
 
@@ -163,6 +174,15 @@ export function DeployDialog({
     configNeeded ? activeCluster : undefined
   )
   const config = createdConfig ?? fetchedConfig
+
+  // Seed the pull credential once the cluster config is known; a user pick
+  // wins over the stored value for the lifetime of the dialog.
+  const storedCredentialRef = config?.credentialRef ?? ''
+  useEffect(() => {
+    if (open && config && !pullCredentialTouchedRef.current) {
+      setPullCredential(storedCredentialRef || pullCredentialNone)
+    }
+  }, [open, config, storedCredentialRef])
 
   // The pending wizard spec (or the cluster config) is the image baseline;
   // sync while the user has not typed an edit of their own. `open` is a
@@ -197,6 +217,26 @@ export function DeployDialog({
     [clusters]
   )
 
+  const { data: credentials } = useCredentials()
+  const credentialNames = useMemo(
+    () => (credentials ?? []).map((credential) => credential.name),
+    [credentials]
+  )
+  // Echo a stored credential that no longer exists so the Select can display
+  // it instead of silently falling back to "none".
+  const credentialEcho =
+    storedCredentialRef && !credentialNames.includes(storedCredentialRef)
+      ? storedCredentialRef
+      : undefined
+
+  const changePullCredential = (value: string) => {
+    pullCredentialTouchedRef.current = true
+    setPullCredential(value)
+  }
+
+  const pullCredentialRef =
+    pullCredential === pullCredentialNone ? '' : pullCredential
+
   const drift = statusReport?.drift ?? []
   // Only the gate verdict (action=merge) or a real 409 blocks publishing;
   // drift alone stays non-empty in the merged state until the publish lands.
@@ -223,6 +263,7 @@ export function DeployDialog({
       const result = await deployApplicationConfig(app.name, activeCluster, {
         dryRun: true,
         image: imageChanged ? image.trim() : undefined,
+        credentialRef: pullCredentialRef,
         ...pendingRequest,
       })
       const creates = result.results
@@ -269,6 +310,7 @@ export function DeployDialog({
     t,
     image,
     imageChanged,
+    pullCredentialRef,
     pendingRequest,
   ])
 
@@ -324,6 +366,7 @@ export function DeployDialog({
     try {
       const result = await deployApplicationConfig(app.name, activeCluster, {
         image: imageChanged ? image.trim() : undefined,
+        credentialRef: pullCredentialRef,
         ...pendingRequest,
       })
       if (result.success) {
@@ -492,6 +535,41 @@ export function DeployDialog({
                 />
                 <p className="mt-1 text-xs text-muted-foreground">
                   {t('applications.deploy.imageHint')}
+                </p>
+              </div>
+
+              <div>
+                <Label>{t('applications.deploy.pullCredential')}</Label>
+                <Select
+                  value={pullCredential}
+                  onValueChange={changePullCredential}
+                  disabled={!activeCluster || creating}
+                >
+                  <SelectTrigger className="mt-1.5 w-64">
+                    <SelectValue
+                      placeholder={t(
+                        'applications.deploy.pullCredentialPlaceholder'
+                      )}
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={pullCredentialNone}>
+                      {t('applications.deploy.pullCredentialNone')}
+                    </SelectItem>
+                    {credentialNames.map((name) => (
+                      <SelectItem key={name} value={name}>
+                        {name}
+                      </SelectItem>
+                    ))}
+                    {credentialEcho && (
+                      <SelectItem value={credentialEcho}>
+                        {credentialEcho}
+                      </SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {t('applications.deploy.pullCredentialHint')}
                 </p>
               </div>
 

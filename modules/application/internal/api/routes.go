@@ -20,6 +20,12 @@ const clusterNameContextKey = "cluster-name"
 // against (design §7: 定义 CRUD 走 Authorize(c,"applications",verb,cluster,ns)).
 const authzResource = "applications"
 
+// credentialsResource is the credential center pseudo-resource: referencing a
+// credential consumes its secret material, which requires get on the center
+// (usage authorization, judged host-wide like the center's own CRUD) — the
+// same gate the workflow build node and the REST build path apply.
+const credentialsResource = "credentials"
+
 // Deps is the set of host capabilities the HTTP handlers depend on.
 type Deps interface {
 	// ResolveCluster returns the controller-runtime client of the named
@@ -41,6 +47,10 @@ type Deps interface {
 	UserNames(ids []uint) map[uint]string
 	// RecordHistory persists an audit entry for a state change.
 	RecordHistory(entry store.HistoryEntry)
+	// PullSecretData resolves a credentialRef to its registry auth table
+	// (host -> user/pass) for the managed image pull secret; git entries are
+	// ignored. An unknown credentialRef is an error.
+	PullSecretData(credentialRef string) (map[string]store.RegistryAuth, error)
 }
 
 // Handler serves the application module HTTP API.

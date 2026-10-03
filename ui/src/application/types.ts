@@ -112,6 +112,9 @@ export interface ApplicationConfig {
   manifests: ApplicationManifest[]
   spec?: ApplicationSpec
   lastApplied: ApplicationManifest[]
+  /** Pull credential whose registry entries kite upserts as a managed
+   *  image pull secret on every publish; empty disables it. */
+  credentialRef: string
   statusSummary: ApplicationStatusSummary
   statusCheckedAt: string | null
   overriddenPaths: string[]
@@ -149,6 +152,9 @@ export interface ApplicationDeployRequest {
   spec?: ApplicationSpec
   manifests?: ApplicationManifest[]
   expectedRev?: number
+  /** Sets (empty string clears) the config's pull credential; omitted leaves
+   *  the stored value untouched. */
+  credentialRef?: string
 }
 
 export interface ApplicationDeployDocResult {

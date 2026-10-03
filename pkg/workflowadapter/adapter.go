@@ -62,9 +62,11 @@ type Deps struct {
 
 // FleetBuilder is the in-process build capability BuildImage consumes:
 // one synchronous fleet build streaming builder events (consumer-side
-// interface; satisfied by *buildfleetadapter.Deps).
+// interface; satisfied by *buildfleetadapter.Deps). ProviderNames exposes
+// the configured provider names for the build-settings API.
 type FleetBuilder interface {
 	Build(ctx context.Context, req fleet.Request, progress func(builder.Event) bool) (*fleet.BuildResult, error)
+	ProviderNames() []string
 }
 
 var _ workflow.Deps = (*Deps)(nil)
@@ -209,6 +211,27 @@ func (d *Deps) BuildImage(ctx context.Context, req exec.BuildRequest, onLog func
 		return exec.BuildResult{}, fmt.Errorf("build image: %s", credentialsadapter.RedactCredentials(err.Error()))
 	}
 	return exec.BuildResult{ImageRef: res.ImageRef, Digest: res.Digest}, nil
+}
+
+// ProviderNames lists the buildfleet provider names for the workflow
+// module's build-settings API; empty when buildfleet is not configured.
+func (d *Deps) ProviderNames() []string {
+	if d.fleet == nil {
+		return nil
+	}
+	return d.fleet.ProviderNames()
+}
+
+// ProviderFor resolves the namespace's build-cluster default out of the
+// module's build_settings table (module helper, host DB handle); lookup
+// failures degrade to "not configured" and are logged.
+func (d *Deps) ProviderFor(namespace string) (string, bool) {
+	provider, ok, err := workflow.BuildProviderFor(model.DB, namespace)
+	if err != nil {
+		klog.Errorf("Failed to resolve build provider for namespace %q: %v", namespace, err)
+		return "", false
+	}
+	return provider, ok
 }
 
 // toFleetRequest maps exec.BuildRequest onto fleet.Request, resolving the

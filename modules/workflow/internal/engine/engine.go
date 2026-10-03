@@ -58,6 +58,11 @@ type Deps interface {
 	// RecordHistory persists an audit entry for an engine-performed state
 	// change.
 	RecordHistory(entry store.HistoryEntry)
+	// ProviderFor resolves the build-cluster provider of a namespace (exact
+	// match, then the global default row); ok=false when nothing is
+	// configured. Build nodes fall back to it when their props leave the
+	// provider empty.
+	ProviderFor(namespace string) (string, bool)
 }
 
 // Engine schedules runs. One host process owns one Engine.

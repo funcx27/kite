@@ -3,7 +3,9 @@
 import type {
   DAGSpec,
   NodeRunStatus,
+  ParamSpec,
   RunStatus,
+  WorkflowNode,
   WorkflowNodeType,
 } from './types'
 
@@ -192,4 +194,32 @@ export function autoLayout(spec: DAGSpec): Map<string, NodeLayout> {
 // them to the template-safe charset; uniqueness is enforced by the caller.
 export function isValidNodeNodeId(id: string): boolean {
   return /^[A-Za-z0-9_]+$/.test(id)
+}
+
+// Known output keys per node type, feeding the steps.* template refs
+// (mirrors the runners' outputs in engine/runner.go).
+export const outputKeysByType: Record<WorkflowNodeType, string[]> = {
+  'build-image': ['imageRef', 'digest', 'imageRefWithDigest'],
+  'deploy-app': ['revision', 'preview'],
+  approval: [],
+  notify: ['delivered'],
+}
+
+// Template refs offered on a node's fields (autocomplete options and drawer
+// chips): the workflow params, the run fields and the outputs of every other
+// node.
+export function buildTemplateRefs(
+  params: ParamSpec[],
+  nodes: WorkflowNode[],
+  currentNodeId?: string
+): string[] {
+  const refs = params.map((p) => `params.${p.name}`)
+  refs.push('run.number', 'run.status', 'run.url')
+  for (const other of nodes) {
+    if (other.id === currentNodeId) continue
+    for (const key of outputKeysByType[other.type] ?? []) {
+      refs.push(`steps.${other.id}.outputs.${key}`)
+    }
+  }
+  return refs
 }

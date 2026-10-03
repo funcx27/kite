@@ -147,3 +147,18 @@ type NodeRun struct {
 func (NodeRun) TableName() string {
 	return "node_runs"
 }
+
+// BuildSetting is the build-cluster default of one namespace: build nodes in
+// that namespace resolve their provider to this row when their props leave
+// it empty (design §5.1). The empty Namespace is the global default row.
+type BuildSetting struct {
+	Model
+	// Namespace is the owning space; the empty string is the global default
+	// row — exactly one such row, enforced by the unique index.
+	Namespace string `json:"namespace" gorm:"type:varchar(255);not null;uniqueIndex"`
+	Provider  string `json:"provider" gorm:"type:varchar(63);not null;default:''"`
+}
+
+func (BuildSetting) TableName() string {
+	return "build_settings"
+}

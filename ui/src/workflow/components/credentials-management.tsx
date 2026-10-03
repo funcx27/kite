@@ -1,6 +1,7 @@
 // Credentials management (workflow-design §9, minimal M4 UI): a settings
 // section listing stored credentials as shape summaries (name / description /
-// git flag / registry hosts) with create + delete. Payloads are write-only —
+// git flag / registry hosts / non-secret accounts) with create + delete.
+// Payloads are write-only —
 // nothing is ever echoed back; "edit" replaces description + payload through
 // the module's atomic PUT, so all secret material must be re-entered.
 import '@/workflow/i18n'
@@ -222,6 +223,30 @@ export function CredentialsManagement() {
                     '—'}
                 </div>
               ),
+            },
+            {
+              id: 'accounts',
+              header: t('workflow.credentials.accounts'),
+              cell: ({ row }) => {
+                const accounts = [
+                  ...(row.original.hasGit ? [row.original.gitUsername] : []),
+                  ...row.original.registryAccounts.map(
+                    (a) => `${a.host}:${a.username}`
+                  ),
+                ]
+                if (accounts.length === 0) {
+                  return <span className="text-muted-foreground">—</span>
+                }
+                return (
+                  <div className="flex flex-wrap gap-1.5">
+                    {accounts.map((account, i) => (
+                      <Badge key={i} variant="outline" className="font-mono">
+                        {account}
+                      </Badge>
+                    ))}
+                  </div>
+                )
+              },
             },
             {
               accessorKey: 'updatedAt',

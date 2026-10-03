@@ -17,6 +17,7 @@ import type {
 import { useSpaces } from '@/platform/space-context'
 import { useQueryClient } from '@tanstack/react-query'
 import * as yaml from 'js-yaml'
+import { Plus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -47,6 +48,7 @@ import { SimpleYamlEditor } from '@/components/simple-yaml-editor'
 import { ConfigFilesEditor } from './config-files-editor'
 import { PortsEditor } from './ports-editor'
 import { ResourceEditor } from './resource-editor'
+import { CreateSpaceDialog } from './space-picker'
 
 const STEP_COUNT = 6
 const dns1123LabelPattern = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
@@ -59,8 +61,6 @@ interface ApplicationWizardProps {
   mode: ApplicationWizardMode
   app?: Application
   cluster?: string
-  /** Current space used when creating (create mode) */
-  namespace?: string
   /** Called after the app definition was saved (create/draft) */
   onSaved?: (app: Application) => void
   /** cluster mode: hands the pending config changes to the deploy dialog;
@@ -152,17 +152,19 @@ export function ApplicationWizard({
   mode,
   app,
   cluster,
-  namespace,
   onSaved,
   onGoPublish,
 }: ApplicationWizardProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
-  const { currentSpace } = useSpaces()
-  const effectiveNamespace =
-    mode === 'create'
-      ? (namespace ?? currentSpace ?? 'default')
-      : (app?.namespace ?? 'default')
+  const { spaces, currentSpace, isLoading: spacesLoading } = useSpaces()
+  // Create mode targets a space picked from the existing list — creation is
+  // blocked outright when no space exists (a space is a labeled namespace,
+  // there is no 'default' fallback).
+  const [space, setSpace] = useState('')
+  const [createSpaceOpen, setCreateSpaceOpen] = useState(false)
+  const effectiveNamespace = mode === 'create' ? space : (app?.namespace ?? '')
+  const noSpaces = mode === 'create' && !spacesLoading && spaces.length === 0
 
   // Cluster mode pulls the config itself: form prefill from the extracted
   // spec, YAML mode from the manifests, saves under the latestRev lock.
@@ -193,6 +195,7 @@ export function ApplicationWizard({
     setYamlContent('')
     setPreviewYaml('')
     setError('')
+    if (mode === 'create') setSpace(currentSpace ?? '')
     setState(buildState(mode, app, config))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, mode, app?.name, config?.latestRev, cluster])
@@ -209,7 +212,7 @@ export function ApplicationWizard({
     (!dns1123LabelPattern.test(state.name) || state.name.length > 63)
 
   const loadPreview = async () => {
-    if (nameInvalid) {
+    if (nameInvalid || (mode === 'create' && !effectiveNamespace)) {
       setPreviewYaml('')
       setPreviewLoading(false)
       return
@@ -255,6 +258,9 @@ export function ApplicationWizard({
 
   const validate = (): string => {
     if (mode === 'create') {
+      if (!effectiveNamespace) {
+        return t('applications.wizard.spaceRequired')
+      }
       if (!dns1123LabelPattern.test(state.name) || state.name.length > 63) {
         return t('applications.wizard.invalidName')
       }
@@ -278,6 +284,9 @@ export function ApplicationWizard({
   // optional by design — design §9/§8).
   const stepError = (() => {
     if (step === 1) {
+      if (mode === 'create' && !effectiveNamespace) {
+        return t('applications.wizard.spaceRequired')
+      }
       if (nameInvalid) return t('applications.wizard.invalidName')
       if (!state.image.trim()) return t('applications.wizard.imageRequired')
     }
@@ -396,45 +405,65 @@ export function ApplicationWizard({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex items-center gap-2 overflow-x-auto border-b px-6 py-3 text-xs">
-          {stepLabels.map((label, index) => {
-            const number = index + 1
-            return (
-              <div key={label} className="flex items-center gap-2">
-                {index > 0 && <span className="h-px w-5 bg-border" />}
-                <button
-                  type="button"
-                  className="flex items-center gap-2"
-                  onClick={() => setStep(number)}
-                >
-                  <span
-                    className={
-                      number === step
-                        ? 'flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 border-primary bg-primary text-[10px] font-semibold text-primary-foreground'
-                        : number < step
-                          ? 'flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 border-green-500 bg-green-50 text-[10px] font-semibold text-green-600 dark:bg-green-950'
-                          : 'flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 border-border bg-background text-[10px] font-semibold text-muted-foreground'
-                    }
+        {!noSpaces && (
+          <div className="flex items-center gap-2 overflow-x-auto border-b px-6 py-3 text-xs">
+            {stepLabels.map((label, index) => {
+              const number = index + 1
+              return (
+                <div key={label} className="flex items-center gap-2">
+                  {index > 0 && <span className="h-px w-5 bg-border" />}
+                  <button
+                    type="button"
+                    className="flex items-center gap-2"
+                    onClick={() => setStep(number)}
                   >
-                    {number}
-                  </span>
-                  <span
-                    className={
-                      number === step
-                        ? 'whitespace-nowrap font-medium text-foreground'
-                        : 'whitespace-nowrap text-muted-foreground'
-                    }
-                  >
-                    {label}
-                  </span>
-                </button>
-              </div>
-            )
-          })}
-        </div>
+                    <span
+                      className={
+                        number === step
+                          ? 'flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 border-primary bg-primary text-[10px] font-semibold text-primary-foreground'
+                          : number < step
+                            ? 'flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 border-green-500 bg-green-50 text-[10px] font-semibold text-green-600 dark:bg-green-950'
+                            : 'flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 border-border bg-background text-[10px] font-semibold text-muted-foreground'
+                      }
+                    >
+                      {number}
+                    </span>
+                    <span
+                      className={
+                        number === step
+                          ? 'whitespace-nowrap font-medium text-foreground'
+                          : 'whitespace-nowrap text-muted-foreground'
+                      }
+                    >
+                      {label}
+                    </span>
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        )}
 
         <div className="min-h-80 flex-1 overflow-y-auto px-6 py-4">
-          {mode === 'cluster' && !config ? (
+          {noSpaces ? (
+            <div className="flex flex-col items-center justify-center gap-2 py-16 text-center">
+              <div className="text-sm font-medium">
+                {t('applications.wizard.noSpacesTitle')}
+              </div>
+              <p className="max-w-md text-xs text-muted-foreground">
+                {t('applications.wizard.noSpacesHint')}
+              </p>
+              <Button
+                type="button"
+                size="sm"
+                className="mt-2"
+                onClick={() => setCreateSpaceOpen(true)}
+              >
+                <Plus className="mr-1 h-3.5 w-3.5" />
+                {t('sidebar.spaces.create')}
+              </Button>
+            </div>
+          ) : mode === 'cluster' && !config ? (
             <div className="py-16 text-center text-sm text-muted-foreground">
               {t('common.messages.loading')}
             </div>
@@ -446,9 +475,26 @@ export function ApplicationWizard({
                     <Label>{t('applications.wizard.appName')}</Label>
                     {mode === 'create' ? (
                       <div className="flex">
-                        <span className="flex h-9 items-center whitespace-nowrap rounded-l-md border border-r-0 bg-muted px-3 font-mono text-sm text-muted-foreground">
-                          {effectiveNamespace}
-                        </span>
+                        <Select value={space} onValueChange={setSpace}>
+                          <SelectTrigger className="w-44 shrink-0 rounded-r-none border-r-0 font-mono">
+                            <SelectValue
+                              placeholder={t(
+                                'applications.wizard.spacePlaceholder'
+                              )}
+                            />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {spaces.map((candidate) => (
+                              <SelectItem
+                                key={candidate}
+                                value={candidate}
+                                className="font-mono"
+                              >
+                                {candidate}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                         <span className="flex h-9 items-center border-y bg-muted px-1 text-sm text-muted-foreground">
                           /
                         </span>
@@ -727,42 +773,48 @@ export function ApplicationWizard({
               <p className="truncate text-xs text-destructive">{stepError}</p>
             )}
           </div>
-          <div className="flex gap-2">
-            {step > 1 && (
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setStep(step - 1)}
-              >
-                {t('applications.wizard.previous')}
-              </Button>
-            )}
-            {step < STEP_COUNT && (
-              <Button
-                type="button"
-                disabled={!!stepError}
-                onClick={() => setStep(step + 1)}
-              >
-                {t('applications.wizard.next')}
-              </Button>
-            )}
-            {step === STEP_COUNT && mode === 'cluster' && (
-              <Button type="button" onClick={goPublish}>
-                {t('applications.wizard.goPublish')}
-              </Button>
-            )}
-            {step === STEP_COUNT && mode !== 'cluster' && (
-              <Button
-                type="button"
-                disabled={saving}
-                onClick={() => void handleFinish()}
-              >
-                {finishLabel}
-              </Button>
-            )}
-          </div>
+          {!noSpaces && (
+            <div className="flex gap-2">
+              {step > 1 && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setStep(step - 1)}
+                >
+                  {t('applications.wizard.previous')}
+                </Button>
+              )}
+              {step < STEP_COUNT && (
+                <Button
+                  type="button"
+                  disabled={!!stepError}
+                  onClick={() => setStep(step + 1)}
+                >
+                  {t('applications.wizard.next')}
+                </Button>
+              )}
+              {step === STEP_COUNT && mode === 'cluster' && (
+                <Button type="button" onClick={goPublish}>
+                  {t('applications.wizard.goPublish')}
+                </Button>
+              )}
+              {step === STEP_COUNT && mode !== 'cluster' && (
+                <Button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => void handleFinish()}
+                >
+                  {finishLabel}
+                </Button>
+              )}
+            </div>
+          )}
         </DialogFooter>
       </DialogContent>
+      <CreateSpaceDialog
+        open={createSpaceOpen}
+        onOpenChange={setCreateSpaceOpen}
+      />
     </Dialog>
   )
 }

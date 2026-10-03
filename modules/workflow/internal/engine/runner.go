@@ -23,6 +23,9 @@ type NodeRunner interface {
 type buildDeps interface {
 	AuthorizeUser(userID uint, resource, verb, cluster, namespace string) bool
 	BuildImage(ctx context.Context, req exec.BuildRequest, onLog func(string)) (exec.BuildResult, error)
+	// ProviderFor resolves the namespace's build-cluster default; ok=false
+	// when nothing is configured.
+	ProviderFor(namespace string) (string, bool)
 }
 
 // buildRunner drives a build-image node (design §5.1).
@@ -73,6 +76,15 @@ func (r buildRunner) Run(ctx context.Context, rendered spec.Props, run store.Wor
 	if dockerfile == "" && p.DockerfileContent == "" {
 		dockerfile = "Dockerfile"
 	}
+	// The node-level provider keeps priority; an empty one falls back to the
+	// workflow namespace's build-cluster default (exact match, then the
+	// global default row).
+	provider := p.Provider
+	if provider == "" && run.Workflow != nil {
+		if def, ok := r.deps.ProviderFor(run.Workflow.Namespace); ok {
+			provider = def
+		}
+	}
 	res, err := r.deps.BuildImage(ctx, exec.BuildRequest{
 		Git:               source,
 		HTTP:              httpSource,
@@ -82,7 +94,7 @@ func (r buildRunner) Run(ctx context.Context, rendered spec.Props, run store.Wor
 		Platforms:         p.Platforms,
 		OutputRef:         p.OutputRef,
 		CredentialRef:     p.CredentialRef,
-		Provider:          p.Provider,
+		Provider:          provider,
 	}, onLog)
 	if err != nil {
 		return nil, err

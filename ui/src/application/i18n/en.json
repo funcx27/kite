@@ -21,13 +21,16 @@
       "empty": "No matching spaces",
       "create": "New Space",
       "createTitle": "Create Space",
-      "createDescription": "Creates a namespace labeled kite.application/space on the selected cluster, listed here as a space. Publishing an app to another cluster creates the same-named space there on demand.",
-      "targetCluster": "Target cluster",
-      "clusterRequired": "Select a target cluster.",
+      "createDescription": "Creates a namespace labeled kite.application/space on every selected cluster, listed here as spaces. Publishing an app to another cluster creates the same-named space there on demand.",
+      "targetClusters": "Target clusters (multi-select)",
+      "noHealthyCluster": "No healthy cluster available",
+      "clusterRequired": "Select at least one target cluster.",
       "namePlaceholder": "Space name (e.g. my-team)",
       "invalidName": "Name must be a lowercase DNS label: a-z, 0-9 and \"-\", at most 63 characters.",
       "nameExists": "A space with this name already exists.",
-      "createSuccess": "Space {{name}} created on {{cluster}}"
+      "createSuccess": "Space {{name}} created on {{clusters}}",
+      "createPartial": "Space {{name}} created on {{succeeded}}; failed on {{failed}} (succeeded clusters are kept)",
+      "createFailed": "Failed to create space {{name}}: {{failed}}"
     }
   },
   "applications": {
@@ -37,7 +40,12 @@
       "conflict": "Conflict",
       "merged": "Merged · pending publish",
       "undeployed": "Undeployed",
-      "error": "Error"
+      "error": "Error",
+      "clusterOk": "Cluster healthy",
+      "clusterError": "Cluster error: {{error}}",
+      "clusterMissing": "Cluster not found",
+      "clusterUnreachable": "Cluster unreachable",
+      "configStatus": "Config status: {{status}}"
     },
     "list": {
       "name": "Name",
@@ -56,7 +64,6 @@
       "nClusters": "{{count}} clusters",
       "clearFilter": "Clear cluster filter",
       "allClusters": "All Clusters",
-      "filterByCluster": "Filter by {{cluster}}",
       "lastDeployed": "Last Published",
       "refreshStatus": "Refresh Status",
       "refreshStatusHint": "Re-run the drift check for every config on this page (results are persisted for the list aggregation)",
@@ -134,7 +141,11 @@
       "podFiles": "Files",
       "podNotFound": "Pod not found or reclaimed — it may have been rescheduled.",
       "podForceDeleteConfirm": "Confirm force delete",
-      "switchPod": "Switch pod"
+      "switchPod": "Switch pod",
+      "relatedWorkflows": "Related Workflows",
+      "relatedWorkflowsEmpty": "No workflow deploys this app yet. Create one to build and deploy it.",
+      "createWorkflow": "Create Workflow",
+      "workflowRuns": "Runs"
     },
     "deploy": {
       "title": "Publish {{namespace}} / {{name}} to {{cluster}}?",
@@ -145,6 +156,10 @@
       "configCreated": "Cluster config for {{cluster}} created",
       "image": "Image",
       "imageHint": "Changing the image publishes it: the change is saved to the DB config first, then pushed with this publish",
+      "pullCredential": "Pull credential",
+      "pullCredentialPlaceholder": "Pick a credential...",
+      "pullCredentialNone": "None",
+      "pullCredentialHint": "On every publish, kite upserts a managed dockerconfigjson secret (kite-pull-<credential>) in the target namespace from the credential's registry entries. Reference it via your workloads' imagePullSecrets — kite never rewrites your manifests.",
       "otherConfig": "Other Config",
       "summaryReplicas": "replicas {{count}}",
       "summaryEnv": "{{count}} env vars",
@@ -263,7 +278,11 @@
       "stepTargetCluster": "Target Cluster",
       "stepPreview": "Preview & Advanced",
       "appName": "Application name (space / name)",
-      "appNameHint": "The space comes from the sidebar's current space and is read-only; the name takes lowercase letters/digits/dashes and cannot change after creation.",
+      "appNameHint": "The space is picked from existing spaces and defaults to the sidebar's current space; the name takes lowercase letters/digits/dashes and cannot change after creation.",
+      "spacePlaceholder": "Select space",
+      "spaceRequired": "Select a space first — applications are always created inside a space.",
+      "noSpacesTitle": "No space available",
+      "noSpacesHint": "A space is a cluster namespace labeled kite.application/space=true. Create a space first, then come back to create the application.",
       "description": "Description",
       "workloadType": "Workload Type",
       "workloadTypeLocked": "The workload type of a deployed config is locked: offline the app first, then change the type and republish.",

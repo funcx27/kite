@@ -18,15 +18,24 @@ var namePattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 // maxNameLength bounds the name column width.
 const maxNameLength = 63
 
-// summary is the API view of a credential: a shape summary only. The
-// payload is write-only — its secret material never leaves the process.
+// registryAccount is one registry entry's non-secret account view.
+type registryAccount struct {
+	Host     string `json:"host"`
+	Username string `json:"username"`
+}
+
+// summary is the API view of a credential: a shape summary plus non-secret
+// account names. The payload is write-only — its secret material (every
+// password) never leaves the process.
 type summary struct {
-	Name          string    `json:"name"`
-	Description   string    `json:"description"`
-	HasGit        bool      `json:"hasGit"`
-	RegistryHosts []string  `json:"registryHosts"`
-	CreatedAt     time.Time `json:"createdAt"`
-	UpdatedAt     time.Time `json:"updatedAt"`
+	Name             string            `json:"name"`
+	Description      string            `json:"description"`
+	HasGit           bool              `json:"hasGit"`
+	GitUsername      string            `json:"gitUsername"`
+	RegistryHosts    []string          `json:"registryHosts"`
+	RegistryAccounts []registryAccount `json:"registryAccounts"`
+	CreatedAt        time.Time         `json:"createdAt"`
+	UpdatedAt        time.Time         `json:"updatedAt"`
 }
 
 type createRequest struct {
@@ -40,14 +49,16 @@ type updateRequest struct {
 	Payload     *store.Payload `json:"payload"`
 }
 
-// summarize decrypts a row's payload into its shape summary.
+// summarize turns a row's payload — already decrypted in memory by the
+// store's scan — into its shape summary.
 func summarize(row *store.Credential) (summary, error) {
 	out := summary{
-		Name:          row.Name,
-		Description:   row.Description,
-		RegistryHosts: []string{},
-		CreatedAt:     row.CreatedAt,
-		UpdatedAt:     row.UpdatedAt,
+		Name:             row.Name,
+		Description:      row.Description,
+		RegistryHosts:    []string{},
+		RegistryAccounts: []registryAccount{},
+		CreatedAt:        row.CreatedAt,
+		UpdatedAt:        row.UpdatedAt,
 	}
 	var p store.Payload
 	if err := row.Payload.Unmarshal(&p); err != nil {
@@ -55,9 +66,12 @@ func summarize(row *store.Credential) (summary, error) {
 	}
 	if p.Git != nil {
 		out.HasGit = true
+		out.GitUsername = p.Git.Username
 	}
 	for _, rc := range p.Registry {
 		out.RegistryHosts = append(out.RegistryHosts, rc.Host)
+		out.RegistryAccounts = append(out.RegistryAccounts,
+			registryAccount{Host: rc.Host, Username: rc.Username})
 	}
 	return out, nil
 }
@@ -144,11 +158,12 @@ func (h *Handler) Create(c *gin.Context) {
 		h.fail(c, http.StatusInternalServerError, err, "")
 		return
 	}
-	c.JSON(http.StatusCreated, summary{
-		Name: row.Name, Description: row.Description,
-		HasGit: req.Payload.Git != nil, RegistryHosts: registryHosts(req.Payload),
-		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
-	})
+	s, err := summarize(&row)
+	if err != nil {
+		h.fail(c, http.StatusInternalServerError, err, "")
+		return
+	}
+	c.JSON(http.StatusCreated, s)
 }
 
 // Update replaces the description and payload of an existing credential.
@@ -236,12 +251,4 @@ func validatePayload(p *store.Payload) error {
 		seen[rc.Host] = true
 	}
 	return nil
-}
-
-func registryHosts(p *store.Payload) []string {
-	hosts := make([]string, 0, len(p.Registry))
-	for _, rc := range p.Registry {
-		hosts = append(hosts, rc.Host)
-	}
-	return hosts
 }

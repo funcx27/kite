@@ -1,6 +1,6 @@
 import './App.css'
 
-import { ReactNode } from 'react'
+import { CSSProperties, ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Outlet, useSearchParams } from 'react-router-dom'
 
@@ -20,6 +20,7 @@ import { AIChatProvider } from './contexts/ai-chat-context'
 import { ClusterProvider } from './contexts/cluster-context'
 import { TerminalProvider, useTerminal } from './contexts/terminal-context'
 import { useCluster } from './hooks/use-cluster'
+import { ApplicationHeader } from './platform/application-header'
 import { ApplicationSidebar } from './platform/application-sidebar'
 import { PlatformProviders } from './platform/providers'
 import { useWorkMode } from './platform/work-mode-context'
@@ -65,14 +66,22 @@ function AppContent() {
 
   return (
     <>
-      <SidebarProvider>
+      {/* Application mode uses a narrower sidebar; the override must sit on
+          the provider because the gap and container both read --sidebar-width. */}
+      <SidebarProvider
+        style={
+          isApplicationMode
+            ? ({ '--sidebar-width': '12rem' } as CSSProperties)
+            : undefined
+        }
+      >
         {isApplicationMode ? (
           <ApplicationSidebar variant="inset" />
         ) : (
           <AppSidebar variant="inset" />
         )}
         <SidebarInset className="h-dvh overflow-y-auto overscroll-none scrollbar-hide">
-          <SiteHeader />
+          {isApplicationMode ? <ApplicationHeader /> : <SiteHeader />}
           <div className="@container/main flex min-h-0 flex-1 flex-col">
             <div className="flex min-h-0 flex-1 flex-col gap-4 py-4 md:gap-6">
               <div className="flex min-h-0 flex-1 flex-col px-4 lg:px-6">
@@ -84,7 +93,7 @@ function AppContent() {
           </div>
         </SidebarInset>
       </SidebarProvider>
-      {isOpen ? (
+      {!isApplicationMode && isOpen ? (
         <GlobalSearch open={isOpen} onOpenChange={closeSearch} />
       ) : null}
       {isTerminalOpen ? (

@@ -21,13 +21,16 @@
       "empty": "无匹配空间",
       "create": "新建空间",
       "createTitle": "新建空间",
-      "createDescription": "将在所选集群上创建命名空间并打 kite.application/space 标记，作为空间显示在此处。向其他集群发布应用时，会在该集群按需自动创建同名空间。",
-      "targetCluster": "目标集群",
-      "clusterRequired": "请选择目标集群。",
+      "createDescription": "将在每个所选集群上创建命名空间并打 kite.application/space 标记，作为空间显示在此处。向其他集群发布应用时，会在该集群按需自动创建同名空间。",
+      "targetClusters": "目标集群（可多选）",
+      "noHealthyCluster": "暂无健康集群可选",
+      "clusterRequired": "请至少选择一个目标集群。",
       "namePlaceholder": "空间名称（如 my-team）",
       "invalidName": "名称需为小写 DNS 标签：小写字母、数字和中划线，最长 63 个字符。",
       "nameExists": "已存在同名空间。",
-      "createSuccess": "已在集群 {{cluster}} 创建空间 {{name}}"
+      "createSuccess": "已在集群 {{clusters}} 创建空间 {{name}}",
+      "createPartial": "已在 {{succeeded}} 创建空间 {{name}}；以下集群创建失败：{{failed}}（已成功的集群保留，不回滚）",
+      "createFailed": "创建空间 {{name}} 失败：{{failed}}"
     }
   },
   "applications": {
@@ -37,7 +40,12 @@
       "conflict": "冲突",
       "merged": "已合并 · 待发布",
       "undeployed": "未部署",
-      "error": "异常"
+      "error": "异常",
+      "clusterOk": "集群正常",
+      "clusterError": "集群异常：{{error}}",
+      "clusterMissing": "集群不存在",
+      "clusterUnreachable": "集群失联",
+      "configStatus": "配置状态：{{status}}"
     },
     "list": {
       "name": "名称",
@@ -56,7 +64,6 @@
       "nClusters": "{{count}} 个集群",
       "clearFilter": "清除集群筛选",
       "allClusters": "全部集群",
-      "filterByCluster": "筛选 {{cluster}}",
       "lastDeployed": "最近发布",
       "refreshStatus": "刷新状态",
       "refreshStatusHint": "对本页所有配置重新执行漂移检测（结果持久化，列表聚合读取）",
@@ -134,7 +141,11 @@
       "podFiles": "文件",
       "podNotFound": "Pod 不存在或已被回收，可能已被重新调度。",
       "podForceDeleteConfirm": "确认强制删除",
-      "switchPod": "切换 Pod"
+      "switchPod": "切换 Pod",
+      "relatedWorkflows": "关联工作流",
+      "relatedWorkflowsEmpty": "还没有工作流部署该应用，创建一个来构建并部署它。",
+      "createWorkflow": "创建工作流",
+      "workflowRuns": "运行记录"
     },
     "deploy": {
       "title": "发布 {{namespace}} / {{name}} 到 {{cluster}}？",
@@ -145,6 +156,10 @@
       "configCreated": "已创建 {{cluster}} 的集群配置",
       "image": "镜像",
       "imageHint": "改镜像即发布：镜像修改会先保存为库侧配置，再随本次发布一并推送到集群",
+      "pullCredential": "拉取凭证",
+      "pullCredentialPlaceholder": "选择凭证…",
+      "pullCredentialNone": "无",
+      "pullCredentialHint": "每次发布时，kite 会依据凭证的 registry 条目在目标 namespace 维护一个受管 dockerconfigjson secret（kite-pull-<凭证名>）。请在工作负载清单中自行引用 imagePullSecrets——kite 不会改写你的清单。",
       "otherConfig": "其他配置",
       "summaryReplicas": "副本 {{count}}",
       "summaryEnv": "环境变量 {{count}} 项",
@@ -263,7 +278,11 @@
       "stepTargetCluster": "目标集群",
       "stepPreview": "预览与高级",
       "appName": "应用名称（空间 / 应用名）",
-      "appNameHint": "空间由侧边栏当前空间决定，不可编辑；应用名仅小写字母 / 数字 / 中划线，创建后不可修改。",
+      "appNameHint": "空间从已有空间列表中选择，默认为侧边栏当前空间；应用名仅小写字母 / 数字 / 中划线，创建后不可修改。",
+      "spacePlaceholder": "选择空间",
+      "spaceRequired": "请先选择空间——应用必须创建在空间中。",
+      "noSpacesTitle": "尚无可用空间",
+      "noSpacesHint": "空间是集群上打了 kite.application/space=true 标签的命名空间。请先创建空间，再回来创建应用。",
       "description": "描述",
       "workloadType": "工作负载类型",
       "workloadTypeLocked": "已部署的配置不可修改工作负载类型：如需变更请先「下线」，再修改类型并重新发布。",

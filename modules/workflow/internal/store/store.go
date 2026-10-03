@@ -23,10 +23,31 @@ func (s *Store) DB() *gorm.DB {
 
 // Migrate creates or updates the module tables on the host database.
 func Migrate(db *gorm.DB) error {
-	if err := db.AutoMigrate(&Workflow{}, &WorkflowRevision{}, &WorkflowRun{}, &NodeRun{}); err != nil {
+	if err := db.AutoMigrate(&Workflow{}, &WorkflowRevision{}, &WorkflowRun{}, &NodeRun{}, &BuildSetting{}); err != nil {
 		return fmt.Errorf("migrate workflow models: %w", err)
 	}
 	return nil
+}
+
+// BuildProviderFor resolves the build provider of a namespace: the exact
+// namespace row wins over the global default row (empty namespace); ok is
+// false when neither exists.
+func (s *Store) BuildProviderFor(namespace string) (string, bool, error) {
+	var rows []BuildSetting
+	if err := s.db.Where("namespace IN ?", []string{namespace, ""}).Find(&rows).Error; err != nil {
+		return "", false, fmt.Errorf("resolve build provider for namespace %q: %w", namespace, err)
+	}
+	for i := range rows {
+		if rows[i].Namespace == namespace {
+			return rows[i].Provider, true, nil
+		}
+	}
+	for i := range rows {
+		if rows[i].Namespace == "" {
+			return rows[i].Provider, true, nil
+		}
+	}
+	return "", false, nil
 }
 
 // AppendRevisionTx allocates the next per-workflow Rev (MAX+1), inserts the

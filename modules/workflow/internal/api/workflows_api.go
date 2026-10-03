@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
@@ -29,8 +30,12 @@ type workflowResponse struct {
 	Spec        json.RawMessage `json:"spec,omitempty"`
 	Params      json.RawMessage `json:"params,omitempty"`
 	Triggers    json.RawMessage `json:"triggers,omitempty"`
-	CreatedAt   time.Time       `json:"createdAt"`
-	UpdatedAt   time.Time       `json:"updatedAt"`
+	// Apps/Clusters aggregate the deploy-app targets of the current spec so
+	// the list view can filter by application; absent when there are none.
+	Apps      []string  `json:"apps,omitempty"`
+	Clusters  []string  `json:"clusters,omitempty"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 type createWorkflowRequest struct {
@@ -77,7 +82,8 @@ func (h *Handler) toWorkflowResponse(wf *store.Workflow, withSpec bool) workflow
 }
 
 // ListWorkflows returns the workflows the caller can access in the request's
-// current cluster context, filtered per workflow by namespace.
+// current cluster context, filtered per workflow by namespace. Each entry
+// carries the deploy-app targets of its current revision for list filtering.
 func (h *Handler) ListWorkflows(c *gin.Context) {
 	var workflows []store.Workflow
 	if err := h.store.DB().Order("name").Find(&workflows).Error; err != nil {
@@ -85,14 +91,98 @@ func (h *Handler) ListWorkflows(c *gin.Context) {
 		return
 	}
 	cluster := c.GetString(clusterNameContextKey)
-	visible := make([]workflowResponse, 0, len(workflows))
+	authorized := make([]*store.Workflow, 0, len(workflows))
 	for i := range workflows {
 		if !h.deps.Authorize(c, authzResource, "get", cluster, workflows[i].Namespace) {
 			continue
 		}
-		visible = append(visible, h.toWorkflowResponse(&workflows[i], false))
+		authorized = append(authorized, &workflows[i])
+	}
+	specs := h.currentSpecs(authorized)
+	visible := make([]workflowResponse, 0, len(authorized))
+	for _, wf := range authorized {
+		resp := h.toWorkflowResponse(wf, false)
+		resp.Apps, resp.Clusters = extractDeployTargets(specs[wf.ID])
+		visible = append(visible, resp)
 	}
 	c.JSON(http.StatusOK, gin.H{"workflows": visible, "total": len(visible)})
+}
+
+// currentSpecs loads the spec of each workflow's current revision in one
+// batched query — the list must not issue a query per workflow. Load errors
+// and missing revisions degrade to an absent entry: the deploy-target
+// aggregation is advisory metadata, mirroring currentSpecJSON.
+func (h *Handler) currentSpecs(workflows []*store.Workflow) map[uint][]byte {
+	specs := make(map[uint][]byte, len(workflows))
+	if len(workflows) == 0 {
+		return specs
+	}
+	ids := make([]uint, 0, len(workflows))
+	wantRev := make(map[uint]int, len(workflows))
+	revs := make(map[int]struct{})
+	for _, wf := range workflows {
+		ids = append(ids, wf.ID)
+		wantRev[wf.ID] = wf.CurrentRev
+		revs[wf.CurrentRev] = struct{}{}
+	}
+	revList := make([]int, 0, len(revs))
+	for rev := range revs {
+		revList = append(revList, rev)
+	}
+	var rows []store.WorkflowRevision
+	if err := h.store.DB().Select("workflow_id", "rev", "spec").
+		Where("workflow_id IN ? AND rev IN ?", ids, revList).
+		Find(&rows).Error; err != nil {
+		return specs
+	}
+	for _, row := range rows {
+		if wantRev[row.WorkflowID] == row.Rev {
+			specs[row.WorkflowID] = row.Spec
+		}
+	}
+	return specs
+}
+
+// extractDeployTargets collects the deduplicated, sorted app and cluster
+// targets of a spec's deploy-app nodes. A malformed spec yields empty slices
+// rather than failing the list.
+func extractDeployTargets(specRaw []byte) (apps, clusters []string) {
+	var dag spec.DAGSpec
+	if err := json.Unmarshal(specRaw, &dag); err != nil {
+		return nil, nil
+	}
+	appSet := make(map[string]struct{})
+	clusterSet := make(map[string]struct{})
+	for _, node := range dag.Nodes {
+		if node.Type != spec.NodeDeployApp {
+			continue
+		}
+		if app := propsString(node.Props, "app"); app != "" {
+			appSet[app] = struct{}{}
+		}
+		if cluster := propsString(node.Props, "cluster"); cluster != "" {
+			clusterSet[cluster] = struct{}{}
+		}
+	}
+	return sortedSetKeys(appSet), sortedSetKeys(clusterSet)
+}
+
+// propsString reads a string props entry; non-string values are skipped.
+func propsString(props spec.Props, key string) string {
+	s, _ := props[key].(string)
+	return s
+}
+
+func sortedSetKeys(set map[string]struct{}) []string {
+	if len(set) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // decodeDefinition validates the spec/params/triggers triple of a create or

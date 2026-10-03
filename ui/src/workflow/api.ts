@@ -2,7 +2,12 @@
 // ships its own API surface, it does not touch the shared lib/api-client).
 // Every call sends cookies and the current-cluster header, mirroring what the
 // host client does for module routes mounted under /api/v1.
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 
 import {
   appendCurrentClusterHeader,
@@ -11,6 +16,11 @@ import {
 import { withSubPath } from '@/lib/subpath'
 
 import type {
+  BuildProvider,
+  BuildProvidersResponse,
+  BuildSetting,
+  BuildSettingsResponse,
+  CreateBuildProviderRequest,
   CreateCredentialRequest,
   CreateWorkflowRequest,
   CredentialPayload,
@@ -164,6 +174,16 @@ export const fetchCredentials = () =>
     '/credentials'
   )
 
+// ── User directory ──
+
+export interface UserDirectoryEntry {
+  id: number
+  username: string
+}
+
+export const fetchUserDirectory = () =>
+  workflowRequest<{ users: UserDirectoryEntry[] }>('/users/directory')
+
 export const createCredential = (req: CreateCredentialRequest) =>
   workflowRequest<CredentialSummary>('/credentials', {
     method: 'POST',
@@ -193,6 +213,45 @@ export const deleteCredential = (name: string) =>
     }
   )
 
+// ── Build settings ──
+
+export const fetchBuildSettings = () =>
+  workflowRequest<BuildSettingsResponse>('/build-settings')
+
+// The global default row (namespace '') is reachable at the bare path.
+const buildSettingPath = (namespace: string) =>
+  namespace === ''
+    ? '/build-settings'
+    : `/build-settings/${encodeURIComponent(namespace)}`
+
+export const upsertBuildSetting = (namespace: string, provider: string) =>
+  workflowRequest<BuildSetting>(buildSettingPath(namespace), {
+    method: 'PUT',
+    body: JSON.stringify({ provider }),
+  })
+
+export const deleteBuildSetting = (namespace: string) =>
+  workflowRequest<{ message: string }>(buildSettingPath(namespace), {
+    method: 'DELETE',
+  })
+
+// ── Managed build providers (settings-created k8s build providers) ──
+
+export const fetchBuildProviders = () =>
+  workflowRequest<BuildProvidersResponse>('/buildfleet/providers')
+
+export const createBuildProvider = (req: CreateBuildProviderRequest) =>
+  workflowRequest<BuildProvider>('/buildfleet/providers', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  })
+
+export const deleteBuildProvider = (name: string) =>
+  workflowRequest<{ message: string }>(
+    `/buildfleet/providers/${encodeURIComponent(name)}`,
+    { method: 'DELETE' }
+  )
+
 // ── Query hooks ──
 
 const workflowKeys = {
@@ -204,6 +263,9 @@ const workflowKeys = {
   revisions: (name: string) =>
     [...workflowKeys.all, 'revisions', name] as const,
   credentials: () => [...workflowKeys.all, 'credentials'] as const,
+  directory: () => [...workflowKeys.all, 'user-directory'] as const,
+  buildSettings: () => [...workflowKeys.all, 'build-settings'] as const,
+  buildProviders: () => [...workflowKeys.all, 'build-providers'] as const,
 }
 
 export const useWorkflows = () =>
@@ -234,13 +296,28 @@ export const useRuns = (name: string | undefined, limit = 50) =>
     enabled: !!name,
   })
 
-// Latest run of a workflow, used by the list page's 最近运行 column.
-export const useLatestRun = (name: string, enabled = true) =>
-  useQuery({
-    queryKey: [...workflowKeys.runs(name), 'latest'],
-    queryFn: () => fetchRuns(name, 1),
-    enabled,
-    select: (data) => data.runs[0],
+// Latest run per workflow for the list page (最近运行 column and the
+// run-status filter), batched through useQueries instead of one query per
+// row. Names still loading appear in pendingNames so cells keep their
+// placeholder; a name without runs maps to undefined.
+export const useLatestRuns = (names: string[]) =>
+  useQueries({
+    queries: names.map((name) => ({
+      queryKey: [...workflowKeys.runs(name), 'latest'],
+      queryFn: () => fetchRuns(name, 1),
+    })),
+    combine: (results) => {
+      const latestByName: Record<string, RunSummary | undefined> = {}
+      const pendingNames: string[] = []
+      names.forEach((name, i) => {
+        if (results[i]?.isPending) {
+          pendingNames.push(name)
+        } else {
+          latestByName[name] = results[i]?.data?.runs[0]
+        }
+      })
+      return { latestByName, pendingNames }
+    },
   })
 
 export const useRun = (runId: number | undefined) =>
@@ -255,6 +332,30 @@ export const useCredentials = () =>
     queryKey: workflowKeys.credentials(),
     queryFn: fetchCredentials,
     select: (data) => data.credentials,
+  })
+
+// Account list for the approval assignee picker. A 403 is not an error: the
+// directory is simply unavailable to this user, so the query resolves to an
+// empty list plus a forbidden flag and the picker degrades to raw ID input.
+export interface UserDirectory {
+  users: UserDirectoryEntry[]
+  forbidden: boolean
+}
+
+export const useUserDirectory = () =>
+  useQuery({
+    queryKey: workflowKeys.directory(),
+    queryFn: async (): Promise<UserDirectory> => {
+      try {
+        const data = await fetchUserDirectory()
+        return { users: data.users, forbidden: false }
+      } catch (error) {
+        if (error instanceof WorkflowApiError && error.status === 403) {
+          return { users: [], forbidden: true }
+        }
+        throw error
+      }
+    },
   })
 
 export const useInvalidateWorkflow = () => {
@@ -361,6 +462,71 @@ export const useDeleteCredentialMutation = () => {
     mutationFn: deleteCredential,
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: workflowKeys.credentials() }),
+  })
+}
+
+export const useBuildSettings = () =>
+  useQuery({
+    queryKey: workflowKeys.buildSettings(),
+    queryFn: fetchBuildSettings,
+  })
+
+export const useUpsertBuildSettingMutation = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      namespace,
+      provider,
+    }: {
+      namespace: string
+      provider: string
+    }) => upsertBuildSetting(namespace, provider),
+    onSuccess: () =>
+      queryClient.invalidateQueries({
+        queryKey: workflowKeys.buildSettings(),
+      }),
+  })
+}
+
+export const useDeleteBuildSettingMutation = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: deleteBuildSetting,
+    onSuccess: () =>
+      queryClient.invalidateQueries({
+        queryKey: workflowKeys.buildSettings(),
+      }),
+  })
+}
+
+export const useBuildProviders = () =>
+  useQuery({
+    queryKey: workflowKeys.buildProviders(),
+    queryFn: fetchBuildProviders,
+  })
+
+// Provider changes reshape the build-settings provider options too, so both
+// query families are invalidated.
+const invalidateProviderSurfaces = (
+  queryClient: ReturnType<typeof useQueryClient>
+) => {
+  queryClient.invalidateQueries({ queryKey: workflowKeys.buildProviders() })
+  queryClient.invalidateQueries({ queryKey: workflowKeys.buildSettings() })
+}
+
+export const useCreateBuildProviderMutation = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: createBuildProvider,
+    onSuccess: () => invalidateProviderSurfaces(queryClient),
+  })
+}
+
+export const useDeleteBuildProviderMutation = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: deleteBuildProvider,
+    onSuccess: () => invalidateProviderSurfaces(queryClient),
   })
 }
 

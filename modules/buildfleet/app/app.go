@@ -34,6 +34,13 @@ type App struct {
 	// no provider enables a k8s cache registry.
 	CacheStatFn func(ctx context.Context) (map[string]*runtime.CacheStatSnapshot, error)
 
+	// multi is the composed provider Pool provisions through; runtime
+	// provider registration (host-managed build providers) mutates it.
+	multi *runtime.Multi
+	// cfg is retained so runtime registration reuses the loaded runtime
+	// profile and registry table.
+	cfg *config.Config
+
 	// gcDone closes when the periodic GC goroutine has exited.
 	gcDone chan struct{}
 }
@@ -101,7 +108,7 @@ func Setup(ctx context.Context, cfg *config.Config) (*App, error) {
 	f := fleet.New(pool, nil, fleet.WithStore(st), fleet.WithProviderCache(providerCache),
 		fleet.WithDedupeWindow(window))
 
-	a := &App{Fleet: f, Pool: pool, Store: st}
+	a := &App{Fleet: f, Pool: pool, Store: st, multi: multi, cfg: cfg}
 	k8sCacheProviders := map[string]*k8s.Provider{}
 	for i, pc := range cfg.Providers {
 		if pc.Type == "k8s" && pc.Cache != nil && pc.Cache.Enabled {
@@ -120,6 +127,46 @@ func Setup(ctx context.Context, cfg *config.Config) (*App, error) {
 		a.CacheStatFn = cacheStatFn(k8sCacheProviders)
 	}
 	return a, nil
+}
+
+// RegisterK8sProvider constructs a k8s provider from pc (Kubeconfig must
+// point at a readable file, or be empty for in-cluster identity) and attaches
+// it to the pool at runtime. Reconcile adopts buildkitd instances a previous
+// process left behind, so re-registering a persisted provider after a restart
+// preserves layer caches. The provider runs on the default runtime profile.
+func (a *App) RegisterK8sProvider(ctx context.Context, pc config.Provider) error {
+	regTable, err := effectiveRegTable(a.cfg)
+	if err != nil {
+		return fmt.Errorf("provider %s: %w", pc.Name, err)
+	}
+	p, err := buildK8sProvider(a.cfg, pc, regTable, hostAliases(a.cfg.Runtimes["default"].Hosts))
+	if err != nil {
+		return fmt.Errorf("provider %s: %w", pc.Name, err)
+	}
+	if err := a.multi.Register(runtime.NamedProvider{Name: pc.Name, Provider: p}); err != nil {
+		return fmt.Errorf("provider %s: %w", pc.Name, err)
+	}
+	adopted, err := p.Reconcile(ctx)
+	if err != nil {
+		slog.Warn("reconcile leftovers", "provider", pc.Name, "err", err)
+	}
+	for _, rt := range adopted {
+		a.multi.Claim(rt.ID, runtime.NamedProvider{Name: pc.Name, Provider: p})
+		a.Pool.Register(rt)
+	}
+	slog.Info("registered k8s build provider", "provider", pc.Name, "namespace", pc.Namespace)
+	return nil
+}
+
+// RemoveProvider detaches a runtime-registered provider by name. Live
+// runtimes it owns keep draining through the ownership map; unknown names
+// return an error.
+func (a *App) RemoveProvider(name string) error {
+	if err := a.multi.Remove(name); err != nil {
+		return fmt.Errorf("remove provider: %w", err)
+	}
+	slog.Info("removed k8s build provider", "provider", name)
+	return nil
 }
 
 // Drain disposes draining/failed pool runtimes, waits out an in-flight

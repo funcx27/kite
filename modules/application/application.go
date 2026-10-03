@@ -20,6 +20,10 @@ import (
 // application module.
 type HistoryEntry = store.HistoryEntry
 
+// RegistryAuth is one registry host's basic-auth pair, resolved from a
+// credential by Deps.PullSecretData.
+type RegistryAuth = store.RegistryAuth
+
 // Deps is the set of host capabilities the module depends on. It is one
 // injection point by design (docs/demo/design.md §1); the methods stay
 // grouped here instead of being fragmented per capability.
@@ -51,6 +55,10 @@ type Deps interface {
 	EncryptSecret(plaintext string) (string, error)
 	// DecryptSecret opens ciphertext produced by EncryptSecret.
 	DecryptSecret(encrypted string) (string, error)
+	// PullSecretData resolves a credentialRef to its registry auth table
+	// (host -> user/pass) for the managed image pull secret; git entries are
+	// ignored. An unknown credentialRef is an error.
+	PullSecretData(credentialRef string) (map[string]store.RegistryAuth, error)
 }
 
 // RegisterRoutes mounts the module API under /applications. The host must call

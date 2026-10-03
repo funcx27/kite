@@ -49,7 +49,7 @@ func initializeApp(ctx context.Context) (*cluster.ClusterManager, *buildfleetada
 	if node := internal.BuildFleetConfig(); node != nil {
 		// Fail fast: a present but broken buildfleet section must not
 		// silently start kite without the module.
-		buildfleet, err = buildfleetadapter.New(ctx, node, credDeps)
+		buildfleet, err = buildfleetadapter.New(ctx, cm, node, credDeps)
 		if err != nil {
 			panic("failed to initialize buildfleet module: " + err.Error())
 		}

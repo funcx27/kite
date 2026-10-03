@@ -40,6 +40,9 @@ type Deps interface {
 	IsAdmin(c *gin.Context) bool
 	// RecordHistory persists an audit entry for a state change.
 	RecordHistory(entry store.HistoryEntry)
+	// ProviderNames lists the host's available build provider names for the
+	// build-settings API; empty when the build capability is not wired.
+	ProviderNames() []string
 }
 
 // Handler serves the workflow module HTTP API.
@@ -73,6 +76,15 @@ func RegisterRoutes(api *gin.RouterGroup, deps Deps, st *store.Store, eng *engin
 	runs.POST("/:id/retry", h.RetryRun)
 	runs.POST("/:id/nodes/:nodeId/approve", h.Decide(true))
 	runs.POST("/:id/nodes/:nodeId/reject", h.Decide(false))
+
+	// Build-cluster defaults: the empty-namespace global default row is
+	// reachable at the bare path (a path parameter cannot be empty).
+	settings := api.Group("/build-settings")
+	settings.GET("", h.ListBuildSettings)
+	settings.PUT("", h.UpsertBuildSetting)
+	settings.PUT("/:namespace", h.UpsertBuildSetting)
+	settings.DELETE("", h.DeleteBuildSetting)
+	settings.DELETE("/:namespace", h.DeleteBuildSetting)
 }
 
 // authorize runs the module-side permission check and writes the 403 response

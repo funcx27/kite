@@ -67,6 +67,12 @@ type Deps interface {
 	DeployApp(ctx context.Context, req exec.DeployRequest, onLog func(string)) (exec.DeployResult, error)
 	// Notify delivers one webhook notification (design §5.4).
 	Notify(ctx context.Context, req exec.NotifyRequest) error
+
+	// ProviderFor resolves the build-cluster provider of a namespace (exact
+	// match, then the global default row); ok=false when nothing is
+	// configured. Build nodes fall back to it when their props leave the
+	// provider empty.
+	ProviderFor(namespace string) (string, bool)
 }
 
 // Module is a wired workflow module: handlers plus the in-process engine.
@@ -121,6 +127,15 @@ func SetSecretCodec(encrypt, decrypt func(string) (string, error)) {
 	store.SetSecretCodec(encrypt, decrypt)
 }
 
+// BuildProviderFor resolves the build provider configured for namespace in
+// the module's build_settings table on the host database handle: the exact
+// namespace row wins over the global default (empty namespace) row; ok=false
+// when neither exists. The host adapter exposes it to the engine's build
+// nodes as Deps.ProviderFor.
+func BuildProviderFor(db *gorm.DB, namespace string) (string, bool, error) {
+	return store.New(db).BuildProviderFor(namespace)
+}
+
 // handlerDeps projects the full Deps onto the authorize/audit surface the
 // HTTP handlers use.
 type handlerDeps struct{ d Deps }
@@ -136,6 +151,16 @@ func (h handlerDeps) UserNames(ids []uint) map[uint]string { return h.d.UserName
 func (h handlerDeps) IsAdmin(c *gin.Context) bool { return h.d.IsAdmin(c) }
 
 func (h handlerDeps) RecordHistory(entry store.HistoryEntry) { h.d.RecordHistory(entry) }
+
+// ProviderNames is an optional Deps capability feeding the build-settings
+// API: the host's available build provider names. Deps without the
+// capability (buildfleet unconfigured) yield an empty list.
+func (h handlerDeps) ProviderNames() []string {
+	if pn, ok := h.d.(interface{ ProviderNames() []string }); ok {
+		return pn.ProviderNames()
+	}
+	return nil
+}
 
 // The injected Deps always satisfies the engine's full surface (host
 // capability ports plus identity-based authorization).

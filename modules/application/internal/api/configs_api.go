@@ -44,6 +44,7 @@ type configResponse struct {
 	Manifests       json.RawMessage `json:"manifests"`
 	Spec            json.RawMessage `json:"spec,omitempty"`
 	LastApplied     json.RawMessage `json:"lastApplied"`
+	CredentialRef   string          `json:"credentialRef"`
 	StatusSummary   string          `json:"statusSummary"`
 	StatusCheckedAt *time.Time      `json:"statusCheckedAt"`
 	OverriddenPaths json.RawMessage `json:"overriddenPaths"`
@@ -61,6 +62,7 @@ func toConfigResponse(cfg *store.AppConfig, latestRev int) configResponse {
 		// Secret data/stringData values are masked for display (design §9);
 		// saves restore stored values for round-tripped "***" markers.
 		Manifests:       json.RawMessage(redactJSON(cfg.Manifests)),
+		CredentialRef:   cfg.CredentialRef,
 		LastApplied:     json.RawMessage(redactJSON(cfg.LastApplied)),
 		StatusSummary:   cfg.StatusSummary,
 		StatusCheckedAt: cfg.StatusCheckedAt,

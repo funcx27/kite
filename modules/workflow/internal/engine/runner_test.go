@@ -34,6 +34,8 @@ func (s *stubBuildDeps) BuildImage(_ context.Context, req exec.BuildRequest, onL
 	return s.res, nil
 }
 
+func (s *stubBuildDeps) ProviderFor(string) (string, bool) { return "", false }
+
 func TestBuildRunnerRun(t *testing.T) {
 	tests := []struct {
 		name       string

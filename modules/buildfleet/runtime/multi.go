@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/funcx27/kite/modules/buildfleet/resource"
@@ -28,6 +29,44 @@ func MultiProvider(ps ...NamedProvider) *Multi {
 	return &Multi{subs: ps, owner: map[string]NamedProvider{}}
 }
 
+// Register attaches a provider at runtime (host-managed build providers).
+// Duplicate names are rejected so config-file providers keep their identity.
+func (m *Multi) Register(np NamedProvider) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, sub := range m.subs {
+		if sub.Name == np.Name {
+			return fmt.Errorf("runtime: provider %q already registered", np.Name)
+		}
+	}
+	m.subs = append(m.subs, np)
+	return nil
+}
+
+// Remove detaches a runtime-registered provider: it stops receiving new
+// provisions, while runtimes it already owns keep draining through the
+// ownership map. Unknown names are an error. The subs slice is replaced
+// rather than shifted in place: concurrent Provision calls hold snapshots
+// of the old backing array.
+func (m *Multi) Remove(name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	subs := make([]NamedProvider, 0, len(m.subs))
+	found := false
+	for _, sub := range m.subs {
+		if sub.Name == name {
+			found = true
+			continue
+		}
+		subs = append(subs, sub)
+	}
+	if !found {
+		return fmt.Errorf("runtime: provider %q not registered", name)
+	}
+	m.subs = subs
+	return nil
+}
+
 // Owner returns the provider that provisioned id (zero value if unknown).
 func (m *Multi) Owner(id string) Provider {
 	m.mu.Lock()
@@ -51,15 +90,22 @@ func (m *Multi) Claim(id string, np NamedProvider) {
 }
 
 func (m *Multi) Capacity() resource.Resources {
+	m.mu.Lock()
+	subs := m.subs
+	m.mu.Unlock()
 	total := resource.Resources{}
-	for _, np := range m.subs {
+	for _, np := range subs {
 		total = total.Add(np.Provider.Capacity())
 	}
 	return total
 }
 
 func (m *Multi) Provision(ctx context.Context, spec Spec) (*Runtime, error) {
-	for _, np := range m.subs {
+	// Snapshot: Register/Remove mutate subs concurrently.
+	m.mu.Lock()
+	subs := m.subs
+	m.mu.Unlock()
+	for _, np := range subs {
 		if spec.Provider != "" && np.Name != spec.Provider {
 			continue
 		}

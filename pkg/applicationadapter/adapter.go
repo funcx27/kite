@@ -14,6 +14,7 @@ import (
 
 	"github.com/funcx27/kite/modules/application"
 	"github.com/zxh326/kite/pkg/cluster"
+	"github.com/zxh326/kite/pkg/credentialsadapter"
 	"github.com/zxh326/kite/pkg/model"
 	"github.com/zxh326/kite/pkg/rbac"
 	"github.com/zxh326/kite/pkg/utils"
@@ -27,15 +28,16 @@ const historySource = "application"
 const encryptionErrorPrefix = "encryption_error: "
 
 // Deps implements application.Deps on top of kite's cluster manager, RBAC
-// roles and ResourceHistory audit log.
+// roles, credential center and ResourceHistory audit log.
 type Deps struct {
-	cm *cluster.ClusterManager
+	cm    *cluster.ClusterManager
+	creds *credentialsadapter.Deps
 }
 
 var _ application.Deps = (*Deps)(nil)
 
-func NewDeps(cm *cluster.ClusterManager) *Deps {
-	d := &Deps{cm: cm}
+func NewDeps(cm *cluster.ClusterManager, creds *credentialsadapter.Deps) *Deps {
+	d := &Deps{cm: cm, creds: creds}
 	// Runs at route registration, before any module table is read or written:
 	// SecretJSON's GORM Scan/Value resolve their codec only here.
 	application.SetSecretCodec(d.EncryptSecret, d.DecryptSecret)
@@ -127,6 +129,26 @@ func (d *Deps) DecryptSecret(encrypted string) (string, error) {
 		return "", fmt.Errorf("decrypt secret: %w", err)
 	}
 	return plaintext, nil
+}
+
+// PullSecretData resolves a credentialRef into its registry auth table
+// (host -> user/pass) through the credential center; git entries carry no
+// image-pull material and are dropped. The returned secret material is
+// in-memory only: it must never be logged or persisted outside the upserted
+// pull secret.
+func (d *Deps) PullSecretData(credentialRef string) (map[string]application.RegistryAuth, error) {
+	if d == nil || d.creds == nil {
+		return nil, fmt.Errorf("credential %q cannot be resolved: credential center is not wired", credentialRef)
+	}
+	cred, err := d.creds.Resolve(credentialRef)
+	if err != nil {
+		return nil, fmt.Errorf("resolve credential %q: %w", credentialRef, err)
+	}
+	out := make(map[string]application.RegistryAuth, len(cred.Registry))
+	for _, rc := range cred.Registry {
+		out[rc.Host] = application.RegistryAuth{Username: rc.Username, Password: rc.Password}
+	}
+	return out, nil
 }
 
 func (d *Deps) RecordHistory(entry application.HistoryEntry) {

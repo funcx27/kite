@@ -3,7 +3,8 @@
 // per spec.go props fields, params/triggers dialogs, client-side cycle check
 // and save via POST/PUT (a save on an existing workflow appends a revision).
 // /workflows/new renders the create variant; /workflows/:name the editor.
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useApplications } from '@/application/api'
 import {
   addEdge,
   applyEdgeChanges,
@@ -14,7 +15,7 @@ import {
   type NodeChange,
 } from '@xyflow/react'
 import { useTranslation } from 'react-i18next'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import { usePageTitle } from '@/hooks/use-page-title'
@@ -57,6 +58,65 @@ function nextNodeId(type: WorkflowNodeType, taken: Set<string>): string {
   return `${prefix}-${Date.now()}`
 }
 
+// Flow nodes/edges from a spec: legacy props.layout positions win, missing
+// ones fall back to the deterministic auto-layout.
+function specToFlow(spec: DAGSpec): {
+  nodes: WorkflowFlowNode[]
+  edges: FlowEdge[]
+} {
+  const positions = new Map<string, { x: number; y: number }>()
+  for (const n of spec.nodes) {
+    const layout = nodeLayout(n.props)
+    if (layout) positions.set(n.id, layout)
+  }
+  if (positions.size < spec.nodes.length) {
+    for (const [id, p] of autoLayout(spec)) {
+      if (!positions.has(id)) positions.set(id, p)
+    }
+  }
+  return {
+    nodes: spec.nodes.map((n) => ({
+      id: n.id,
+      type: WORKFLOW_NODE_CARD,
+      position: positions.get(n.id) ?? { x: 40, y: 40 },
+      data: {
+        nodeType: n.type,
+        label: n.name,
+        onFailure: n.onFailure,
+        timeout: n.timeout,
+        props: n.props,
+      },
+    })),
+    edges: spec.edges.map((e) => ({
+      id: `${e.from}->${e.to}`,
+      source: e.from,
+      target: e.to,
+    })),
+  }
+}
+
+// The engine substitutes {{...}} templates only, so a $ref outside of those
+// braces would stay literal text at run time. Scan the strings of the spec
+// about to be saved ({{...}} content excluded) and report the suspects; the
+// save itself is not blocked.
+function findDollarTemplates(spec: DAGSpec): string[] {
+  const found: string[] = []
+  const walk = (value: unknown) => {
+    if (typeof value === 'string') {
+      const withoutTemplates = value.replace(/\{\{[^{}]*\}\}/g, '')
+      for (const match of withoutTemplates.matchAll(/\$\s*[A-Za-z_][\w.]*/g)) {
+        found.push(match[0])
+      }
+    } else if (Array.isArray(value)) {
+      value.forEach(walk)
+    } else if (value && typeof value === 'object') {
+      Object.values(value).forEach(walk)
+    }
+  }
+  walk(spec)
+  return found
+}
+
 export function WorkflowEditorPage() {
   const { name: routeName } = useParams()
   const isCreate = routeName === undefined
@@ -71,6 +131,15 @@ export function WorkflowEditorPage() {
     isLoading,
     error,
   } = useWorkflow(isCreate ? undefined : routeName)
+  // ?copy=<name> (create route only): the source workflow to prefill a draft
+  // from. ?fromApp=<name>&cluster=<cluster> is the application-detail entry:
+  // copy wins when both are present.
+  const [searchParams] = useSearchParams()
+  const copySource = isCreate ? searchParams.get('copy') : null
+  const fromApp = isCreate ? searchParams.get('fromApp') : null
+  const fromCluster = isCreate ? searchParams.get('cluster') : null
+  const { data: copyWorkflow } = useWorkflow(copySource ?? undefined)
+  const { data: applications } = useApplications({ disable: !fromApp })
   const saveMutation = useSaveWorkflowMutation()
 
   const [draftName, setDraftName] = useState('')
@@ -106,38 +175,11 @@ export function WorkflowEditorPage() {
   // Load the definition once; edits live in local flow state afterwards.
   useEffect(() => {
     if (isCreate || !workflow || hydrated) return
-    const spec: DAGSpec = workflow.spec ?? { nodes: [], edges: [] }
-    const positions = new Map<string, { x: number; y: number }>()
-    for (const n of spec.nodes) {
-      const layout = nodeLayout(n.props)
-      if (layout) positions.set(n.id, layout)
-    }
-    if (positions.size < spec.nodes.length) {
-      for (const [id, p] of autoLayout(spec)) {
-        if (!positions.has(id)) positions.set(id, p)
-      }
-    }
-    setFlowNodes(
-      spec.nodes.map((n) => ({
-        id: n.id,
-        type: WORKFLOW_NODE_CARD,
-        position: positions.get(n.id) ?? { x: 40, y: 40 },
-        data: {
-          nodeType: n.type,
-          label: n.name,
-          onFailure: n.onFailure,
-          timeout: n.timeout,
-          props: n.props,
-        },
-      }))
+    const { nodes, edges } = specToFlow(
+      workflow.spec ?? { nodes: [], edges: [] }
     )
-    setFlowEdges(
-      spec.edges.map((e) => ({
-        id: `${e.from}->${e.to}`,
-        source: e.from,
-        target: e.to,
-      }))
-    )
+    setFlowNodes(nodes)
+    setFlowEdges(edges)
     setDraftName(workflow.name)
     setDraftNamespace(workflow.namespace)
     setDraftDescription(workflow.description)
@@ -146,6 +188,64 @@ export function WorkflowEditorPage() {
     setExpectedRev(workflow.currentRev)
     setHydrated(true)
   }, [isCreate, workflow, hydrated])
+
+  // Prefill the create draft from ?copy=<name>, once per source. The result
+  // stays an unsaved draft (expectedRev 0) until the user renames and saves.
+  const copiedFrom = useRef<string | null>(null)
+  useEffect(() => {
+    if (!isCreate || !copySource || !copyWorkflow) return
+    if (copiedFrom.current === copySource) return
+    copiedFrom.current = copySource
+    const { nodes, edges } = specToFlow(
+      copyWorkflow.spec ?? { nodes: [], edges: [] }
+    )
+    setFlowNodes(nodes)
+    setFlowEdges(edges)
+    setDraftName(`${copyWorkflow.name}-copy`)
+    setDraftNamespace(copyWorkflow.namespace)
+    setDraftDescription(copyWorkflow.description)
+    setParams(copyWorkflow.params ?? [])
+    setTriggers(copyWorkflow.triggers ?? {})
+  }, [isCreate, copySource, copyWorkflow])
+
+  // Prefill from ?fromApp=<name>&cluster=<cluster> (copy takes precedence):
+  // stage a deploy-app node targeting the app and prefill the name; leave
+  // everything else for the user.
+  const prefilledFrom = useRef<string | null>(null)
+  useEffect(() => {
+    if (!isCreate || !fromApp || copySource) return
+    if (prefilledFrom.current === fromApp) return
+    prefilledFrom.current = fromApp
+    const props: Record<string, unknown> = { app: fromApp }
+    if (fromCluster) props.cluster = fromCluster
+    setFlowNodes([
+      {
+        id: 'deployapp1',
+        type: WORKFLOW_NODE_CARD,
+        position: { x: 40, y: 40 },
+        data: {
+          nodeType: 'deploy-app',
+          label: t('workflow.nodeTypes.deploy-app'),
+          props,
+        },
+      },
+    ])
+    setFlowEdges([])
+    setDraftName(`${fromApp}-workflow`)
+  }, [isCreate, fromApp, fromCluster, copySource, t])
+
+  // The namespace comes from the applications query (fromApp's owning space);
+  // until it resolves — or when the app is unknown — the default stays.
+  const nsPrefilledFor = useRef<string | null>(null)
+  useEffect(() => {
+    if (!isCreate || !fromApp || copySource) return
+    if (nsPrefilledFor.current === fromApp || applications === undefined) return
+    const app = applications.find((a) => a.name === fromApp)
+    if (app) {
+      nsPrefilledFor.current = fromApp
+      setDraftNamespace(app.namespace)
+    }
+  }, [isCreate, fromApp, copySource, applications])
 
   const selectedNode = useMemo(
     () => flowNodes.find((n) => n.id === selectedId) ?? null,
@@ -212,6 +312,15 @@ export function WorkflowEditorPage() {
       return
     }
     const spec = specFromFlow()
+    const dollarRefs = findDollarTemplates(spec)
+    if (dollarRefs.length > 0) {
+      toast.warning(
+        t('workflow.editor.dollarTemplateWarning', {
+          found: dollarRefs[0],
+          example: '{{params.name}}',
+        })
+      )
+    }
     const onSuccess = (saved: { name: string; currentRev: number }) => {
       toast.success(t('workflow.editor.saved', { rev: saved.currentRev }))
       if (isCreate) {
@@ -481,15 +590,19 @@ export function WorkflowEditorPage() {
           />
         </div>
 
-        <aside className="w-80 shrink-0 border-l bg-card">
-          <PropertyDrawer
-            node={selectedSpecNode}
-            params={params}
-            nodes={flowNodes.map(flowToSpecNode)}
-            onChange={updateSelectedNode}
-            onDelete={() => selectedNode && deleteNode(selectedNode.id)}
-          />
-        </aside>
+        {/* Drawer only exists while a node is selected: the canvas takes the
+            freed width back, and onPaneClick already clears the selection. */}
+        {selectedNode && (
+          <aside className="w-80 shrink-0 border-l bg-card">
+            <PropertyDrawer
+              node={selectedSpecNode}
+              params={params}
+              nodes={flowNodes.map(flowToSpecNode)}
+              onChange={updateSelectedNode}
+              onDelete={() => selectedNode && deleteNode(selectedNode.id)}
+            />
+          </aside>
+        )}
       </div>
 
       <ParamsDialog

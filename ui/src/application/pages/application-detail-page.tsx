@@ -13,8 +13,12 @@ import { DeployDialog } from '@/application/components/deploy-dialog'
 import { HistoryDialog } from '@/application/components/history-dialog'
 import { MergeDialog } from '@/application/components/merge-dialog'
 import { OfflineDialog } from '@/application/components/offline-dialog'
-import { ApplicationStatusChip } from '@/application/components/status-badge'
-import type { ApplicationPendingChange } from '@/application/types'
+import {
+  ApplicationStatusChip,
+  ClusterStatusDot,
+} from '@/application/components/status-badge'
+import type { Application, ApplicationPendingChange } from '@/application/types'
+import { useWorkflows } from '@/workflow/api'
 import { useQueryClient } from '@tanstack/react-query'
 import * as yaml from 'js-yaml'
 import { useTranslation } from 'react-i18next'
@@ -55,7 +59,7 @@ export function ApplicationDetailPage() {
   }>()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const { clusters } = useCluster()
+  const { clusters, currentCluster } = useCluster()
   const { data: app, isLoading, error } = useApplication(name)
   usePageTitle(app ? `${app.namespace} / ${app.name}` : t('nav.applications'))
 
@@ -202,16 +206,10 @@ export function ApplicationDetailPage() {
               <TabsList>
                 {configs.map((config) => (
                   <TabsTrigger key={config.cluster} value={config.cluster}>
-                    <span
-                      className={`mr-1.5 inline-block h-2 w-2 rounded-full ${
-                        config.statusSummary === 'synced'
-                          ? 'bg-green-500'
-                          : config.statusSummary === 'error'
-                            ? 'bg-red-500'
-                            : config.statusSummary === 'undeployed'
-                              ? 'bg-zinc-400'
-                              : 'bg-amber-500'
-                      }`}
+                    <ClusterStatusDot
+                      cluster={config.cluster}
+                      statusSummary={config.statusSummary}
+                      className="mr-1.5"
                     />
                     {config.cluster}
                   </TabsTrigger>
@@ -235,6 +233,11 @@ export function ApplicationDetailPage() {
           )}
         </>
       )}
+
+      <RelatedWorkflows
+        app={app}
+        cluster={current?.cluster ?? currentCluster}
+      />
 
       {current && (
         <>
@@ -384,5 +387,81 @@ export function ApplicationDetailPage() {
         </DialogContent>
       </Dialog>
     </div>
+  )
+}
+
+// Related workflows: workflows whose deploy-app nodes target this app
+// (aggregated server-side into WorkflowListItem.apps). Deliberately light —
+// an editor link per workflow plus a runs-list link, no run data fetched.
+function RelatedWorkflows({
+  app,
+  cluster,
+}: {
+  app: Application
+  cluster?: string | null
+}) {
+  const { t } = useTranslation()
+  const navigate = useNavigate()
+  const { data: workflows, isLoading } = useWorkflows()
+  const related = useMemo(
+    () => (workflows ?? []).filter((wf) => (wf.apps ?? []).includes(app.name)),
+    [workflows, app.name]
+  )
+
+  const createWorkflow = () => {
+    const params = new URLSearchParams({ fromApp: app.name })
+    if (cluster) params.set('cluster', cluster)
+    navigate(`/workflows/new?${params.toString()}`)
+  }
+
+  return (
+    <section className="rounded-xl border bg-card">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3">
+        <h2 className="text-sm font-semibold">
+          {t('applications.detail.relatedWorkflows')}
+        </h2>
+        <Button size="sm" variant="outline" onClick={createWorkflow}>
+          ＋ {t('applications.detail.createWorkflow')}
+        </Button>
+      </div>
+      {isLoading ? (
+        <p className="px-4 py-3 text-sm text-muted-foreground">
+          {t('common.messages.loading')}
+        </p>
+      ) : related.length === 0 ? (
+        <p className="px-4 py-3 text-sm text-muted-foreground">
+          {t('applications.detail.relatedWorkflowsEmpty')}
+        </p>
+      ) : (
+        <ul className="divide-y px-4 py-1">
+          {related.map((wf) => (
+            <li
+              key={wf.id}
+              className="flex items-center justify-between gap-3 py-2"
+            >
+              <div className="min-w-0">
+                <Link
+                  to={`/workflows/${wf.name}`}
+                  className="font-mono text-sm font-medium hover:underline"
+                >
+                  {wf.name}
+                </Link>
+                {wf.description && (
+                  <span className="ml-2 truncate text-xs text-muted-foreground">
+                    {wf.description}
+                  </span>
+                )}
+              </div>
+              <Link
+                to={`/workflows/${wf.name}/runs`}
+                className="shrink-0 text-xs text-muted-foreground hover:text-foreground hover:underline"
+              >
+                {t('applications.detail.workflowRuns')}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   )
 }

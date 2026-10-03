@@ -92,6 +92,10 @@ func registerUserRoutes(r *gin.RouterGroup, authHandler *auth.AuthHandler) {
 	userGroup.POST("/me/passkeys/finish", authHandler.RequireAuth(), users.FinishCurrentUserPasskeyRegistration)
 	userGroup.DELETE("/me/passkeys/:id", authHandler.RequireAuth(), users.DeleteCurrentUserPasskey)
 	userGroup.POST("/sidebar_preference", authHandler.RequireAuth(), users.UpdateSidebarPreference)
+	// Workflow assignee picker: RequireAuth only — the handler enforces
+	// admin or wildcard workflows access itself (non-resource shape, design §8).
+	v1UserGroup := r.Group("/api/v1/users")
+	v1UserGroup.GET("/directory", authHandler.RequireAuth(), users.ListUserDirectory)
 }
 
 func registerAdminRoutes(r *gin.RouterGroup, authHandler *auth.AuthHandler, cm *cluster.ClusterManager, helmChartsHandler *helm.HelmChartHandler) {
@@ -164,7 +168,7 @@ func registerProtectedRoutes(r *gin.RouterGroup, authHandler *auth.AuthHandler, 
 	defaultAPI := api.Group("")
 	defaultAPI.Use(authHandler.RequireAuth(), middleware.ClusterMiddleware(cm))
 
-	appDeps := applicationadapter.NewDeps(cm)
+	appDeps := applicationadapter.NewDeps(cm, credDeps)
 	if err := applicationadapter.Migrate(model.DB); err != nil {
 		panic("failed to migrate application module: " + err.Error())
 	}

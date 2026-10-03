@@ -89,6 +89,12 @@ export function WorkflowRunPage() {
         id: n.id,
         type: WORKFLOW_NODE_CARD,
         position: positions.get(n.id) ?? { x: 40, y: 40 },
+        // The card is a fixed w-44 with a two-line body; declaring the size
+        // keeps MiniMap rendering when every SSE event rebuilds the node
+        // array and React Flow loses the measured dimensions. Must match the
+        // card classes in flow.tsx or the minimap proportion drifts.
+        width: 176,
+        height: 60,
         data: {
           nodeType: n.type,
           label: n.name,

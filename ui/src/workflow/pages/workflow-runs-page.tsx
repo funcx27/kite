@@ -1,8 +1,8 @@
 // Run list of one workflow (design §10: 倒序分页): run number, status,
-// revision, trigger, operator, start time and duration; rows open the run
-// view.
+// revision, trigger, operator, start time and duration; the run number links
+// to the run view.
 import { useTranslation } from 'react-i18next'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 
 import { formatDate } from '@/lib/utils'
 import { usePageTitle } from '@/hooks/use-page-title'
@@ -15,7 +15,6 @@ import { formatDuration } from '../lib'
 
 export function WorkflowRunsPage() {
   const { t } = useTranslation()
-  const navigate = useNavigate()
   const { name = '' } = useParams()
   const { data, isLoading } = useRuns(name)
   usePageTitle(t('workflow.list.runsTitle', { name }))
@@ -110,12 +109,7 @@ export function WorkflowRunsPage() {
             ),
           },
         ]}
-        actions={[
-          {
-            label: t('workflow.list.openRun'),
-            onClick: (run) => navigate(`/workflows/${name}/runs/${run.id}`),
-          },
-        ]}
+        actions={[]}
       />
 
       {isLoading && (

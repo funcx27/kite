@@ -3,6 +3,7 @@
 // edit / delete). The list API carries no trigger config, so trigger badges
 // live in the editor only.
 import { useMemo, useState } from 'react'
+import { useSpaces } from '@/platform/space-context'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
@@ -19,17 +20,32 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { ActionTable, type Action } from '@/components/action-table'
 
 import {
   useDeleteWorkflowMutation,
-  useLatestRun,
+  useLatestRuns,
   useWorkflow,
   useWorkflows,
 } from '../api'
 import { RunParamsDialog, WebhookTokenDialog } from '../components/run-dialogs'
 import { RunStatusChip } from '../components/status-chip'
-import type { TriggerRunResponse, WorkflowListItem } from '../types'
+import type { RunSummary, TriggerRunResponse, WorkflowListItem } from '../types'
+
+// Union of one deploy-target field across the given workflows, sorted.
+function aggregateUnique(
+  workflows: WorkflowListItem[],
+  pick: (wf: WorkflowListItem) => string[] | undefined
+): string[] {
+  return [...new Set(workflows.flatMap((wf) => pick(wf) ?? []))].sort()
+}
 
 export function WorkflowListPage() {
   const { t } = useTranslation()
@@ -51,8 +67,14 @@ export function WorkflowListPage() {
 function WorkflowList() {
   const { t } = useTranslation()
   const navigate = useNavigate()
+  const { currentSpace } = useSpaces()
   const { data: workflows, isLoading } = useWorkflows()
   const [search, setSearch] = useState('')
+  // 'all' is the sentinel for "no filter" — Radix SelectItem rejects ''.
+  const [appFilter, setAppFilter] = useState('all')
+  const [clusterFilter, setClusterFilter] = useState('all')
+  // Run-status filter matches the latest run; 'none' = no run yet.
+  const [statusFilter, setStatusFilter] = useState('all')
   const [runTarget, setRunTarget] = useState<WorkflowListItem | null>(null)
   const [tokenTarget, setTokenTarget] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<WorkflowListItem | null>(
@@ -60,15 +82,54 @@ function WorkflowList() {
   )
   const deleteMutation = useDeleteWorkflowMutation()
 
+  const spaceFiltered = useMemo(
+    () =>
+      (workflows ?? []).filter(
+        (wf) => currentSpace === null || wf.namespace === currentSpace
+      ),
+    [workflows, currentSpace]
+  )
+  // Filter options aggregate the current list's deploy targets (deduped and
+  // sorted), so entries never appear that no visible workflow matches.
+  const appOptions = useMemo(
+    () => aggregateUnique(spaceFiltered, (wf) => wf.apps),
+    [spaceFiltered]
+  )
+  const clusterOptions = useMemo(
+    () => aggregateUnique(spaceFiltered, (wf) => wf.clusters),
+    [spaceFiltered]
+  )
+
+  // Latest runs fetched once per visible workflow (parent-level map) so the
+  // status filter and the 最近运行 column share the same requests.
+  const runNames = useMemo(
+    () => spaceFiltered.map((wf) => wf.name),
+    [spaceFiltered]
+  )
+  const { latestByName, pendingNames } = useLatestRuns(runNames)
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
-    return (workflows ?? []).filter(
+    return spaceFiltered.filter(
       (wf) =>
-        q === '' ||
-        wf.name.toLowerCase().includes(q) ||
-        wf.description.toLowerCase().includes(q)
+        (appFilter === 'all' || (wf.apps ?? []).includes(appFilter)) &&
+        (clusterFilter === 'all' ||
+          (wf.clusters ?? []).includes(clusterFilter)) &&
+        (statusFilter === 'all' ||
+          (statusFilter === 'none' && !latestByName[wf.name]) ||
+          latestByName[wf.name]?.status === statusFilter) &&
+        (q === '' ||
+          wf.name.toLowerCase().includes(q) ||
+          wf.description.toLowerCase().includes(q))
     )
-  }, [workflows, search])
+  }, [
+    spaceFiltered,
+    search,
+    appFilter,
+    clusterFilter,
+    statusFilter,
+    latestByName,
+  ])
 
   const onTriggered = (run: TriggerRunResponse) => {
     if (runTarget) {
@@ -79,12 +140,64 @@ function WorkflowList() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <Input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder={t('workflow.list.search')}
-          className="w-56"
-        />
+        <div className="flex flex-wrap items-center gap-2">
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={t('workflow.list.search')}
+            className="w-56"
+          />
+          <Select value={clusterFilter} onValueChange={setClusterFilter}>
+            <SelectTrigger className="w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">
+                {t('workflow.list.allClusters')}
+              </SelectItem>
+              {clusterOptions.map((cluster) => (
+                <SelectItem key={cluster} value={cluster}>
+                  {cluster}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={appFilter} onValueChange={setAppFilter}>
+            <SelectTrigger className="w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t('workflow.list.allApps')}</SelectItem>
+              {appOptions.map((app) => (
+                <SelectItem key={app} value={app}>
+                  {app}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">
+                {t('workflow.list.allRunStatuses')}
+              </SelectItem>
+              <SelectItem value="succeeded">
+                {t('workflow.statuses.succeeded')}
+              </SelectItem>
+              <SelectItem value="failed">
+                {t('workflow.statuses.failed')}
+              </SelectItem>
+              <SelectItem value="running">
+                {t('workflow.statuses.running')}
+              </SelectItem>
+              <SelectItem value="none">
+                {t('workflow.list.runStatusNone')}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
         <Button onClick={() => navigate('/workflows/new')}>
           ＋ {t('workflow.list.create')}
         </Button>
@@ -118,7 +231,13 @@ function WorkflowList() {
           {
             id: 'latestRun',
             header: t('workflow.list.latestRun'),
-            cell: ({ row }) => <LatestRunCell name={row.original.name} />,
+            cell: ({ row }) => (
+              <LatestRunCell
+                name={row.original.name}
+                run={latestByName[row.original.name]}
+                loading={pendingNames.includes(row.original.name)}
+              />
+            ),
           },
           {
             accessorKey: 'currentRev',
@@ -156,6 +275,11 @@ function WorkflowList() {
             {
               label: t('workflow.list.edit'),
               onClick: (wf) => navigate(`/workflows/${wf.name}`),
+            },
+            {
+              label: t('workflow.list.copyWorkflow'),
+              onClick: (wf) =>
+                navigate(`/workflows/new?copy=${encodeURIComponent(wf.name)}`),
             },
             {
               label: t('common.actions.delete'),
@@ -254,11 +378,19 @@ function RunParamsDialogHost({
   )
 }
 
-function LatestRunCell({ name }: { name: string }) {
+// Renders from the parent's latest-run map (useLatestRuns); no query of its own.
+function LatestRunCell({
+  name,
+  run,
+  loading,
+}: {
+  name: string
+  run: RunSummary | undefined
+  loading: boolean
+}) {
   const { t } = useTranslation()
-  const { data: run, isLoading } = useLatestRun(name)
 
-  if (isLoading) {
+  if (loading) {
     return <span className="text-xs text-muted-foreground">…</span>
   }
   if (!run) {

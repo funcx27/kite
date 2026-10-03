@@ -1,15 +1,38 @@
 // Editor property drawer: per node type, one form following spec.go's props
 // structs (BuildProps / DeployProps / ApprovalProps / NotifyProps) plus the
-// shared node fields (id / name / onFailure / timeout). credentialRef is a
-// plain text input for M4 (design §11).
-import { useMemo, useRef } from 'react'
-import { IconTrash } from '@tabler/icons-react'
+// shared node fields (id / name / onFailure / timeout). Lists that exist on
+// the host (clusters, applications, credentials) render as selects and fall
+// back to free text when the list cannot serve a pick.
+import { useMemo, useRef, useState } from 'react'
+import { useApplications } from '@/application/api'
+import {
+  IconCheck,
+  IconChevronDown,
+  IconTrash,
+  IconX,
+} from '@tabler/icons-react'
 import { useTranslation } from 'react-i18next'
 
+import { cn } from '@/lib/utils'
+import { useCluster } from '@/hooks/use-cluster'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
 import {
   Select,
   SelectContent,
@@ -18,10 +41,12 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
-import { Textarea } from '@/components/ui/textarea'
 
-import { isValidNodeNodeId, nodeTypeAccent } from '../lib'
-import type { ParamSpec, WorkflowNode, WorkflowNodeType } from '../types'
+import { useCredentials, useUserDirectory } from '../api'
+import type { UserDirectoryEntry } from '../api'
+import { buildTemplateRefs, isValidNodeNodeId, nodeTypeAccent } from '../lib'
+import type { ParamSpec, WorkflowNode } from '../types'
+import { TemplateInput } from './template-input'
 
 export interface PropertyDrawerProps {
   node: WorkflowNode | null
@@ -32,14 +57,10 @@ export interface PropertyDrawerProps {
   onDelete: () => void
 }
 
-// Known output keys per node type, feeding the steps.* template chips
-// (mirrors the runners' outputs in engine/runner.go).
-const outputKeysByType: Record<WorkflowNodeType, string[]> = {
-  'build-image': ['imageRef', 'digest', 'tag'],
-  'deploy-app': ['revision', 'preview'],
-  approval: [],
-  notify: ['delivered'],
-}
+// Select sentinel for "no credential": Radix forbids empty item values, and
+// credential names are DNS-1123 labels (no underscores) so this cannot
+// collide with a real name.
+const credentialNoneValue = '__none__'
 
 export function PropertyDrawer({
   node,
@@ -49,28 +70,48 @@ export function PropertyDrawer({
   onDelete,
 }: PropertyDrawerProps) {
   const { t } = useTranslation()
-  // The template-var chips insert into the field the user focused last.
+  // The template-var chips insert into the field the user focused last, at
+  // that input's current caret position.
   const focusedField = useRef<string | null>(null)
+  const focusedInput = useRef<HTMLInputElement | HTMLTextAreaElement | null>(
+    null
+  )
 
-  const templateVars = useMemo(() => {
-    const vars = params.map((p) => `params.${p.name}`)
-    vars.push('run.number', 'run.status', 'run.url')
-    if (node) {
-      for (const other of nodes) {
-        if (other.id === node.id) continue
-        for (const key of outputKeysByType[other.type] ?? []) {
-          vars.push(`steps.${other.id}.outputs.${key}`)
-        }
-      }
+  // Focus events bubble, so one capture handler on the form container keeps
+  // the focused DOM element; its selectionStart/End stay readable at chip
+  // click time even though the input has lost focus.
+  const recordFocusedInput = (e: React.FocusEvent) => {
+    const target = e.target
+    if (
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement
+    ) {
+      focusedInput.current = target
     }
-    return vars
-  }, [params, node, nodes])
+  }
+
+  const templateVars = useMemo(
+    () => buildTemplateRefs(params, nodes, node?.id),
+    [params, nodes, node?.id]
+  )
+
+  // Splice token at the focused input's caret; append when the selection is
+  // unavailable (e.g. inputs whose selectionStart reports null).
+  const spliceAtCursor = (current: string, token: string): string => {
+    const el = focusedInput.current
+    const start = el?.selectionStart
+    const end = el?.selectionEnd
+    if (start === null || start === undefined || end === null) {
+      return current + token
+    }
+    return current.slice(0, start) + token + current.slice(end)
+  }
 
   const insertVar = (token: string) => {
     if (!node || !focusedField.current) return
     const field = focusedField.current
     if (field === '__name__') {
-      onChange({ ...node, name: node.name + token })
+      onChange({ ...node, name: spliceAtCursor(node.name, token) })
       return
     }
     if (field.includes('.')) {
@@ -78,11 +119,16 @@ export function PropertyDrawer({
       const nested = {
         ...((node.props?.[group] as Record<string, unknown>) ?? {}),
       }
-      nested[key] = String(nested[key] ?? '') + token
+      nested[key] = spliceAtCursor(String(nested[key] ?? ''), token)
       onChange({ ...node, props: { ...(node.props ?? {}), [group]: nested } })
       return
     }
-    setStringProp(node, field, readStringProp(node, field) + token, onChange)
+    setStringProp(
+      node,
+      field,
+      spliceAtCursor(readStringProp(node, field), token),
+      onChange
+    )
   }
 
   if (!node) {
@@ -102,6 +148,8 @@ export function PropertyDrawer({
   const patchProps = (key: string, value: unknown) =>
     onChange({ ...node, props: { ...(node.props ?? {}), [key]: value } })
 
+  const templateInputVars = { params, nodes, currentNodeId: node.id }
+
   return (
     <div className="flex h-full flex-col">
       <DrawerHeader
@@ -109,7 +157,10 @@ export function PropertyDrawer({
         sub={t(`workflow.nodeTypes.${node.type}`)}
         accent={nodeTypeAccent[node.type]}
       />
-      <div className="flex-1 space-y-4 overflow-y-auto px-4 py-3">
+      <div
+        className="flex-1 space-y-4 overflow-y-auto px-4 py-3"
+        onFocusCapture={recordFocusedInput}
+      >
         <Field label={t('workflow.editor.nodeId')}>
           <Input
             value={node.id}
@@ -179,6 +230,7 @@ export function PropertyDrawer({
             node={node}
             patchProps={patchProps}
             onFocusField={(f) => (focusedField.current = f)}
+            templateVars={templateInputVars}
           />
         )}
         {node.type === 'deploy-app' && (
@@ -186,6 +238,7 @@ export function PropertyDrawer({
             node={node}
             patchProps={patchProps}
             onFocusField={(f) => (focusedField.current = f)}
+            templateVars={templateInputVars}
           />
         )}
         {node.type === 'approval' && (
@@ -193,6 +246,7 @@ export function PropertyDrawer({
             node={node}
             patchProps={patchProps}
             onFocusField={(f) => (focusedField.current = f)}
+            templateVars={templateInputVars}
           />
         )}
         {node.type === 'notify' && (
@@ -200,6 +254,7 @@ export function PropertyDrawer({
             node={node}
             patchProps={patchProps}
             onFocusField={(f) => (focusedField.current = f)}
+            templateVars={templateInputVars}
           />
         )}
       </div>
@@ -279,6 +334,13 @@ interface PropsFormShared {
   node: WorkflowNode
   patchProps: (key: string, value: unknown) => void
   onFocusField: (field: string) => void
+  // Autocomplete inputs for TemplateInput fields: params, sibling nodes and
+  // the owning node id (its own outputs stay out of the suggestions).
+  templateVars: {
+    params: ParamSpec[]
+    nodes: WorkflowNode[]
+    currentNodeId: string
+  }
 }
 
 function readStringProp(node: WorkflowNode, key: string): string {
@@ -295,7 +357,12 @@ function setStringProp(
   onChange({ ...node, props: { ...(node.props ?? {}), [key]: value } })
 }
 
-function BuildPropsForm({ node, patchProps, onFocusField }: PropsFormShared) {
+function BuildPropsForm({
+  node,
+  patchProps,
+  onFocusField,
+  templateVars,
+}: PropsFormShared) {
   const { t } = useTranslation()
   const gitUrl = readNestedString(node, 'git', 'url')
   const sourceKind = gitUrl
@@ -304,6 +371,18 @@ function BuildPropsForm({ node, patchProps, onFocusField }: PropsFormShared) {
       ? 'http'
       : 'git'
   const args = readArgs(node)
+  // credentialRef is optional: the Select degrades to the plain input when
+  // the credential list failed to load or is empty (query still pending
+  // counts as empty, so the field is always usable).
+  const { data: credentials, isSuccess: credentialsLoaded } = useCredentials()
+  const credentialNames = credentialsLoaded
+    ? (credentials ?? []).map((c) => c.name)
+    : []
+  const savedCredential = readStringProp(node, 'credentialRef')
+  const credentialEcho =
+    savedCredential && !credentialNames.includes(savedCredential)
+      ? savedCredential
+      : undefined
 
   const setGit = (key: string, value: string) => {
     const git = { ...((node.props?.git as Record<string, unknown>) ?? {}) }
@@ -318,18 +397,53 @@ function BuildPropsForm({ node, patchProps, onFocusField }: PropsFormShared) {
         label={t('workflow.props.credentialRef')}
         hint={t('workflow.props.credentialRefHint')}
       >
-        <Input
-          value={readStringProp(node, 'credentialRef')}
-          onChange={(e) =>
-            patchProps('credentialRef', e.target.value || undefined)
-          }
-          onFocus={() => onFocusField('credentialRef')}
-        />
+        {credentialNames.length > 0 ? (
+          <Select
+            value={savedCredential || credentialNoneValue}
+            onValueChange={(v) =>
+              patchProps(
+                'credentialRef',
+                v === credentialNoneValue ? undefined : v
+              )
+            }
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={credentialNoneValue}>
+                {t('workflow.props.credentialRefNone')}
+              </SelectItem>
+              {credentialNames.map((name) => (
+                <SelectItem key={name} value={name}>
+                  {name}
+                </SelectItem>
+              ))}
+              {credentialEcho && (
+                <SelectItem value={credentialEcho}>
+                  {credentialEcho}{' '}
+                  <span className="text-muted-foreground">
+                    {t('workflow.props.currentValue')}
+                  </span>
+                </SelectItem>
+              )}
+            </SelectContent>
+          </Select>
+        ) : (
+          <Input
+            value={savedCredential}
+            onChange={(e) =>
+              patchProps('credentialRef', e.target.value || undefined)
+            }
+            onFocus={() => onFocusField('credentialRef')}
+          />
+        )}
       </Field>
       <Field label={t('workflow.props.gitUrl')}>
-        <Input
+        <TemplateInput
+          {...templateVars}
           value={gitUrl}
-          onChange={(e) => setGit('url', e.target.value)}
+          onValueChange={(v) => setGit('url', v)}
           onFocus={() => onFocusField('git.url')}
           placeholder="https://github.com/org/repo.git"
         />
@@ -355,9 +469,10 @@ function BuildPropsForm({ node, patchProps, onFocusField }: PropsFormShared) {
       )}
       {!gitUrl && (
         <Field label={t('workflow.props.httpUrl')}>
-          <Input
+          <TemplateInput
+            {...templateVars}
             value={readStringProp(node, 'httpUrl')}
-            onChange={(e) => patchProps('httpUrl', e.target.value || undefined)}
+            onValueChange={(v) => patchProps('httpUrl', v || undefined)}
             onFocus={() => onFocusField('httpUrl')}
           />
         </Field>
@@ -373,26 +488,28 @@ function BuildPropsForm({ node, patchProps, onFocusField }: PropsFormShared) {
         />
       </Field>
       <Field label={t('workflow.props.dockerfileContent')}>
-        <Textarea
-          value={readStringProp(node, 'dockerfileContent')}
-          onChange={(e) =>
-            patchProps('dockerfileContent', e.target.value || undefined)
-          }
-          onFocus={() => onFocusField('dockerfileContent')}
+        <TemplateInput
+          {...templateVars}
+          multiline
           rows={4}
           className="font-mono text-xs"
+          value={readStringProp(node, 'dockerfileContent')}
+          onValueChange={(v) => patchProps('dockerfileContent', v || undefined)}
+          onFocus={() => onFocusField('dockerfileContent')}
         />
       </Field>
       <Field
         label={t('workflow.props.args')}
         hint={t('workflow.props.argsHint')}
       >
-        <Textarea
-          value={args}
-          onChange={(e) => patchProps('args', parseArgs(e.target.value))}
-          onFocus={() => onFocusField('args')}
+        <TemplateInput
+          {...templateVars}
+          multiline
           rows={3}
           className="font-mono text-xs"
+          value={args}
+          onValueChange={(v) => patchProps('args', parseArgs(v))}
+          onFocus={() => onFocusField('args')}
         />
       </Field>
       <Field
@@ -411,9 +528,10 @@ function BuildPropsForm({ node, patchProps, onFocusField }: PropsFormShared) {
         label={t('workflow.props.outputRef')}
         hint={t('workflow.props.outputRefHint')}
       >
-        <Input
+        <TemplateInput
+          {...templateVars}
           value={readStringProp(node, 'outputRef')}
-          onChange={(e) => patchProps('outputRef', e.target.value || undefined)}
+          onValueChange={(v) => patchProps('outputRef', v || undefined)}
           onFocus={() => onFocusField('outputRef')}
         />
       </Field>
@@ -421,31 +539,88 @@ function BuildPropsForm({ node, patchProps, onFocusField }: PropsFormShared) {
   )
 }
 
-function DeployPropsForm({ node, patchProps, onFocusField }: PropsFormShared) {
+function DeployPropsForm({
+  node,
+  patchProps,
+  onFocusField,
+  templateVars,
+}: PropsFormShared) {
   const { t } = useTranslation()
+  const { clusters } = useCluster()
+  const { data: applications } = useApplications()
+  const savedApp = readStringProp(node, 'app')
+  const savedCluster = readStringProp(node, 'cluster')
+
+  const appNames = (applications ?? []).map((app) => app.name)
+  const appEcho =
+    savedApp && !appNames.includes(savedApp) ? savedApp : undefined
+  const appOptions = appEcho ? [appEcho, ...appNames] : appNames
+
+  // Clusters the selected app already has configs on sort first; the rest
+  // stay selectable so a brand-new binding can be created.
+  const clusterOptions = useMemo(() => {
+    const usable = clusters.filter((cluster) => !cluster.error)
+    if (!savedApp) return usable
+    const app = applications?.find((candidate) => candidate.name === savedApp)
+    if (!app) return usable
+    const bound = new Set(app.configs.map((config) => config.cluster))
+    return [
+      ...usable.filter((cluster) => bound.has(cluster.name)),
+      ...usable.filter((cluster) => !bound.has(cluster.name)),
+    ]
+  }, [clusters, applications, savedApp])
+  const clusterEcho =
+    savedCluster && !clusterOptions.some((c) => c.name === savedCluster)
+      ? savedCluster
+      : undefined
+
   return (
     <div className="space-y-4">
       <Field label={t('workflow.props.app')}>
-        <Input
-          value={readStringProp(node, 'app')}
-          onChange={(e) => patchProps('app', e.target.value)}
-          onFocus={() => onFocusField('app')}
+        <AppCombobox
+          value={savedApp}
+          options={appOptions}
+          echoValue={appEcho}
+          onSelect={(name) => patchProps('app', name)}
+          placeholder={t('workflow.props.appPlaceholder')}
+          searchPlaceholder={t('workflow.props.appSearch')}
+          emptyText={t('workflow.props.appEmpty')}
+          currentLabel={t('workflow.props.currentValue')}
         />
       </Field>
       <Field label={t('workflow.props.cluster')}>
-        <Input
-          value={readStringProp(node, 'cluster')}
-          onChange={(e) => patchProps('cluster', e.target.value)}
-          onFocus={() => onFocusField('cluster')}
-        />
+        <Select
+          value={savedCluster}
+          onValueChange={(v) => patchProps('cluster', v)}
+        >
+          <SelectTrigger className="w-full">
+            <SelectValue placeholder={t('workflow.props.clusterPlaceholder')} />
+          </SelectTrigger>
+          <SelectContent>
+            {clusterOptions.map((cluster) => (
+              <SelectItem key={cluster.name} value={cluster.name}>
+                {cluster.name}
+              </SelectItem>
+            ))}
+            {clusterEcho && (
+              <SelectItem value={clusterEcho}>
+                {clusterEcho}{' '}
+                <span className="text-muted-foreground">
+                  {t('workflow.props.currentValue')}
+                </span>
+              </SelectItem>
+            )}
+          </SelectContent>
+        </Select>
       </Field>
       <Field
         label={t('workflow.props.image')}
         hint={t('workflow.props.imageHint')}
       >
-        <Input
+        <TemplateInput
+          {...templateVars}
           value={readStringProp(node, 'image')}
-          onChange={(e) => patchProps('image', e.target.value || undefined)}
+          onValueChange={(v) => patchProps('image', v || undefined)}
           onFocus={() => onFocusField('image')}
           placeholder="{{steps.build1.outputs.imageRef}}"
         />
@@ -461,47 +636,189 @@ function DeployPropsForm({ node, patchProps, onFocusField }: PropsFormShared) {
   )
 }
 
+// Searchable single select for the deploy target app, following the
+// NamespaceSelector Popover+Command pattern. `echoValue` (a saved value not
+// in the application list) is appended to `options` by the caller and marked
+// as the current value.
+function AppCombobox({
+  value,
+  options,
+  echoValue,
+  onSelect,
+  placeholder,
+  searchPlaceholder,
+  emptyText,
+  currentLabel,
+}: {
+  value: string
+  options: string[]
+  echoValue: string | undefined
+  onSelect: (name: string) => void
+  placeholder: string
+  searchPlaceholder: string
+  emptyText: string
+  currentLabel: string
+}) {
+  const [open, setOpen] = useState(false)
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className="w-full justify-between font-normal"
+        >
+          <span className={cn('truncate', !value && 'text-muted-foreground')}>
+            {value || placeholder}
+          </span>
+          <IconChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        className="w-[var(--radix-popover-trigger-width)] p-0"
+      >
+        <Command>
+          <CommandInput placeholder={searchPlaceholder} className="h-9" />
+          <CommandList>
+            <CommandEmpty>{emptyText}</CommandEmpty>
+            <CommandGroup>
+              {options.map((name) => (
+                <CommandItem
+                  key={name}
+                  value={name}
+                  onSelect={() => {
+                    onSelect(name)
+                    setOpen(false)
+                  }}
+                >
+                  <IconCheck
+                    className={cn(
+                      'mr-2 h-4 w-4 shrink-0',
+                      name === value ? 'opacity-100' : 'opacity-0'
+                    )}
+                  />
+                  <span className="truncate">{name}</span>
+                  {name === echoValue && (
+                    <span className="ml-auto shrink-0 pl-2 text-xs text-muted-foreground">
+                      {currentLabel}
+                    </span>
+                  )}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
 function ApprovalPropsForm({
   node,
   patchProps,
   onFocusField,
+  templateVars,
 }: PropsFormShared) {
   const { t } = useTranslation()
-  const assignees =
-    (node.props?.assignees as Array<number | string> | undefined) ?? []
+  // Assignees are user IDs ([]uint on the backend); the directory turns them
+  // into a searchable username picker. It degrades to the digits-only input
+  // when the directory is not usable — pending counts as unavailable, so the
+  // field is always editable.
+  const { data: directory } = useUserDirectory()
+  const directoryUsers = directory?.users ?? []
+  const pickerEnabled =
+    directory !== undefined && !directory.forbidden && directoryUsers.length > 0
+  const assignees = (node.props?.assignees as number[] | undefined) ?? []
+
+  // A stored ID missing from the directory (deleted or disabled user) still
+  // shows, as #<id>, so the saved spec never silently loses assignees.
+  const assigneeLabel = (id: number) =>
+    directoryUsers.find((user) => user.id === id)?.username ?? `#${id}`
+
+  const toggleAssignee = (id: number) => {
+    const next = assignees.includes(id)
+      ? assignees.filter((existing) => existing !== id)
+      : [...assignees, id]
+    patchProps('assignees', next.length > 0 ? next : undefined)
+  }
+
   return (
     <div className="space-y-4">
       <Field
         label={t('workflow.props.assignees')}
-        hint={t('workflow.props.assigneesHint')}
+        hint={
+          pickerEnabled
+            ? t('workflow.props.assigneesHint')
+            : t('workflow.props.assigneesNoDirectory')
+        }
       >
-        <Input
-          value={assignees.join(',')}
-          // Assignees are user IDs ([]uint on the backend): keep the input
-          // digits-only so a non-numeric entry can never reach the spec — an
-          // unparsable assignee would silently drop the node from the timeout
-          // patrol and the assignee check.
-          onChange={(e) => {
-            const digits = e.target.value.replace(/[^0-9,]/g, '')
-            patchProps(
-              'assignees',
-              digits
-                .split(',')
-                .map((v) => v.trim())
-                .filter((v) => v !== '')
-                .map((v) => Number(v))
-            )
-          }}
-          onFocus={() => onFocusField('assignees')}
-          placeholder="3,7"
-        />
+        {pickerEnabled ? (
+          <div className="space-y-1.5">
+            <AssigneeCombobox
+              users={directoryUsers}
+              selected={assignees}
+              summary={
+                assignees.length > 0
+                  ? t('workflow.props.assigneesPicked', {
+                      count: assignees.length,
+                    })
+                  : t('workflow.props.assigneesPlaceholder')
+              }
+              searchPlaceholder={t('workflow.props.assigneesSearch')}
+              emptyText={t('workflow.props.assigneesEmpty')}
+              onToggle={toggleAssignee}
+            />
+            {assignees.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {assignees.map((id) => (
+                  <Badge key={id} variant="secondary">
+                    {assigneeLabel(id)}
+                    <button
+                      type="button"
+                      aria-label={t('workflow.props.assigneesRemove')}
+                      onClick={() => toggleAssignee(id)}
+                      className="transition-colors hover:text-destructive"
+                    >
+                      <IconX />
+                    </button>
+                  </Badge>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <Input
+            value={assignees.join(',')}
+            // Keep the input digits-only so a non-numeric entry can never
+            // reach the spec — an unparsable assignee would silently drop the
+            // node from the timeout patrol and the assignee check.
+            onChange={(e) => {
+              const digits = e.target.value.replace(/[^0-9,]/g, '')
+              patchProps(
+                'assignees',
+                digits
+                  .split(',')
+                  .map((v) => v.trim())
+                  .filter((v) => v !== '')
+                  .map((v) => Number(v))
+              )
+            }}
+            onFocus={() => onFocusField('assignees')}
+            placeholder="3,7"
+          />
+        )}
       </Field>
       <Field label={t('workflow.props.message')}>
-        <Textarea
-          value={readStringProp(node, 'message')}
-          onChange={(e) => patchProps('message', e.target.value || undefined)}
-          onFocus={() => onFocusField('message')}
+        <TemplateInput
+          {...templateVars}
+          multiline
           rows={2}
+          value={readStringProp(node, 'message')}
+          onValueChange={(v) => patchProps('message', v || undefined)}
+          onFocus={() => onFocusField('message')}
         />
       </Field>
       <div className="grid grid-cols-2 gap-3">
@@ -543,7 +860,84 @@ function ApprovalPropsForm({
   )
 }
 
-function NotifyPropsForm({ node, patchProps, onFocusField }: PropsFormShared) {
+// Multi-select popover for approval assignees, following the AppCombobox
+// Popover+Command pattern. Selection toggles in place (the popover stays
+// open); the node keeps storing numeric user IDs, usernames are display only.
+function AssigneeCombobox({
+  users,
+  selected,
+  summary,
+  searchPlaceholder,
+  emptyText,
+  onToggle,
+}: {
+  users: UserDirectoryEntry[]
+  selected: number[]
+  summary: string
+  searchPlaceholder: string
+  emptyText: string
+  onToggle: (id: number) => void
+}) {
+  const [open, setOpen] = useState(false)
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className="w-full justify-between font-normal"
+        >
+          <span
+            className={cn(
+              'truncate',
+              selected.length === 0 && 'text-muted-foreground'
+            )}
+          >
+            {summary}
+          </span>
+          <IconChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        className="w-[var(--radix-popover-trigger-width)] p-0"
+      >
+        <Command>
+          <CommandInput placeholder={searchPlaceholder} className="h-9" />
+          <CommandList>
+            <CommandEmpty>{emptyText}</CommandEmpty>
+            <CommandGroup>
+              {users.map((user) => (
+                <CommandItem
+                  key={user.id}
+                  value={user.username}
+                  onSelect={() => onToggle(user.id)}
+                >
+                  <IconCheck
+                    className={cn(
+                      'mr-2 h-4 w-4 shrink-0',
+                      selected.includes(user.id) ? 'opacity-100' : 'opacity-0'
+                    )}
+                  />
+                  <span className="truncate">{user.username}</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+function NotifyPropsForm({
+  node,
+  patchProps,
+  onFocusField,
+  templateVars,
+}: PropsFormShared) {
   const { t } = useTranslation()
   return (
     <div className="space-y-4">
@@ -562,14 +956,14 @@ function NotifyPropsForm({ node, patchProps, onFocusField }: PropsFormShared) {
         label={t('workflow.props.payloadTemplate')}
         hint={t('workflow.props.payloadTemplateHint')}
       >
-        <Textarea
-          value={readStringProp(node, 'payloadTemplate')}
-          onChange={(e) =>
-            patchProps('payloadTemplate', e.target.value || undefined)
-          }
-          onFocus={() => onFocusField('payloadTemplate')}
+        <TemplateInput
+          {...templateVars}
+          multiline
           rows={5}
           className="font-mono text-xs"
+          value={readStringProp(node, 'payloadTemplate')}
+          onValueChange={(v) => patchProps('payloadTemplate', v || undefined)}
+          onFocus={() => onFocusField('payloadTemplate')}
         />
       </Field>
     </div>

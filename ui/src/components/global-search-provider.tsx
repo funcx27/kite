@@ -7,6 +7,7 @@ import {
   useEffect,
   useState,
 } from 'react'
+import { useWorkMode } from '@/platform/work-mode-context'
 
 interface GlobalSearchContextType {
   isOpen: boolean
@@ -35,12 +36,17 @@ interface GlobalSearchProviderProps {
 
 export function GlobalSearchProvider({ children }: GlobalSearchProviderProps) {
   const [isOpen, setIsOpen] = useState(false)
+  const { isApplicationMode } = useWorkMode()
 
   const openSearch = () => setIsOpen(true)
   const closeSearch = () => setIsOpen(false)
   const toggleSearch = useCallback(() => setIsOpen((prev) => !prev), [])
 
   useEffect(() => {
+    // Global search is a professional-console affordance; in application mode
+    // the shortcut must stay inert.
+    if (isApplicationMode) return
+
     const handleKeyDown = (e: KeyboardEvent) => {
       // Command+K or Ctrl+K to open search
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
@@ -56,7 +62,7 @@ export function GlobalSearchProvider({ children }: GlobalSearchProviderProps) {
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [isOpen, toggleSearch])
+  }, [isOpen, toggleSearch, isApplicationMode])
 
   const value = {
     isOpen,
