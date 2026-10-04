@@ -23,6 +23,7 @@ import (
 	"github.com/funcx27/kite/modules/buildfleet/fleet"
 	"github.com/funcx27/kite/modules/buildfleet/gitctx"
 	"github.com/funcx27/kite/modules/buildfleet/httpctx"
+	"github.com/funcx27/kite/modules/buildfleet/resource"
 	"github.com/funcx27/kite/modules/workflow"
 	"github.com/funcx27/kite/modules/workflow/exec"
 	"github.com/zxh326/kite/pkg/cluster"
@@ -202,6 +203,7 @@ func (d *Deps) BuildImage(ctx context.Context, req exec.BuildRequest, onLog func
 	if err != nil {
 		return exec.BuildResult{}, err
 	}
+	d.applyPodResources(&freq)
 	res, err := d.fleet.Build(ctx, freq, progressLines(onLog))
 	if err != nil {
 		// Source errors embed the raw client URL (gitctx.Clone), which may
@@ -273,6 +275,30 @@ func (d *Deps) applyCredentials(freq *fleet.Request, ref string) error {
 		return fmt.Errorf("credential %q cannot be resolved: credential center is not wired", ref)
 	}
 	return d.creds.InjectFleetCredentials(freq, ref)
+}
+
+// applyPodResources fills unset resource fields from the managed provider
+// row named by freq.Provider: its pod shape (cores / Gi) applies to this
+// build's runtime. Config-file providers have no row — record-not-found is
+// the normal case and skips silently; any other DB failure logs and keeps
+// the default shape, a spec lookup must never fail the build.
+func (d *Deps) applyPodResources(freq *fleet.Request) {
+	if freq.Provider == "" {
+		return
+	}
+	row, err := model.GetBuildProviderByName(freq.Provider)
+	if err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			klog.Errorf("Failed to load build provider %q pod resources: %v", freq.Provider, err)
+		}
+		return
+	}
+	if row.PodCPU > 0 && freq.Resources.CPU == 0 {
+		freq.Resources.CPU = row.PodCPU
+	}
+	if row.PodMemoryGi > 0 && freq.Resources.Memory == 0 {
+		freq.Resources.Memory = resource.Bytes(row.PodMemoryGi * float64(resource.Giga))
+	}
 }
 
 // progressLines bridges builder events to onLog text lines: one line per

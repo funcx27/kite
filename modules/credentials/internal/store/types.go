@@ -17,8 +17,11 @@ type Model struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
-// GitCred authenticates git fetches over http(s) with basic auth.
+// GitCred authenticates git fetches over http(s) with basic auth. Host is
+// an optional identification label: the build path attaches git auth to the
+// request's single git source, so it is not matched against today.
 type GitCred struct {
+	Host     string `json:"host,omitempty"`
 	Username string `json:"username"`
 	Password string `json:"password"`
 }

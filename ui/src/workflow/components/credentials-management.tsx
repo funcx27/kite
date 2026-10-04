@@ -60,6 +60,7 @@ interface CredentialForm {
   name: string
   description: string
   kind: CredentialKind
+  gitHost: string
   gitUsername: string
   gitPassword: string
   registry: RegistryCredentialPayload[]
@@ -69,6 +70,7 @@ const emptyForm: CredentialForm = {
   name: '',
   description: '',
   kind: 'git',
+  gitHost: '',
   gitUsername: '',
   gitPassword: '',
   registry: [{ host: '', username: '', password: '' }],
@@ -77,7 +79,13 @@ const emptyForm: CredentialForm = {
 function payloadOf(form: CredentialForm): CredentialPayload | null {
   if (form.kind === 'git') {
     if (form.gitUsername === '' || form.gitPassword === '') return null
-    return { git: { username: form.gitUsername, password: form.gitPassword } }
+    return {
+      git: {
+        host: form.gitHost.trim() || undefined,
+        username: form.gitUsername,
+        password: form.gitPassword,
+      },
+    }
   }
   const registry = form.registry.filter(
     (r) => r.host !== '' && r.username !== '' && r.password !== ''
@@ -120,6 +128,8 @@ export function CredentialsManagement() {
       ...emptyForm,
       name: credential.name,
       description: credential.description,
+      // Non-secret shape summary; secrets themselves are never echoed back.
+      gitHost: credential.gitHost,
     })
     setEditingName(credential.name)
     setDialogOpen(true)
@@ -171,7 +181,10 @@ export function CredentialsManagement() {
     <Card>
       <CardHeader className="flex flex-row items-start justify-between space-y-0">
         <div className="space-y-1">
-          <CardTitle>{t('workflow.credentials.title')}</CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            {t('workflow.credentials.title')}
+            <Badge variant="secondary">{t('workflow.globalBadge')}</Badge>
+          </CardTitle>
           <CardDescription>
             {t('workflow.credentials.description')}
           </CardDescription>
@@ -229,7 +242,13 @@ export function CredentialsManagement() {
               header: t('workflow.credentials.accounts'),
               cell: ({ row }) => {
                 const accounts = [
-                  ...(row.original.hasGit ? [row.original.gitUsername] : []),
+                  ...(row.original.hasGit
+                    ? [
+                        row.original.gitHost
+                          ? `${row.original.gitHost}:${row.original.gitUsername}`
+                          : row.original.gitUsername,
+                      ]
+                    : []),
                   ...row.original.registryAccounts.map(
                     (a) => `${a.host}:${a.username}`
                   ),
@@ -348,33 +367,52 @@ export function CredentialsManagement() {
             </div>
 
             {form.kind === 'git' ? (
-              <div className="grid grid-cols-2 gap-3">
+              <>
                 <div className="space-y-1.5">
                   <Label className="text-xs">
-                    {t('workflow.credentials.username')}
+                    {t('workflow.credentials.gitAddress')}
                   </Label>
                   <Input
-                    value={form.gitUsername}
+                    value={form.gitHost}
                     onChange={(e) =>
-                      setForm({ ...form, gitUsername: e.target.value })
+                      setForm({ ...form, gitHost: e.target.value })
                     }
+                    placeholder="git.example.com"
+                    className="font-mono"
                     autoComplete="off"
                   />
+                  <p className="text-[11px] text-muted-foreground">
+                    {t('workflow.credentials.gitAddressHint')}
+                  </p>
                 </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs">
-                    {t('workflow.credentials.password')}
-                  </Label>
-                  <Input
-                    type="password"
-                    value={form.gitPassword}
-                    onChange={(e) =>
-                      setForm({ ...form, gitPassword: e.target.value })
-                    }
-                    autoComplete="new-password"
-                  />
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">
+                      {t('workflow.credentials.username')}
+                    </Label>
+                    <Input
+                      value={form.gitUsername}
+                      onChange={(e) =>
+                        setForm({ ...form, gitUsername: e.target.value })
+                      }
+                      autoComplete="off"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">
+                      {t('workflow.credentials.password')}
+                    </Label>
+                    <Input
+                      type="password"
+                      value={form.gitPassword}
+                      onChange={(e) =>
+                        setForm({ ...form, gitPassword: e.target.value })
+                      }
+                      autoComplete="new-password"
+                    />
+                  </div>
                 </div>
-              </div>
+              </>
             ) : (
               <div className="space-y-2">
                 {form.registry.map((entry, index) => (

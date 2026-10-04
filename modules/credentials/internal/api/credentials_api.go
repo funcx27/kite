@@ -31,6 +31,7 @@ type summary struct {
 	Name             string            `json:"name"`
 	Description      string            `json:"description"`
 	HasGit           bool              `json:"hasGit"`
+	GitHost          string            `json:"gitHost"`
 	GitUsername      string            `json:"gitUsername"`
 	RegistryHosts    []string          `json:"registryHosts"`
 	RegistryAccounts []registryAccount `json:"registryAccounts"`
@@ -66,6 +67,7 @@ func summarize(row *store.Credential) (summary, error) {
 	}
 	if p.Git != nil {
 		out.HasGit = true
+		out.GitHost = p.Git.Host
 		out.GitUsername = p.Git.Username
 	}
 	for _, rc := range p.Registry {

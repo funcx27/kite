@@ -149,8 +149,11 @@ type Fleet struct {
 	taskMu sync.Mutex
 	tasks  map[string]TaskInfo // runtime ID -> in-flight build
 	// providerCache maps provider config name -> cache ref for solves
-	// on that provider's runtimes; empty = no cache round-trip.
+	// on that provider's runtimes; empty = no cache round-trip. pcMu
+	// guards it: runtime provider registration mutates the table while
+	// builds read it.
 	providerCache map[string]string
+	pcMu          sync.Mutex
 	flMu          sync.Mutex
 	flights       map[string]*flight // in-flight (and freshly finished) builds by request identity
 	// dedupeWindow is how long a finished build's result is reused for
@@ -225,6 +228,27 @@ func WithProviderCache(m map[string]string) Option {
 	return func(f *Fleet) { f.providerCache = m }
 }
 
+// SetProviderCache registers (or with an empty base, removes) one
+// provider's layer-cache base ref at serving time; runtime provider
+// registration calls it while builds consult the table.
+func (f *Fleet) SetProviderCache(name, base string) {
+	f.pcMu.Lock()
+	defer f.pcMu.Unlock()
+	if base == "" {
+		delete(f.providerCache, name)
+		return
+	}
+	f.providerCache[name] = base
+}
+
+// providerCacheBase is the locked read Build resolves the cache ref
+// through.
+func (f *Fleet) providerCacheBase(name string) string {
+	f.pcMu.Lock()
+	defer f.pcMu.Unlock()
+	return f.providerCache[name]
+}
+
 // WithDedupeWindow sets how long identical repeat builds reuse the last
 // result instead of rebuilding (0 = concurrency-only dedup).
 func WithDedupeWindow(d time.Duration) Option {
@@ -233,7 +257,7 @@ func WithDedupeWindow(d time.Duration) Option {
 
 func New(pool *runtime.Pool, s solver, opts ...Option) *Fleet {
 	f := &Fleet{pool: pool, solver: s, maxRetry: 3, tasks: map[string]TaskInfo{},
-		flights: map[string]*flight{}}
+		flights: map[string]*flight{}, providerCache: map[string]string{}}
 	if s == nil {
 		f.solver = builderSolver{b: builder.New()}
 	}
@@ -413,7 +437,7 @@ func (f *Fleet) build(ctx context.Context, req Request, cfg *buildConfig) (*Buil
 		// Layer-cache round-trip follows the serving provider (each
 		// provider may own its own cache registry) and the project
 		// identity derived from the request.
-		in.CacheRef = cacheRefFor(f.providerCache[f.pool.OwnerName(lease.Runtime().ID)],
+		in.CacheRef = cacheRefFor(f.providerCacheBase(f.pool.OwnerName(lease.Runtime().ID)),
 			req.OutputRef, sourceURLof(&req))
 		statusCh := f.statusFor(cfg)
 		res, err := f.solver.Solve(ctx, lease.Runtime().Addr, in, statusCh)

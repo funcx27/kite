@@ -27,7 +27,7 @@ func buildProviders(cfg *config.Config) ([]runtime.Provider, error) {
 	if err != nil {
 		return nil, err
 	}
-	for name, rt := range cfg.Runtimes {
+	for name, rt := range cfg.RuntimeProfiles() {
 		if rt.Rootless() && !strings.Contains(rt.Image(), "rootless") {
 			slog.Warn("runtime image does not look like a rootless image (no \"rootless\" in ref); "+
 				"rootful images fail under mode=rootless with mount permission errors",
@@ -35,8 +35,9 @@ func buildProviders(cfg *config.Config) ([]runtime.Provider, error) {
 		}
 	}
 	var out []runtime.Provider
-	extraHosts := extraHosts(cfg.Runtimes["default"].Hosts)
-	hostAliases := hostAliases(cfg.Runtimes["default"].Hosts)
+	def := cfg.DefaultRuntime()
+	extraHosts := extraHosts(def.Hosts)
+	hostAliases := hostAliases(def.Hosts)
 	// Shared buildkitd.toml for docker runtimes: one file, written once
 	// at startup; all containers bind-mount it read-only.
 	tomlPath := filepath.Join(cfg.Store, "buildkitd.toml")
@@ -102,7 +103,7 @@ func buildProviders(cfg *config.Config) ([]runtime.Provider, error) {
 // mirrors from the default runtime, plus every config k8s provider's
 // in-cluster cache registry (plain-http reachable from buildkitd pods).
 func effectiveRegTable(cfg *config.Config) (registry.Table, error) {
-	regTable, err := cfg.Runtimes["default"].RegistryTable()
+	regTable, err := cfg.DefaultRuntime().RegistryTable()
 	if err != nil {
 		return nil, err
 	}

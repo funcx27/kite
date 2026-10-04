@@ -107,6 +107,7 @@ func InitDB() {
 		KcrossSetting{},
 		KcrossBinding{},
 		BuildProvider{},
+		BuildRuntimeSetting{},
 	}
 	for _, model := range models {
 		err = DB.AutoMigrate(model)

@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -25,7 +26,10 @@ type Config struct {
 	Addr  string `yaml:"addr"`
 	Store string `yaml:"store"`
 	// Runtimes maps named runtime profiles; providers reference one by
-	// name (empty = "default"). Profiles drive image/mode/limits.
+	// name (empty = "default"). Profiles drive image/mode/limits. After
+	// Load returns, access goes through the mu-guarded accessors
+	// (DefaultRuntime, SetDefaultRuntime, RuntimeProfiles, Profile): the
+	// host rewrites the default profile while serving.
 	Runtimes map[string]Runtime `yaml:"runtimes"`
 	// Runtime is a compat alias: its fields merge into
 	// Runtimes["default"] after loading (single-profile configs stay
@@ -40,6 +44,10 @@ type Config struct {
 	// not picked up. Default "0" (concurrency-only dedup); e.g. "5m" enables result reuse.
 	DedupeWindow string     `yaml:"dedupeWindow"`
 	Providers    []Provider `yaml:"providers"`
+
+	// mu guards Runtimes after load. Profiles are replaced wholesale and
+	// never mutated in place, so a snapshot copy is a stable value.
+	mu sync.RWMutex
 }
 
 type Runtime struct {
@@ -566,8 +574,37 @@ func validateRuntime(name string, r Runtime) error {
 	return nil
 }
 
+// DefaultRuntime returns the default profile snapshot.
+func (c *Config) DefaultRuntime() Runtime {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.Runtimes["default"]
+}
+
+// SetDefaultRuntime replaces the default profile; the serving-time write
+// path (runtime settings) goes through it so concurrent profile reads
+// stay race-free.
+func (c *Config) SetDefaultRuntime(r Runtime) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.Runtimes["default"] = r
+}
+
+// RuntimeProfiles returns a copy of the full profile table.
+func (c *Config) RuntimeProfiles() map[string]Runtime {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := make(map[string]Runtime, len(c.Runtimes))
+	for name, r := range c.Runtimes {
+		out[name] = r
+	}
+	return out
+}
+
 // Profile returns the provider's runtime profile (validated at load).
 func (c *Config) Profile(p Provider) Runtime {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	r, ok := c.Runtimes[p.Runtime]
 	if !ok {
 		r = c.Runtimes["default"]

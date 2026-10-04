@@ -5,6 +5,7 @@
 // /workflows/new renders the create variant; /workflows/:name the editor.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useApplications } from '@/application/api'
+import { useSpaces } from '@/platform/space-context'
 import {
   addEdge,
   applyEdgeChanges,
@@ -21,6 +22,13 @@ import { toast } from 'sonner'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 
 import { useSaveWorkflowMutation, useWorkflow, WorkflowApiError } from '../api'
 import { ParamsDialog, TriggersDialog } from '../components/definition-dialogs'
@@ -140,10 +148,11 @@ export function WorkflowEditorPage() {
   const fromCluster = isCreate ? searchParams.get('cluster') : null
   const { data: copyWorkflow } = useWorkflow(copySource ?? undefined)
   const { data: applications } = useApplications({ disable: !fromApp })
+  const { spaces, currentSpace } = useSpaces()
   const saveMutation = useSaveWorkflowMutation()
 
   const [draftName, setDraftName] = useState('')
-  const [draftNamespace, setDraftNamespace] = useState('default')
+  const [draftNamespace, setDraftNamespace] = useState('')
   const [draftDescription, setDraftDescription] = useState('')
   const [params, setParams] = useState<ParamSpec[]>([])
   const [triggers, setTriggers] = useState<TriggerConfig>({})
@@ -163,7 +172,7 @@ export function WorkflowEditorPage() {
     setHydrated(false)
     setSelectedId(null)
     setDraftName('')
-    setDraftNamespace('default')
+    setDraftNamespace('')
     setDraftDescription('')
     setParams([])
     setTriggers({})
@@ -246,6 +255,25 @@ export function WorkflowEditorPage() {
       setDraftNamespace(app.namespace)
     }
   }, [isCreate, fromApp, copySource, applications])
+
+  // A workflow lives in a labeled space, never an arbitrary namespace: seed
+  // the picker once spaces are known (current space first) and keep saving
+  // blocked while it is empty. With no spaces at all the hint tells the user
+  // to create one first.
+  useEffect(() => {
+    if (!isCreate || draftNamespace !== '') return
+    const seed = currentSpace ?? spaces[0]
+    if (seed) setDraftNamespace(seed)
+  }, [isCreate, draftNamespace, currentSpace, spaces])
+
+  // Keep a prefilled namespace selectable even when it is not a labeled
+  // space on the current cluster (e.g. copied from another cluster).
+  const namespaceOptions = useMemo(() => {
+    if (draftNamespace !== '' && !spaces.includes(draftNamespace)) {
+      return [...spaces, draftNamespace].sort()
+    }
+    return spaces
+  }, [spaces, draftNamespace])
 
   const selectedNode = useMemo(
     () => flowNodes.find((n) => n.id === selectedId) ?? null,
@@ -343,7 +371,7 @@ export function WorkflowEditorPage() {
         {
           req: {
             name: draftName.trim(),
-            namespace: draftNamespace.trim() || 'default',
+            namespace: draftNamespace.trim(),
             description: draftDescription,
             spec,
             params,
@@ -487,12 +515,23 @@ export function WorkflowEditorPage() {
               placeholder={t('workflow.editor.name')}
               className="w-48 font-mono"
             />
-            <Input
-              value={draftNamespace}
-              onChange={(e) => setDraftNamespace(e.target.value)}
-              placeholder={t('workflow.editor.namespace')}
-              className="w-36 font-mono"
-            />
+            <Select value={draftNamespace} onValueChange={setDraftNamespace}>
+              <SelectTrigger className="w-36 font-mono">
+                <SelectValue placeholder={t('workflow.editor.namespace')} />
+              </SelectTrigger>
+              <SelectContent>
+                {namespaceOptions.map((space) => (
+                  <SelectItem key={space} value={space}>
+                    {space}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {isCreate && spaces.length === 0 && (
+              <span className="text-xs text-destructive">
+                {t('workflow.editor.noSpaces')}
+              </span>
+            )}
             <Input
               value={draftDescription}
               onChange={(e) => setDraftDescription(e.target.value)}
@@ -538,7 +577,9 @@ export function WorkflowEditorPage() {
           <Button
             size="sm"
             disabled={
-              saveMutation.isPending || (isCreate && draftName.trim() === '')
+              saveMutation.isPending ||
+              (isCreate && draftName.trim() === '') ||
+              (isCreate && draftNamespace.trim() === '')
             }
             onClick={handleSave}
           >

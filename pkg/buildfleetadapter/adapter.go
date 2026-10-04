@@ -5,6 +5,7 @@ package buildfleetadapter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -13,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/moby/buildkit/client"
 	"gopkg.in/yaml.v3"
+	"gorm.io/gorm"
 	"k8s.io/klog/v2"
 
 	"github.com/funcx27/kite/modules/buildfleet/app"
@@ -21,6 +23,7 @@ import (
 	"github.com/funcx27/kite/modules/buildfleet/fleet"
 	"github.com/funcx27/kite/modules/buildfleet/gitctx"
 	"github.com/funcx27/kite/modules/buildfleet/httpctx"
+	bfresource "github.com/funcx27/kite/modules/buildfleet/resource"
 	"github.com/zxh326/kite/pkg/cluster"
 	"github.com/zxh326/kite/pkg/credentialsadapter"
 	"github.com/zxh326/kite/pkg/model"
@@ -48,6 +51,9 @@ const (
 // Deps holds the assembled buildfleet runtime a host serves over REST.
 type Deps struct {
 	app *app.App
+	// cfg is the loaded buildfleet config. It is retained mutable: the
+	// runtime-settings API replaces its default profile at serving time.
+	cfg *config.Config
 	// cm validates managed build providers' target clusters.
 	cm *cluster.ClusterManager
 	// providerNames are the provider names of the loaded buildfleet config,
@@ -74,6 +80,7 @@ func New(ctx context.Context, cm *cluster.ClusterManager, cfgNode *yaml.Node, cr
 		// line numbers are relative to the section, not the config file.
 		return nil, fmt.Errorf("load buildfleet config (line numbers are relative to the buildfleet section): %w", err)
 	}
+	applyRuntimeSettingOverrides(cfg)
 	a, err := app.Setup(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("setup buildfleet: %w", err)
@@ -82,9 +89,34 @@ func New(ctx context.Context, cm *cluster.ClusterManager, cfgNode *yaml.Node, cr
 	for _, p := range cfg.Providers {
 		names = append(names, p.Name)
 	}
-	d := &Deps{app: a, cm: cm, providerNames: names, creds: creds}
+	d := &Deps{app: a, cfg: cfg, cm: cm, providerNames: names, creds: creds}
 	d.restoreProviders(ctx)
 	return d, nil
+}
+
+// applyRuntimeSettingOverrides overlays the persisted runtime settings row
+// onto the default profile before app.Setup, so a restart serves the same
+// hosts/registry wiring the runtime-settings API applied. A read failure
+// logs and keeps the config-file values.
+func applyRuntimeSettingOverrides(cfg *config.Config) {
+	row, err := model.GetBuildRuntimeSetting()
+	if err != nil {
+		klog.Warningf("build runtime settings not applied: %v", err)
+		return
+	}
+	if row == nil {
+		return
+	}
+	def := cfg.DefaultRuntime()
+	// The row is the source of truth once saved: the three fields replace the
+	// config-file values wholesale, matching what PUT persists.
+	def.Hosts = nil
+	for _, h := range row.Hosts {
+		def.Hosts = append(def.Hosts, config.HostEntry{IP: h.IP, Names: h.Names})
+	}
+	def.InsecureRegistries = row.InsecureRegistries
+	def.Mirrors = row.Mirrors
+	cfg.SetDefaultRuntime(def)
 }
 
 // ProviderNames merges the config-file providers with the managed build
@@ -257,6 +289,7 @@ func (d *Deps) handleBuild(c *gin.Context) {
 			return
 		}
 	}
+	d.applyProviderPodResources(&freq)
 	user := c.MustGet("user").(model.User)
 	cs := c.MustGet("cluster").(*cluster.ClientSet)
 
@@ -285,6 +318,30 @@ func (d *Deps) injectCredentials(freq *fleet.Request, ref string) error {
 		return fmt.Errorf("credential %q cannot be resolved: credential center is not wired", ref)
 	}
 	return d.creds.InjectFleetCredentials(freq, ref)
+}
+
+// applyProviderPodResources fills the request's unset per-instance resource
+// fields from the pinned managed provider's row (its configured buildkitd
+// pod shape, cores / GiB). A missing row — a config-file provider or an
+// unpinned build — skips silently; a database failure only warns, the row
+// refines defaults and must never fail the build.
+func (d *Deps) applyProviderPodResources(freq *fleet.Request) {
+	if freq.Provider == "" || (freq.Resources.CPU > 0 && freq.Resources.Memory > 0) {
+		return
+	}
+	row, err := model.GetBuildProviderByName(freq.Provider)
+	if err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			klog.Warningf("failed to load build provider %s for pod resources: %v", freq.Provider, err)
+		}
+		return
+	}
+	if freq.Resources.CPU == 0 && row.PodCPU > 0 {
+		freq.Resources.CPU = row.PodCPU
+	}
+	if freq.Resources.Memory == 0 && row.PodMemoryGi > 0 {
+		freq.Resources.Memory = bfresource.Bytes(row.PodMemoryGi * float64(bfresource.Giga))
+	}
 }
 
 // startBuild runs Fleet.Build on a background goroutine: progress events

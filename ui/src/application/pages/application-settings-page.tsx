@@ -1,12 +1,13 @@
 import { BuildProvidersManagement } from '@/workflow/components/build-providers-management'
-import { BuildSettingsManagement } from '@/workflow/components/build-settings-management'
+import { BuildRuntimeSettings } from '@/workflow/components/build-runtime-settings'
 import { CredentialsManagement } from '@/workflow/components/credentials-management'
+import { SpaceBuildSettings } from '@/workflow/components/space-build-settings'
 import { useTranslation } from 'react-i18next'
 
 import { usePageTitle } from '@/hooks/use-page-title'
 
 // Application-mode settings (design §11): a plain stack of sections so later
-// blocks (e.g. build clusters) slot in as additional children.
+// blocks slot in as additional children.
 export function ApplicationSettingsPage() {
   const { t } = useTranslation()
   usePageTitle(t('nav.settings'))
@@ -21,7 +22,8 @@ export function ApplicationSettingsPage() {
       </div>
       <CredentialsManagement />
       <BuildProvidersManagement />
-      <BuildSettingsManagement />
+      <BuildRuntimeSettings />
+      <SpaceBuildSettings />
     </div>
   )
 }

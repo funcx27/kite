@@ -256,7 +256,8 @@ func (h *Handler) CreateWorkflow(c *gin.Context) {
 		return
 	}
 	if req.Namespace == "" {
-		req.Namespace = "default"
+		h.fail(c, http.StatusBadRequest, nil, "namespace is required")
+		return
 	}
 	if !spec.ValidateDNS1123Label(req.Namespace, 63) {
 		h.fail(c, http.StatusBadRequest, nil, "namespace must be a DNS-1123 label")

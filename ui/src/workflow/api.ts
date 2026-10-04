@@ -29,8 +29,10 @@ import type {
   RevisionSummary,
   RunDetail,
   RunSummary,
+  RuntimeSettings,
   TriggerConfig,
   TriggerRunResponse,
+  UpdateBuildProviderRequest,
   UpdateWorkflowRequest,
   Workflow,
   WorkflowListItem,
@@ -240,6 +242,17 @@ export const deleteBuildSetting = (namespace: string) =>
 export const fetchBuildProviders = () =>
   workflowRequest<BuildProvidersResponse>('/buildfleet/providers')
 
+// ── Build runtime settings (default runtime profile wiring) ──
+
+export const fetchRuntimeSettings = () =>
+  workflowRequest<RuntimeSettings>('/buildfleet/runtime-settings')
+
+export const updateRuntimeSettings = (req: RuntimeSettings) =>
+  workflowRequest<RuntimeSettings>('/buildfleet/runtime-settings', {
+    method: 'PUT',
+    body: JSON.stringify(req),
+  })
+
 export const createBuildProvider = (req: CreateBuildProviderRequest) =>
   workflowRequest<BuildProvider>('/buildfleet/providers', {
     method: 'POST',
@@ -250,6 +263,15 @@ export const deleteBuildProvider = (name: string) =>
   workflowRequest<{ message: string }>(
     `/buildfleet/providers/${encodeURIComponent(name)}`,
     { method: 'DELETE' }
+  )
+
+export const updateBuildProvider = (
+  name: string,
+  req: UpdateBuildProviderRequest
+) =>
+  workflowRequest<BuildProvider>(
+    `/buildfleet/providers/${encodeURIComponent(name)}`,
+    { method: 'PUT', body: JSON.stringify(req) }
   )
 
 // ── Query hooks ──
@@ -266,6 +288,7 @@ const workflowKeys = {
   directory: () => [...workflowKeys.all, 'user-directory'] as const,
   buildSettings: () => [...workflowKeys.all, 'build-settings'] as const,
   buildProviders: () => [...workflowKeys.all, 'build-providers'] as const,
+  runtimeSettings: () => [...workflowKeys.all, 'runtime-settings'] as const,
 }
 
 export const useWorkflows = () =>
@@ -505,6 +528,23 @@ export const useBuildProviders = () =>
     queryFn: fetchBuildProviders,
   })
 
+export const useRuntimeSettings = () =>
+  useQuery({
+    queryKey: workflowKeys.runtimeSettings(),
+    queryFn: fetchRuntimeSettings,
+  })
+
+export const useUpdateRuntimeSettingsMutation = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: updateRuntimeSettings,
+    onSuccess: () =>
+      queryClient.invalidateQueries({
+        queryKey: workflowKeys.runtimeSettings(),
+      }),
+  })
+}
+
 // Provider changes reshape the build-settings provider options too, so both
 // query families are invalidated.
 const invalidateProviderSurfaces = (
@@ -518,6 +558,20 @@ export const useCreateBuildProviderMutation = () => {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: createBuildProvider,
+    onSuccess: () => invalidateProviderSurfaces(queryClient),
+  })
+}
+
+export const useUpdateBuildProviderMutation = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      name,
+      req,
+    }: {
+      name: string
+      req: UpdateBuildProviderRequest
+    }) => updateBuildProvider(name, req),
     onSuccess: () => invalidateProviderSurfaces(queryClient),
   })
 }

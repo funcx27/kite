@@ -176,6 +176,7 @@ export interface CredentialSummary {
   name: string
   description: string
   hasGit: boolean
+  gitHost: string
   gitUsername: string
   registryHosts: string[]
   registryAccounts: RegistryAccountSummary[]
@@ -184,6 +185,7 @@ export interface CredentialSummary {
 }
 
 export interface GitCredentialPayload {
+  host?: string
   username: string
   password: string
 }
@@ -220,12 +222,31 @@ export interface BuildSettingsResponse {
 
 // ── Managed build providers (settings-created k8s build providers) ──
 
+export interface BuildProviderCache {
+  enabled: boolean
+  image: string
+  storageClass: string
+  // Cache volume size, e.g. "20Gi".
+  size: string
+  // Cron expression for registry garbage collection.
+  gcSchedule: string
+}
+
 export interface BuildProvider {
   name: string
   cluster: string
   namespace: string
+  // Fleet capacity caps: cpu cores and a memory quantity like "16Gi".
   cpu: number
   memory: string
+  // Runtime profile name; '' = the default profile.
+  runtime: string
+  // Buildkitd pod readiness wait in seconds; 0 = module default.
+  readyTimeoutSeconds: number
+  // Per-instance build pod shape (cpu cores / memory Gi).
+  podCpu: number
+  podMemoryGi: number
+  cache: BuildProviderCache | null
 }
 
 export interface BuildProvidersResponse {
@@ -233,12 +254,48 @@ export interface BuildProvidersResponse {
   // Read-only provider names from the buildfleet config file; they cannot be
   // managed here and creation rejects their names.
   configProviders: string[]
+  // Configured runtime profile names, usable as the provider runtime choice.
+  runtimes: string[]
 }
 
-export interface CreateBuildProviderRequest {
+// Provider fields shared by create and update (everything but the identity
+// and target). Optional numbers default server-side: 0 keeps the built-in
+// default, an empty runtime selects the default profile, null cache disables
+// the in-cluster registry cache.
+export interface BuildProviderFields {
+  runtime?: string
+  readyTimeoutSeconds?: number
+  podCpu?: number
+  podMemoryGi?: number
+  cache?: BuildProviderCache | null
+}
+
+export interface CreateBuildProviderRequest extends BuildProviderFields {
   name: string
   cluster: string
   namespace: string
   cpu?: number
   memory?: string
+}
+
+// The provider name is immutable: renaming means recreating.
+export interface UpdateBuildProviderRequest extends BuildProviderFields {
+  cluster: string
+  namespace: string
+  cpu?: number
+  memory?: string
+}
+
+// ── Build runtime settings (default runtime profile wiring) ──
+
+export interface RuntimeHostEntry {
+  ip: string
+  names: string[]
+}
+
+export interface RuntimeSettings {
+  hosts: RuntimeHostEntry[]
+  insecureRegistries: string[]
+  // Source registry host → internal mirror sources.
+  mirrors: Record<string, string[]>
 }

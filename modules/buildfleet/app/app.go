@@ -13,6 +13,7 @@ import (
 	"github.com/funcx27/kite/modules/buildfleet/fleet"
 	"github.com/funcx27/kite/modules/buildfleet/provider/docker"
 	"github.com/funcx27/kite/modules/buildfleet/provider/k8s"
+	"github.com/funcx27/kite/modules/buildfleet/registry"
 	"github.com/funcx27/kite/modules/buildfleet/runtime"
 	"github.com/funcx27/kite/modules/buildfleet/store"
 )
@@ -55,8 +56,9 @@ func Setup(ctx context.Context, cfg *config.Config) (*App, error) {
 	}
 	multi := runtime.MultiProvider(namedProviders(cfg, providers)...)
 	pool := runtime.NewPool(multi)
-	pool.SetDefaults(cfg.Runtimes["default"].DefaultResources.MustParse())
-	if ttl := cfg.Runtimes["default"].IdleTTLParsed(); ttl > 0 {
+	def := cfg.DefaultRuntime()
+	pool.SetDefaults(def.DefaultResources.MustParse())
+	if ttl := def.IdleTTLParsed(); ttl > 0 {
 		pool.StartReaper(ctx, time.Minute, ttl)
 		slog.Info("idle reaper enabled", "ttl", ttl)
 	}
@@ -139,11 +141,34 @@ func (a *App) RegisterK8sProvider(ctx context.Context, pc config.Provider) error
 	if err != nil {
 		return fmt.Errorf("provider %s: %w", pc.Name, err)
 	}
-	p, err := buildK8sProvider(a.cfg, pc, regTable, hostAliases(a.cfg.Runtimes["default"].Hosts))
+	// effectiveRegTable only merges config-file providers' cache hosts; the
+	// runtime-registered provider's own cache host must be declared plain
+	// http here or buildkitd cannot push/pull the in-cluster registry.
+	cacheEnabled := pc.Cache != nil && pc.Cache.Enabled
+	if cacheEnabled {
+		regTable = append(regTable, registry.Config{
+			Host: k8s.CacheRegistryHost(pc.Namespace), HTTP: true,
+		})
+	}
+	p, err := buildK8sProvider(a.cfg, pc, regTable, hostAliases(a.cfg.DefaultRuntime().Hosts))
 	if err != nil {
 		return fmt.Errorf("provider %s: %w", pc.Name, err)
 	}
+	// k8s.New and Reconcile never deploy the cache registry (Setup only
+	// ensures config-file providers'), so runtime registration must.
+	if cacheEnabled {
+		if err := p.EnsureCacheRegistry(ctx); err != nil {
+			return fmt.Errorf("ensure cache registry: provider %s: %w", pc.Name, err)
+		}
+	}
+	// Register the cache ref before the provider joins the pool: builds
+	// can land on it the moment multi.Register returns, and they resolve
+	// their cache ref through this table.
+	if cacheEnabled {
+		a.Fleet.SetProviderCache(pc.Name, p.CacheBaseRef())
+	}
 	if err := a.multi.Register(runtime.NamedProvider{Name: pc.Name, Provider: p}); err != nil {
+		a.Fleet.SetProviderCache(pc.Name, "")
 		return fmt.Errorf("provider %s: %w", pc.Name, err)
 	}
 	adopted, err := p.Reconcile(ctx)
@@ -159,12 +184,13 @@ func (a *App) RegisterK8sProvider(ctx context.Context, pc config.Provider) error
 }
 
 // RemoveProvider detaches a runtime-registered provider by name. Live
-// runtimes it owns keep draining through the ownership map; unknown names
-// return an error.
+// runtimes it owns keep draining through the ownership map, and its
+// fleet cache-table entry goes with it; unknown names return an error.
 func (a *App) RemoveProvider(name string) error {
 	if err := a.multi.Remove(name); err != nil {
 		return fmt.Errorf("remove provider: %w", err)
 	}
+	a.Fleet.SetProviderCache(name, "")
 	slog.Info("removed k8s build provider", "provider", name)
 	return nil
 }
