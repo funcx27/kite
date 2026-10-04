@@ -284,6 +284,8 @@ export interface ApplicationOfflineResponse {
   deleted: string[]
   missing: string[]
   failed?: ApplicationOfflineFailure[]
+  /** Set when the cluster no longer exists: nothing was deleted in-cluster. */
+  clusterGone?: boolean
   configDeleted: boolean
   appUndeployed: boolean
 }

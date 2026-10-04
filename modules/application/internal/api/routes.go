@@ -70,21 +70,25 @@ func RegisterRoutes(api *gin.RouterGroup, deps Deps, st *store.Store) {
 	g.PUT("/:name", h.UpdateApp)
 	g.DELETE("/:name", h.DeleteApp)
 	g.POST("/:name/configs", h.CreateConfig)
-	g.GET("/:name/configs/:cluster", h.GetConfig)
-	g.PUT("/:name/configs/:cluster", h.UpdateConfig)
-	g.POST("/:name/configs/:cluster/deploy", h.DeployConfig)
-	g.POST("/:name/configs/:cluster/sync", h.SyncConfig)
-	g.POST("/:name/configs/:cluster/offline", h.OfflineConfig)
-	g.GET("/:name/configs/:cluster/merge-preview", h.MergePreview)
-	g.POST("/:name/configs/:cluster/merge", h.MergeConfig)
-	g.GET("/:name/configs/:cluster/status", h.GetStatus)
-	g.GET("/:name/configs/:cluster/resources", h.GetResources)
-	g.POST("/:name/configs/:cluster/restart", h.RestartConfig)
-	g.POST("/:name/configs/:cluster/pods/:pod/restart", h.RestartPod)
-	g.POST("/:name/configs/:cluster/pods/:pod/force-delete", h.ForceDeletePod)
-	g.GET("/:name/configs/:cluster/revisions", h.ListRevisions)
-	g.GET("/:name/configs/:cluster/revisions/:rev", h.GetRevision)
-	g.POST("/:name/configs/:cluster/rollback", h.RollbackConfig)
+	// The config-cluster param is deliberately not named "cluster": the host
+	// ClusterMiddleware resolves any :cluster param and 404s when that cluster
+	// is gone from the platform, but a config slot may outlive its cluster —
+	// offline must still reach the handler to retire it.
+	g.GET("/:name/configs/:cfgCluster", h.GetConfig)
+	g.PUT("/:name/configs/:cfgCluster", h.UpdateConfig)
+	g.POST("/:name/configs/:cfgCluster/deploy", h.DeployConfig)
+	g.POST("/:name/configs/:cfgCluster/sync", h.SyncConfig)
+	g.POST("/:name/configs/:cfgCluster/offline", h.OfflineConfig)
+	g.GET("/:name/configs/:cfgCluster/merge-preview", h.MergePreview)
+	g.POST("/:name/configs/:cfgCluster/merge", h.MergeConfig)
+	g.GET("/:name/configs/:cfgCluster/status", h.GetStatus)
+	g.GET("/:name/configs/:cfgCluster/resources", h.GetResources)
+	g.POST("/:name/configs/:cfgCluster/restart", h.RestartConfig)
+	g.POST("/:name/configs/:cfgCluster/pods/:pod/restart", h.RestartPod)
+	g.POST("/:name/configs/:cfgCluster/pods/:pod/force-delete", h.ForceDeletePod)
+	g.GET("/:name/configs/:cfgCluster/revisions", h.ListRevisions)
+	g.GET("/:name/configs/:cfgCluster/revisions/:rev", h.GetRevision)
+	g.POST("/:name/configs/:cfgCluster/rollback", h.RollbackConfig)
 }
 
 // authorize runs the module-side permission check and writes the 403 response
@@ -143,9 +147,9 @@ func (h *Handler) findAppConfig(c *gin.Context) (*store.App, *store.AppConfig, b
 	if app == nil {
 		return nil, nil, false
 	}
-	cfg, err := h.findConfig(app.ID, c.Param("cluster"))
+	cfg, err := h.findConfig(app.ID, c.Param("cfgCluster"))
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		h.fail(c, http.StatusNotFound, nil, "config not found for cluster "+c.Param("cluster"))
+		h.fail(c, http.StatusNotFound, nil, "config not found for cluster "+c.Param("cfgCluster"))
 		return nil, nil, false
 	}
 	if err != nil {

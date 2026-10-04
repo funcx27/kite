@@ -222,6 +222,7 @@
       "confirmPurge": "确认下线并删除配置",
       "kept": "{{cluster}} 已下线，配置与历史版本已保留",
       "purged": "{{cluster}} 已下线，该集群配置与历史版本已删除",
+      "clusterGone": "集群 {{cluster}} 已不存在，配置已下线（未执行集群内资源删除）",
       "partialFailure": "部分集群资源删除失败，配置已保留可重试"
     },
     "history": {

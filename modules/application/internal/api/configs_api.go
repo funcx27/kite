@@ -178,9 +178,9 @@ func (h *Handler) GetConfig(c *gin.Context) {
 	if app == nil {
 		return
 	}
-	cfg, err := h.findConfig(app.ID, c.Param("cluster"))
+	cfg, err := h.findConfig(app.ID, c.Param("cfgCluster"))
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		h.fail(c, http.StatusNotFound, nil, "config not found for cluster "+c.Param("cluster"))
+		h.fail(c, http.StatusNotFound, nil, "config not found for cluster "+c.Param("cfgCluster"))
 		return
 	}
 	if err != nil {
@@ -261,9 +261,9 @@ func (h *Handler) UpdateConfig(c *gin.Context) {
 	if app == nil {
 		return
 	}
-	cfg, err := h.findConfig(app.ID, c.Param("cluster"))
+	cfg, err := h.findConfig(app.ID, c.Param("cfgCluster"))
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		h.fail(c, http.StatusNotFound, nil, "config not found for cluster "+c.Param("cluster"))
+		h.fail(c, http.StatusNotFound, nil, "config not found for cluster "+c.Param("cfgCluster"))
 		return
 	}
 	if err != nil {

@@ -222,6 +222,7 @@
       "confirmPurge": "Confirm Offline & Delete Config",
       "kept": "Offline complete on {{cluster}}; config and revisions kept",
       "purged": "Offline complete on {{cluster}}; config and revisions deleted",
+      "clusterGone": "Cluster {{cluster}} no longer exists; config taken offline without cluster cleanup",
       "partialFailure": "Some cluster deletions failed; the config is kept for retry"
     },
     "history": {

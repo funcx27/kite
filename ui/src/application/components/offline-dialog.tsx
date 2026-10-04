@@ -61,9 +61,11 @@ export function OfflineDialog({
       await queryClient.invalidateQueries({ queryKey: ['applications'] })
       if (result.success) {
         toast.success(
-          deleteConfig
-            ? t('applications.offline.purged', { cluster })
-            : t('applications.offline.kept', { cluster })
+          result.clusterGone
+            ? t('applications.offline.clusterGone', { cluster })
+            : deleteConfig
+              ? t('applications.offline.purged', { cluster })
+              : t('applications.offline.kept', { cluster })
         )
         onOpenChange(false)
         onOfflined(result)

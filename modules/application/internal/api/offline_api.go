@@ -24,12 +24,15 @@ type offlineFailure struct {
 }
 
 type offlineResponse struct {
-	Success       bool             `json:"success"`
-	Deleted       []string         `json:"deleted"`
-	Missing       []string         `json:"missing"`
-	Failed        []offlineFailure `json:"failed,omitempty"`
-	ConfigDeleted bool             `json:"configDeleted"`
-	AppUndeployed bool             `json:"appUndeployed"`
+	Success bool             `json:"success"`
+	Deleted []string         `json:"deleted"`
+	Missing []string         `json:"missing"`
+	Failed  []offlineFailure `json:"failed,omitempty"`
+	// ClusterGone marks the gone-cluster path: nothing was reachable to
+	// delete, every manifest was counted missing without a cluster call.
+	ClusterGone   bool `json:"clusterGone,omitempty"`
+	ConfigDeleted bool `json:"configDeleted"`
+	AppUndeployed bool `json:"appUndeployed"`
 }
 
 // OfflineConfig takes the app's cluster config down (design §6 下线): cluster
@@ -48,11 +51,6 @@ func (h *Handler) OfflineConfig(c *gin.Context) {
 		h.fail(c, http.StatusBadRequest, err, "")
 		return
 	}
-	cli, err := h.deps.ResolveCluster(c.Request.Context(), cfg.Cluster)
-	if err != nil {
-		h.fail(c, http.StatusNotFound, nil, "cluster not found or offline: "+cfg.Cluster)
-		return
-	}
 	manifests, err := store.DecodeManifests(cfg.Manifests)
 	if err != nil {
 		h.fail(c, http.StatusInternalServerError, err, "")
@@ -60,6 +58,22 @@ func (h *Handler) OfflineConfig(c *gin.Context) {
 	}
 
 	resp := offlineResponse{Success: true, Deleted: []string{}, Missing: []string{}, Failed: []offlineFailure{}}
+	cli, resolveErr := h.deps.ResolveCluster(c.Request.Context(), cfg.Cluster)
+	if resolveErr != nil {
+		// The cluster is gone from the platform, so nothing is reachable to
+		// delete: every manifest counts as missing and only the config
+		// bookkeeping runs — otherwise a deleted cluster would strand its
+		// configs online forever.
+		if !h.authorize(c, "delete", cfg.Cluster, cfg.Namespace) {
+			return
+		}
+		resp.ClusterGone = true
+		for i := range manifests {
+			resp.Missing = append(resp.Missing, store.DocKeyOf(&manifests[i]))
+		}
+		h.finalizeOffline(c, app, cfg, req, resp)
+		return
+	}
 	for i := range manifests {
 		doc, err := namespacedCopy(&manifests[i], cfg.Namespace)
 		key := store.DocKeyOf(doc)
@@ -115,6 +129,13 @@ func (h *Handler) OfflineConfig(c *gin.Context) {
 		return
 	}
 
+	h.finalizeOffline(c, app, cfg, req, resp)
+}
+
+// finalizeOffline runs the config bookkeeping after the cluster side is
+// settled: purge the config row (only reachable when every deletion succeeded
+// or the cluster is gone) or mark the kept config undeployed, then write resp.
+func (h *Handler) finalizeOffline(c *gin.Context, app *store.App, cfg *store.AppConfig, req offlineRequest, resp offlineResponse) {
 	if req.DeleteConfig {
 		txErr := h.store.DB().Transaction(func(tx *gorm.DB) error {
 			return tx.Delete(&store.AppConfig{}, cfg.ID).Error
