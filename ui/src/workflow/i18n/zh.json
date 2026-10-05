@@ -165,7 +165,8 @@
       "channelWebhook": "webhook",
       "url": "Webhook 地址",
       "payloadTemplate": "载荷模板",
-      "payloadTemplateHint": "JSON 载荷；支持 {{params.*}} / {{steps.*.outputs.*}} / {{run.*}}"
+      "payloadTemplateHint": "JSON 载荷；支持 {{params.*}} / {{steps.*.outputs.*}} / {{run.*}}",
+      "advancedSection": "高级选项"
     },
     "template": {
       "groupParams": "参数",
@@ -183,7 +184,14 @@
       "options": "选项",
       "optionsHint": "逗号分隔（仅 enum）",
       "empty": "尚未定义参数。",
-      "nameInvalid": "参数名不能为空且不可重复。"
+      "nameInvalid": "参数名不能为空且不可重复。",
+      "presetsTitle": "常用 CI/CD 变量",
+      "presetsHint": "点击一键添加为 string 类型、非必填参数；cron / webhook 触发时使用默认值。",
+      "presetGitRepoDesc": "Git 仓库地址",
+      "presetGitBranchDesc": "Git 分支 / tag",
+      "presetDockerfileDesc": "Dockerfile 路径",
+      "presetImageTagDesc": "镜像 tag",
+      "presetExists": "参数 {{name}} 已存在，已跳过。"
     },
     "triggers": {
       "title": "触发器",

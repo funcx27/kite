@@ -4,6 +4,7 @@
 import { useEffect, useState } from 'react'
 import { IconPlus, IconTrash } from '@tabler/icons-react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -80,6 +81,31 @@ const PARAM_TYPES: ParamType[] = ['string', 'number', 'bool', 'enum']
 const PARAM_ROW_GRID =
   'grid grid-cols-[minmax(0,1fr)_120px_56px_minmax(0,1fr)_40px] items-center gap-2'
 
+// One-click presets for common CI/CD parameters. All are string and optional:
+// cron/webhook triggers then fall back to the default without validation.
+const PARAM_PRESETS: {
+  name: string
+  default?: string
+  descKey: string
+}[] = [
+  { name: 'gitRepo', descKey: 'workflow.params.presetGitRepoDesc' },
+  {
+    name: 'gitBranch',
+    default: 'main',
+    descKey: 'workflow.params.presetGitBranchDesc',
+  },
+  {
+    name: 'dockerfile',
+    default: 'Dockerfile',
+    descKey: 'workflow.params.presetDockerfileDesc',
+  },
+  {
+    name: 'imageTag',
+    default: 'latest',
+    descKey: 'workflow.params.presetImageTagDesc',
+  },
+]
+
 export function ParamsDialog({
   open,
   onOpenChange,
@@ -106,6 +132,22 @@ export function ParamsDialog({
     setDraft((prev) =>
       prev.map((p, i) => (i === index ? { ...p, ...next } : p))
     )
+
+  const addPreset = (preset: (typeof PARAM_PRESETS)[number]) => {
+    if (draft.some((p) => p.name.trim() === preset.name)) {
+      toast.info(t('workflow.params.presetExists', { name: preset.name }))
+      return
+    }
+    setDraft((prev) => [
+      ...prev,
+      {
+        name: preset.name,
+        type: 'string',
+        required: false,
+        default: preset.default,
+      },
+    ])
+  }
 
   const confirm = () => {
     const names = new Set<string>()
@@ -138,6 +180,27 @@ export function ParamsDialog({
       <p className="text-xs text-muted-foreground">
         {t('workflow.params.hint')}
       </p>
+      <div className="space-y-2 rounded-lg border bg-muted/30 p-3">
+        <div className="text-xs font-medium">
+          {t('workflow.params.presetsTitle')}
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          {t('workflow.params.presetsHint')}
+        </p>
+        <div className="flex flex-wrap gap-1.5">
+          {PARAM_PRESETS.map((preset) => (
+            <button
+              key={preset.name}
+              type="button"
+              onClick={() => addPreset(preset)}
+              className="flex items-center gap-1.5 rounded-md border bg-background px-2 py-1 text-xs transition-colors hover:bg-accent"
+            >
+              <span className="font-mono">{preset.name}</span>
+              <span className="text-muted-foreground">{t(preset.descKey)}</span>
+            </button>
+          ))}
+        </div>
+      </div>
       {draft.length === 0 && (
         <p className="py-4 text-center text-sm text-muted-foreground">
           {t('workflow.params.empty')}

@@ -8,6 +8,7 @@ import { useApplications } from '@/application/api'
 import {
   IconCheck,
   IconChevronDown,
+  IconChevronRight,
   IconTrash,
   IconX,
 } from '@tabler/icons-react'
@@ -18,6 +19,11 @@ import { useCluster } from '@/hooks/use-cluster'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
 import {
   Command,
   CommandEmpty,
@@ -291,6 +297,7 @@ export function PropertyDrawer({
 
         {node.type === 'build-image' && (
           <BuildPropsForm
+            key={node.id}
             node={node}
             patchProps={patchProps}
             onFocusField={(f) => (focusedField.current = f)}
@@ -299,6 +306,7 @@ export function PropertyDrawer({
         )}
         {node.type === 'deploy-app' && (
           <DeployPropsForm
+            key={node.id}
             node={node}
             patchProps={patchProps}
             onFocusField={(f) => (focusedField.current = f)}
@@ -421,6 +429,37 @@ function setStringProp(
   onChange({ ...node, props: { ...(node.props ?? {}), [key]: value } })
 }
 
+// AdvancedCollapsible folds a props form's low-frequency fields. The owning
+// forms are keyed by node id, so each selection re-derives the initial open
+// state from that node's stored values.
+function AdvancedCollapsible({
+  open,
+  onOpenChange,
+  children,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  children: React.ReactNode
+}) {
+  const { t } = useTranslation()
+  return (
+    <Collapsible open={open} onOpenChange={onOpenChange}>
+      <CollapsibleTrigger className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent/50">
+        <IconChevronRight
+          className={cn(
+            'h-4 w-4 shrink-0 text-muted-foreground transition-transform',
+            open && 'rotate-90'
+          )}
+        />
+        {t('workflow.props.advancedSection')}
+      </CollapsibleTrigger>
+      <CollapsibleContent className="space-y-4 pt-3">
+        {children}
+      </CollapsibleContent>
+    </Collapsible>
+  )
+}
+
 function BuildPropsForm({
   node,
   patchProps,
@@ -448,6 +487,15 @@ function BuildPropsForm({
     .map((c) => c.name)
   const savedGitCredential = readStringProp(node, 'gitCredentialRef')
   const savedRegistryCredential = readStringProp(node, 'registryCredentialRef')
+  // The advanced section starts collapsed unless one of its fields already
+  // carries a value, so configured options never hide behind the fold.
+  const [advancedOpen, setAdvancedOpen] = useState(
+    readNestedString(node, 'git', 'subdir') !== '' ||
+      readStringProp(node, 'httpUrl') !== '' ||
+      readStringProp(node, 'dockerfileContent') !== '' ||
+      args !== '' ||
+      ((node.props?.platforms as string[] | undefined)?.length ?? 0) > 0
+  )
 
   const setGit = (key: string, value: string) => {
     const git = { ...((node.props?.git as Record<string, unknown>) ?? {}) }
@@ -490,79 +538,23 @@ function BuildPropsForm({
         />
       </Field>
       {sourceKind === 'git' && (
-        <div className="grid grid-cols-2 gap-3">
-          <Field label={t('workflow.props.gitRef')}>
-            <Input
-              value={readNestedString(node, 'git', 'ref')}
-              onChange={(e) => setGit('ref', e.target.value)}
-              onFocus={() => onFocusField('git.ref')}
-              placeholder="main"
-            />
-          </Field>
-          <Field label={t('workflow.props.gitSubdir')}>
-            <Input
-              value={readNestedString(node, 'git', 'subdir')}
-              onChange={(e) => setGit('subdir', e.target.value)}
-              onFocus={() => onFocusField('git.subdir')}
-            />
-          </Field>
-        </div>
-      )}
-      {!gitUrl && (
-        <Field label={t('workflow.props.httpUrl')}>
+        <Field label={t('workflow.props.gitRef')}>
           <TemplateInput
             {...templateVars}
-            value={readStringProp(node, 'httpUrl')}
-            onValueChange={(v) => patchProps('httpUrl', v || undefined)}
-            onFocus={() => onFocusField('httpUrl')}
+            value={readNestedString(node, 'git', 'ref')}
+            onValueChange={(v) => setGit('ref', v)}
+            onFocus={() => onFocusField('git.ref')}
+            placeholder="main"
           />
         </Field>
       )}
       <Field label={t('workflow.props.dockerfile')}>
-        <Input
+        <TemplateInput
+          {...templateVars}
           value={readStringProp(node, 'dockerfile')}
-          onChange={(e) =>
-            patchProps('dockerfile', e.target.value || undefined)
-          }
+          onValueChange={(v) => patchProps('dockerfile', v || undefined)}
           onFocus={() => onFocusField('dockerfile')}
           placeholder="Dockerfile"
-        />
-      </Field>
-      <Field label={t('workflow.props.dockerfileContent')}>
-        <TemplateInput
-          {...templateVars}
-          multiline
-          rows={4}
-          className="font-mono text-xs"
-          value={readStringProp(node, 'dockerfileContent')}
-          onValueChange={(v) => patchProps('dockerfileContent', v || undefined)}
-          onFocus={() => onFocusField('dockerfileContent')}
-        />
-      </Field>
-      <Field
-        label={t('workflow.props.args')}
-        hint={t('workflow.props.argsHint')}
-      >
-        <TemplateInput
-          {...templateVars}
-          multiline
-          rows={3}
-          className="font-mono text-xs"
-          value={args}
-          onValueChange={(v) => patchProps('args', parseArgs(v))}
-          onFocus={() => onFocusField('args')}
-        />
-      </Field>
-      <Field
-        label={t('workflow.props.platforms')}
-        hint={t('workflow.props.platformsHint')}
-      >
-        <Input
-          value={
-            (node.props?.platforms as string[] | undefined)?.join(',') ?? ''
-          }
-          onChange={(e) => patchProps('platforms', splitList(e.target.value))}
-          onFocus={() => onFocusField('platforms')}
         />
       </Field>
       <Field
@@ -576,6 +568,67 @@ function BuildPropsForm({
           onFocus={() => onFocusField('outputRef')}
         />
       </Field>
+      <AdvancedCollapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
+        {sourceKind === 'git' && (
+          <Field label={t('workflow.props.gitSubdir')}>
+            <TemplateInput
+              {...templateVars}
+              value={readNestedString(node, 'git', 'subdir')}
+              onValueChange={(v) => setGit('subdir', v)}
+              onFocus={() => onFocusField('git.subdir')}
+            />
+          </Field>
+        )}
+        {!gitUrl && (
+          <Field label={t('workflow.props.httpUrl')}>
+            <TemplateInput
+              {...templateVars}
+              value={readStringProp(node, 'httpUrl')}
+              onValueChange={(v) => patchProps('httpUrl', v || undefined)}
+              onFocus={() => onFocusField('httpUrl')}
+            />
+          </Field>
+        )}
+        <Field label={t('workflow.props.dockerfileContent')}>
+          <TemplateInput
+            {...templateVars}
+            multiline
+            rows={4}
+            className="font-mono text-xs"
+            value={readStringProp(node, 'dockerfileContent')}
+            onValueChange={(v) =>
+              patchProps('dockerfileContent', v || undefined)
+            }
+            onFocus={() => onFocusField('dockerfileContent')}
+          />
+        </Field>
+        <Field
+          label={t('workflow.props.args')}
+          hint={t('workflow.props.argsHint')}
+        >
+          <TemplateInput
+            {...templateVars}
+            multiline
+            rows={3}
+            className="font-mono text-xs"
+            value={args}
+            onValueChange={(v) => patchProps('args', parseArgs(v))}
+            onFocus={() => onFocusField('args')}
+          />
+        </Field>
+        <Field
+          label={t('workflow.props.platforms')}
+          hint={t('workflow.props.platformsHint')}
+        >
+          <Input
+            value={
+              (node.props?.platforms as string[] | undefined)?.join(',') ?? ''
+            }
+            onChange={(e) => patchProps('platforms', splitList(e.target.value))}
+            onFocus={() => onFocusField('platforms')}
+          />
+        </Field>
+      </AdvancedCollapsible>
     </div>
   )
 }
@@ -614,6 +667,7 @@ function DeployPropsForm({
     savedCluster && !clusterOptions.some((c) => c.name === savedCluster)
       ? savedCluster
       : undefined
+  const [advancedOpen, setAdvancedOpen] = useState(node.props?.dryRun === true)
 
   return (
     <div className="space-y-4">
@@ -666,13 +720,17 @@ function DeployPropsForm({
           placeholder="{{steps.build1.outputs.imageRef}}"
         />
       </Field>
-      <label className="flex items-center gap-2 text-sm">
-        <Checkbox
-          checked={node.props?.dryRun === true}
-          onCheckedChange={(checked) => patchProps('dryRun', checked === true)}
-        />
-        {t('workflow.props.dryRun')}
-      </label>
+      <AdvancedCollapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
+        <label className="flex items-center gap-2 text-sm">
+          <Checkbox
+            checked={node.props?.dryRun === true}
+            onCheckedChange={(checked) =>
+              patchProps('dryRun', checked === true)
+            }
+          />
+          {t('workflow.props.dryRun')}
+        </label>
+      </AdvancedCollapsible>
     </div>
   )
 }

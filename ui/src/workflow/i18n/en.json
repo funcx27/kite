@@ -165,7 +165,8 @@
       "channelWebhook": "webhook",
       "url": "Webhook URL",
       "payloadTemplate": "Payload Template",
-      "payloadTemplateHint": "JSON body; supports {{params.*}} / {{steps.*.outputs.*}} / {{run.*}}"
+      "payloadTemplateHint": "JSON body; supports {{params.*}} / {{steps.*.outputs.*}} / {{run.*}}",
+      "advancedSection": "Advanced"
     },
     "template": {
       "groupParams": "Params",
@@ -183,7 +184,14 @@
       "options": "Options",
       "optionsHint": "Comma separated choices (enum only)",
       "empty": "No parameters defined.",
-      "nameInvalid": "Parameter names must be non-empty and unique."
+      "nameInvalid": "Parameter names must be non-empty and unique.",
+      "presetsTitle": "Common CI/CD Variables",
+      "presetsHint": "Click to add as an optional string parameter; cron / webhook triggers fall back to its default.",
+      "presetGitRepoDesc": "Git repository URL",
+      "presetGitBranchDesc": "Git branch / tag",
+      "presetDockerfileDesc": "Dockerfile path",
+      "presetImageTagDesc": "Image tag",
+      "presetExists": "Parameter {{name}} already exists — skipped."
     },
     "triggers": {
       "title": "Triggers",
