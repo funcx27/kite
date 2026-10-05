@@ -328,59 +328,12 @@ export function BuildProvidersManagement() {
     createMutation.mutate({ name, ...req }, { onSuccess: finish, onError })
   }
 
-  const toggleDefault = (name: string) => {
-    const onError = (err: Error) => toast.error(err.message)
-    if (name === defaultProvider) {
-      deleteSettingMutation.mutate('', {
-        onSuccess: () =>
-          toast.success(t('workflow.buildProviders.defaultUnset')),
-        onError,
-      })
-      return
-    }
-    upsertSettingMutation.mutate(
-      { namespace: '', provider: name },
-      {
-        onSuccess: () => toast.success(t('workflow.buildProviders.defaultSet')),
-        onError,
-      }
-    )
-  }
-
   const pending =
     createMutation.isPending ||
     updateMutation.isPending ||
     deleteMutation.isPending ||
     upsertSettingMutation.isPending ||
     deleteSettingMutation.isPending
-
-  const providerNameCell = (name: string) => {
-    const isDefault = name === defaultProvider
-    return (
-      <button
-        type="button"
-        disabled={pending}
-        onClick={() => toggleDefault(name)}
-        title={
-          isDefault
-            ? t('workflow.buildProviders.unsetDefaultTitle')
-            : t('workflow.buildProviders.setDefaultTitle')
-        }
-        className={`inline-flex items-center gap-1.5 rounded font-mono text-sm ${
-          isDefault
-            ? 'font-semibold text-primary'
-            : 'text-foreground/80 hover:text-primary'
-        }`}
-      >
-        {name}
-        {isDefault && (
-          <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">
-            {t('workflow.buildProviders.defaultBadge')}
-          </Badge>
-        )}
-      </button>
-    )
-  }
 
   // instanceSpecCell renders the per-instance build pod shape, "2 核 · 4Gi";
   // zero/empty on both axes shows an em dash.
@@ -432,7 +385,9 @@ export function BuildProvidersManagement() {
           <TableBody>
             {providers.map((provider) => (
               <TableRow key={provider.name}>
-                <TableCell>{providerNameCell(provider.name)}</TableCell>
+                <TableCell>
+                  <span className="font-mono text-sm">{provider.name}</span>
+                </TableCell>
                 <TableCell>
                   <span className="font-mono">{provider.cluster}</span>
                 </TableCell>
@@ -466,7 +421,9 @@ export function BuildProvidersManagement() {
             ))}
             {configProviders.map((name) => (
               <TableRow key={name}>
-                <TableCell>{providerNameCell(name)}</TableCell>
+                <TableCell>
+                  <span className="font-mono text-sm">{name}</span>
+                </TableCell>
                 <TableCell colSpan={2}>
                   <Badge variant="outline">
                     {t('workflow.buildProviders.configProviderTag')}
@@ -499,7 +456,7 @@ export function BuildProvidersManagement() {
       </CardContent>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>
               {editingName
@@ -792,9 +749,7 @@ export function BuildProvidersManagement() {
 }
 
 function SectionLabel({ label }: { label: string }) {
-  return (
-    <p className="-mb-2 text-xs font-semibold text-muted-foreground">{label}</p>
-  )
+  return <p className="text-xs font-semibold text-muted-foreground">{label}</p>
 }
 
 // NumberField is a labeled numeric input with a trailing unit.
