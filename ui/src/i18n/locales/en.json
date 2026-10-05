@@ -797,7 +797,11 @@
     }
   },
   "applicationSettings": {
-    "description": "Manage settings for application mode"
+    "description": "Manage settings for application mode",
+    "tabs": {
+      "space": "Space Settings",
+      "global": "Global Settings"
+    }
   },
   "generalManagement": {
     "title": "General",

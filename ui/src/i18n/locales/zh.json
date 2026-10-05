@@ -805,7 +805,11 @@
     }
   },
   "applicationSettings": {
-    "description": "管理应用模式的设置"
+    "description": "管理应用模式的设置",
+    "tabs": {
+      "space": "空间设置",
+      "global": "全局设置"
+    }
   },
   "generalManagement": {
     "title": "通用设置",
