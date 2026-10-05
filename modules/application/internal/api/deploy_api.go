@@ -37,6 +37,10 @@ type deployRequest struct {
 	Spec        json.RawMessage `json:"spec,omitempty"`
 	Manifests   json.RawMessage `json:"manifests,omitempty"`
 	ExpectedRev *int            `json:"expectedRev,omitempty"`
+	// manifestsSource labels caller-provided manifests for the revision
+	// record; the credential re-render rides the {manifests} funnel but must
+	// not be recorded as a user YAML edit. Not part of the wire format.
+	manifestsSource string `json:"-"`
 	// CredentialRef sets (empty string clears) the config's pull credential;
 	// nil leaves the stored value untouched. It persists with the publish and
 	// the upserted pull secret rides the same pipeline.
@@ -107,6 +111,34 @@ func (h *Handler) DeployConfig(c *gin.Context) {
 		h.fail(c, http.StatusNotFound, nil, "cluster not found or offline: "+cfg.Cluster)
 		return
 	}
+
+	// Setting a pull credential consumes that credential's secret material, so
+	// the reference is gated on credentials:get (host-wide) before anything —
+	// neither the credential_ref write below nor the publish pipeline may run
+	// for a user the credential center's RBAC denies. The write happens before
+	// the pending set is resolved so a change can re-render it with the
+	// managed imagePullSecrets reference (rerenderForCredential).
+	if !req.DryRun && req.CredentialRef != nil && *req.CredentialRef != "" &&
+		!id.authorize(credentialsResource, "get", "", "") {
+		h.fail(c, http.StatusForbidden, nil,
+			fmt.Sprintf("user does not have permission to use credential %q", *req.CredentialRef))
+		return
+	}
+	if !req.DryRun && req.CredentialRef != nil {
+		if err := h.store.DB().Model(&store.AppConfig{}).Where("id = ?", cfg.ID).
+			Update("credential_ref", *req.CredentialRef).Error; err != nil {
+			h.fail(c, http.StatusInternalServerError, err, "")
+			return
+		}
+		if *req.CredentialRef != cfg.CredentialRef {
+			if err := h.rerenderForCredential(app, cfg, *req.CredentialRef, &req); err != nil {
+				h.fail(c, http.StatusInternalServerError, err, "")
+				return
+			}
+		}
+		cfg.CredentialRef = *req.CredentialRef
+	}
+
 	stored, err := store.DecodeManifests(cfg.Manifests)
 	if err != nil {
 		h.fail(c, http.StatusInternalServerError, err, "")
@@ -128,24 +160,6 @@ func (h *Handler) DeployConfig(c *gin.Context) {
 			h.fail(c, http.StatusBadRequest, err, "")
 			return
 		}
-	}
-	// Setting a pull credential consumes that credential's secret material, so
-	// the reference is gated on credentials:get (host-wide) before anything —
-	// neither the credential_ref write below nor the publish pipeline may run
-	// for a user the credential center's RBAC denies.
-	if !req.DryRun && req.CredentialRef != nil && *req.CredentialRef != "" &&
-		!id.authorize(credentialsResource, "get", "", "") {
-		h.fail(c, http.StatusForbidden, nil,
-			fmt.Sprintf("user does not have permission to use credential %q", *req.CredentialRef))
-		return
-	}
-	if !req.DryRun && req.CredentialRef != nil {
-		if err := h.store.DB().Model(&store.AppConfig{}).Where("id = ?", cfg.ID).
-			Update("credential_ref", *req.CredentialRef).Error; err != nil {
-			h.fail(c, http.StatusInternalServerError, err, "")
-			return
-		}
-		cfg.CredentialRef = *req.CredentialRef
 	}
 
 	resp, conflicts, err := h.runPublish(ctx, id, app, cfg, cli, manifests, req.DryRun)
@@ -220,7 +234,15 @@ func (h *Handler) resolveDeployManifests(c *gin.Context, id identity, app *store
 					return nil, ErrWorkloadTypeChanged
 				}
 			}
-			return render.InjectFields(app.Name, cur.Namespace, curDocs, spec)
+			docs, err := render.InjectFields(app.Name, cur.Namespace, curDocs, spec)
+			if err != nil {
+				return nil, err
+			}
+			// A config with a pull credential publishes pods that reference
+			// the managed pull secret; keep the pending set in lockstep with
+			// the credential so the reference never becomes drift.
+			render.InjectPullSecret(docs, pullSecretName(cur.CredentialRef))
+			return docs, nil
 		}
 		if req.DryRun {
 			injected, err := render.InjectFields(app.Name, cfg.Namespace, stored, spec)
@@ -228,6 +250,7 @@ func (h *Handler) resolveDeployManifests(c *gin.Context, id identity, app *store
 				h.fail(c, http.StatusBadRequest, err, "")
 				return nil, 0, false
 			}
+			render.InjectPullSecret(injected, pullSecretName(cfg.CredentialRef))
 			restoreMaskedSecretValues(injected, stored)
 			manifests = injected
 		} else {
@@ -246,12 +269,16 @@ func (h *Handler) resolveDeployManifests(c *gin.Context, id identity, app *store
 		build := func(cur *store.AppConfig, curDocs []unstructured.Unstructured) ([]unstructured.Unstructured, error) {
 			return incoming, nil
 		}
+		source := store.RevSourceYAML
+		if req.manifestsSource != "" {
+			source = req.manifestsSource
+		}
 		if req.DryRun {
 			manifests = incoming
 			restoreMaskedSecretValues(manifests, stored)
 		} else {
 			var err error
-			manifests, latestRev, err = h.persistPendingConfig(id, app, cfg, req.ExpectedRev, store.RevSourceYAML, build, req.Image)
+			manifests, latestRev, err = h.persistPendingConfig(id, app, cfg, req.ExpectedRev, source, build, req.Image)
 			if !h.failPendingPersist(c, err) {
 				return nil, 0, false
 			}
@@ -279,6 +306,32 @@ func (h *Handler) resolveDeployManifests(c *gin.Context, id identity, app *store
 		}
 	}
 	return manifests, latestRev, true
+}
+
+// rerenderForCredential keeps the config's stored manifests referencing the
+// managed pull secret across credential changes: the reference is injected
+// into (or removed from) the CURRENT manifests — never a fresh render, which
+// would clobber runtime changes such as the image a workflow deploy pushed —
+// and rides the {manifests} funnel as a revision, so stored manifests, the
+// applied set and the live cluster stay identical and the reference never
+// becomes drift.
+func (h *Handler) rerenderForCredential(app *store.App, cfg *store.AppConfig, credentialRef string, req *deployRequest) error {
+	docs, err := store.DecodeManifests(cfg.Manifests)
+	if err != nil {
+		return fmt.Errorf("decode stored manifests: %w", err)
+	}
+	if credentialRef != "" {
+		render.InjectPullSecret(docs, pullSecretName(credentialRef))
+	} else {
+		render.RemovePullSecret(docs, pullSecretName(cfg.CredentialRef))
+	}
+	data, err := store.EncodeManifests(docs)
+	if err != nil {
+		return fmt.Errorf("encode manifests: %w", err)
+	}
+	req.Manifests = json.RawMessage(data)
+	req.manifestsSource = store.RevSourcePullCred
+	return nil
 }
 
 // runPublish runs the conflict-gated apply pipeline for the pending manifest

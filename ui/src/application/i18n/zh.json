@@ -159,7 +159,7 @@
       "pullCredential": "拉取凭证",
       "pullCredentialPlaceholder": "选择凭证…",
       "pullCredentialNone": "无",
-      "pullCredentialHint": "每次发布时，kite 会依据凭证的 registry 条目在目标 namespace 维护一个受管 dockerconfigjson secret（kite-pull-<凭证名>）。请在工作负载清单中自行引用 imagePullSecrets——kite 不会改写你的清单。",
+      "pullCredentialHint": "每次发布时，kite 会依据凭证的 registry 条目在目标 namespace 维护一个受管 dockerconfigjson secret（kite-pull-<凭证名>），并自动在工作负载中引用它；向导渲染（或 YAML 模式下自行编辑）的清单不在此列，需自行引用 imagePullSecrets。",
       "otherConfig": "其他配置",
       "summaryReplicas": "副本 {{count}}",
       "summaryEnv": "环境变量 {{count}} 项",

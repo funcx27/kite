@@ -338,6 +338,9 @@ func (h *Handler) UpdateConfig(c *gin.Context) {
 			if err != nil {
 				return err
 			}
+			// Keep the managed pull secret reference in lockstep with the
+			// config's credential so it never becomes drift.
+			render.InjectPullSecret(next, pullSecretName(cur.CredentialRef))
 		} else {
 			next = incoming
 		}

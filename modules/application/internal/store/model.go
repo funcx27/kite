@@ -13,14 +13,15 @@ type Model struct {
 
 // ConfigRevision Source values (design §3).
 const (
-	RevSourceRender      = "render"       // first deploy rendered from App.Spec
-	RevSourceWizard      = "wizard"       // config saved from the wizard
-	RevSourceDeployImage = "deploy-image" // image changed in the deploy dialog
-	RevSourceSync        = "sync"         // adopted from the cluster
-	RevSourceMerge       = "merge"        // conflict merge
-	RevSourceCopy        = "copy"         // copied to another cluster
-	RevSourceYAML        = "yaml"         // full-manifests YAML edit
-	RevSourceRollback    = "rollback"     // rolled back to a revision
+	RevSourceRender      = "render"          // first deploy rendered from App.Spec
+	RevSourceWizard      = "wizard"          // config saved from the wizard
+	RevSourceDeployImage = "deploy-image"    // image changed in the deploy dialog
+	RevSourceSync        = "sync"            // adopted from the cluster
+	RevSourceMerge       = "merge"           // conflict merge
+	RevSourceCopy        = "copy"            // copied to another cluster
+	RevSourceYAML        = "yaml"            // full-manifests YAML edit
+	RevSourceRollback    = "rollback"        // rolled back to a revision
+	RevSourcePullCred    = "pull-credential" // re-rendered for a pull credential change
 )
 
 // AppConfig StatusSummary values, written back after the detail-page drift

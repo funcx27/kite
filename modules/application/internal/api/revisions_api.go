@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/funcx27/kite/modules/application/internal/render"
 	"github.com/funcx27/kite/modules/application/internal/store"
 )
 
@@ -140,6 +141,20 @@ func (h *Handler) RollbackConfig(c *gin.Context) {
 		}
 	}
 	data := []byte(row.Manifests)
+	// A config with a pull credential keeps referencing the managed secret
+	// regardless of which revision it rolls back to: inject before the
+	// persist so the revision, the stored manifests and the applied set stay
+	// identical and the reference never becomes drift.
+	rollbackDocs, err := store.DecodeManifests(data)
+	if err != nil {
+		h.fail(c, http.StatusInternalServerError, err, "")
+		return
+	}
+	render.InjectPullSecret(rollbackDocs, pullSecretName(cfg.CredentialRef))
+	if data, err = store.EncodeManifests(rollbackDocs); err != nil {
+		h.fail(c, http.StatusInternalServerError, err, "encode rollback manifests")
+		return
+	}
 	previous := string(cfg.Manifests)
 	newRev := 0
 	txErr := h.store.DB().Transaction(func(tx *gorm.DB) error {
@@ -176,11 +191,6 @@ func (h *Handler) RollbackConfig(c *gin.Context) {
 	// wholesale rewrite the gate is about to read.
 	cfg.Manifests = store.SecretJSON(data)
 	cfg.OverriddenPaths = store.JSONField(nil)
-	rollbackDocs, err := store.DecodeManifests(data)
-	if err != nil {
-		h.fail(c, http.StatusInternalServerError, err, "")
-		return
-	}
 	resp, conflicts, err := h.runPublish(c.Request.Context(), h.requestIdentity(c), app, cfg, cli, rollbackDocs, false)
 	var nf *namespaceForbiddenError
 	switch {

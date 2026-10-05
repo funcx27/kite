@@ -159,7 +159,7 @@
       "pullCredential": "Pull credential",
       "pullCredentialPlaceholder": "Pick a credential...",
       "pullCredentialNone": "None",
-      "pullCredentialHint": "On every publish, kite upserts a managed dockerconfigjson secret (kite-pull-<credential>) in the target namespace from the credential's registry entries. Reference it via your workloads' imagePullSecrets — kite never rewrites your manifests.",
+      "pullCredentialHint": "On every publish, kite upserts a managed dockerconfigjson secret (kite-pull-<credential>) in the target namespace from the credential's registry entries and references it on the workload automatically; YAML-edited configs keep the manual contract — reference imagePullSecrets yourself there.",
       "otherConfig": "Other Config",
       "summaryReplicas": "replicas {{count}}",
       "summaryEnv": "{{count}} env vars",
