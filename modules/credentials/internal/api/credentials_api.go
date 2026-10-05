@@ -231,13 +231,18 @@ func (h *Handler) failGet(c *gin.Context, err error) {
 }
 
 // validatePayload rejects payloads without consumable material and entries
-// missing fields the build path needs.
+// missing fields the build path needs. A credential is single-kind: the
+// build path consumes git and registry auth through separate refs, so one
+// payload cannot carry both.
 func validatePayload(p *store.Payload) error {
 	if p == nil {
 		return errors.New("payload is required")
 	}
 	if p.Git == nil && len(p.Registry) == 0 {
 		return errors.New("payload must set git or registry")
+	}
+	if p.Git != nil && len(p.Registry) > 0 {
+		return errors.New("payload must set exactly one of git or registry")
 	}
 	if p.Git != nil && (p.Git.Username == "" || p.Git.Password == "") {
 		return errors.New("payload.git needs username and password")

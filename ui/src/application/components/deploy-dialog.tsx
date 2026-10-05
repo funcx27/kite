@@ -218,8 +218,13 @@ export function DeployDialog({
   )
 
   const { data: credentials } = useCredentials()
+  // Pull secrets are built from registry entries only, so git-only
+  // credentials are not valid candidates here.
   const credentialNames = useMemo(
-    () => (credentials ?? []).map((credential) => credential.name),
+    () =>
+      (credentials ?? [])
+        .filter((credential) => credential.registryHosts.length > 0)
+        .map((credential) => credential.name),
     [credentials]
   )
   // Echo a stored credential that no longer exists so the Select can display

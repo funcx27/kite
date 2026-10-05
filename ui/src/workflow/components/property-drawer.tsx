@@ -62,6 +62,70 @@ export interface PropertyDrawerProps {
 // collide with a real name.
 const credentialNoneValue = '__none__'
 
+// CredentialRefField picks one credential ref prop (git fetch or registry
+// push). Degrades to a plain input when the kind's credential list cannot
+// serve a pick; a saved ref missing from the list still echoes so the saved
+// spec never silently loses its reference.
+function CredentialRefField({
+  propKey,
+  saved,
+  names,
+  label,
+  hint,
+  noneLabel,
+  currentLabel,
+  patchProps,
+  onFocusField,
+}: {
+  propKey: string
+  saved: string
+  names: string[]
+  label: string
+  hint: string
+  noneLabel: string
+  currentLabel: string
+  patchProps: (key: string, value: unknown) => void
+  onFocusField: (field: string) => void
+}) {
+  const credentialEcho = saved && !names.includes(saved) ? saved : undefined
+  return (
+    <Field label={label} hint={hint}>
+      {names.length > 0 ? (
+        <Select
+          value={saved || credentialNoneValue}
+          onValueChange={(v) =>
+            patchProps(propKey, v === credentialNoneValue ? undefined : v)
+          }
+        >
+          <SelectTrigger className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={credentialNoneValue}>{noneLabel}</SelectItem>
+            {names.map((name) => (
+              <SelectItem key={name} value={name}>
+                {name}
+              </SelectItem>
+            ))}
+            {credentialEcho && (
+              <SelectItem value={credentialEcho}>
+                {credentialEcho}{' '}
+                <span className="text-muted-foreground">{currentLabel}</span>
+              </SelectItem>
+            )}
+          </SelectContent>
+        </Select>
+      ) : (
+        <Input
+          value={saved}
+          onChange={(e) => patchProps(propKey, e.target.value || undefined)}
+          onFocus={() => onFocusField(propKey)}
+        />
+      )}
+    </Field>
+  )
+}
+
 export function PropertyDrawer({
   node,
   params,
@@ -371,18 +435,19 @@ function BuildPropsForm({
       ? 'http'
       : 'git'
   const args = readArgs(node)
-  // credentialRef is optional: the Select degrades to the plain input when
-  // the credential list failed to load or is empty (query still pending
-  // counts as empty, so the field is always usable).
+  // The credential refs are optional: each Select degrades to the plain
+  // input when its kind's credential list failed to load or is empty (query
+  // still pending counts as empty, so the field is always usable).
   const { data: credentials, isSuccess: credentialsLoaded } = useCredentials()
-  const credentialNames = credentialsLoaded
-    ? (credentials ?? []).map((c) => c.name)
-    : []
-  const savedCredential = readStringProp(node, 'credentialRef')
-  const credentialEcho =
-    savedCredential && !credentialNames.includes(savedCredential)
-      ? savedCredential
-      : undefined
+  const credentialList = credentialsLoaded ? (credentials ?? []) : []
+  const gitCredentialNames = credentialList
+    .filter((c) => c.hasGit)
+    .map((c) => c.name)
+  const registryCredentialNames = credentialList
+    .filter((c) => c.registryHosts.length > 0)
+    .map((c) => c.name)
+  const savedGitCredential = readStringProp(node, 'gitCredentialRef')
+  const savedRegistryCredential = readStringProp(node, 'registryCredentialRef')
 
   const setGit = (key: string, value: string) => {
     const git = { ...((node.props?.git as Record<string, unknown>) ?? {}) }
@@ -393,52 +458,28 @@ function BuildPropsForm({
 
   return (
     <div className="space-y-4">
-      <Field
-        label={t('workflow.props.credentialRef')}
-        hint={t('workflow.props.credentialRefHint')}
-      >
-        {credentialNames.length > 0 ? (
-          <Select
-            value={savedCredential || credentialNoneValue}
-            onValueChange={(v) =>
-              patchProps(
-                'credentialRef',
-                v === credentialNoneValue ? undefined : v
-              )
-            }
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={credentialNoneValue}>
-                {t('workflow.props.credentialRefNone')}
-              </SelectItem>
-              {credentialNames.map((name) => (
-                <SelectItem key={name} value={name}>
-                  {name}
-                </SelectItem>
-              ))}
-              {credentialEcho && (
-                <SelectItem value={credentialEcho}>
-                  {credentialEcho}{' '}
-                  <span className="text-muted-foreground">
-                    {t('workflow.props.currentValue')}
-                  </span>
-                </SelectItem>
-              )}
-            </SelectContent>
-          </Select>
-        ) : (
-          <Input
-            value={savedCredential}
-            onChange={(e) =>
-              patchProps('credentialRef', e.target.value || undefined)
-            }
-            onFocus={() => onFocusField('credentialRef')}
-          />
-        )}
-      </Field>
+      <CredentialRefField
+        propKey="gitCredentialRef"
+        saved={savedGitCredential}
+        names={gitCredentialNames}
+        label={t('workflow.props.gitCredentialRef')}
+        hint={t('workflow.props.gitCredentialRefHint')}
+        noneLabel={t('workflow.props.credentialRefNone')}
+        currentLabel={t('workflow.props.currentValue')}
+        patchProps={patchProps}
+        onFocusField={onFocusField}
+      />
+      <CredentialRefField
+        propKey="registryCredentialRef"
+        saved={savedRegistryCredential}
+        names={registryCredentialNames}
+        label={t('workflow.props.registryCredentialRef')}
+        hint={t('workflow.props.registryCredentialRefHint')}
+        noneLabel={t('workflow.props.credentialRefNone')}
+        currentLabel={t('workflow.props.currentValue')}
+        patchProps={patchProps}
+        onFocusField={onFocusField}
+      />
       <Field label={t('workflow.props.gitUrl')}>
         <TemplateInput
           {...templateVars}

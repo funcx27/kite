@@ -9,7 +9,8 @@ import "encoding/json"
 
 // BuildRequest asks the build executor to produce one image (design §5.1).
 // Exactly one of Git/HTTP must be set; credentials are resolved executor-side
-// from CredentialRef — the module never sees secret material.
+// from GitCredentialRef/RegistryCredentialRef — the module never sees secret
+// material.
 type BuildRequest struct {
 	Git               *GitSource        `json:"git,omitempty"`
 	HTTP              *HTTPSource       `json:"http,omitempty"`
@@ -18,9 +19,12 @@ type BuildRequest struct {
 	Args              map[string]string `json:"args,omitempty"`
 	Platforms         []string          `json:"platforms,omitempty"`
 	OutputRef         string            `json:"outputRef,omitempty"`
-	// CredentialRef references the credential center entry used for git
-	// fetch and registry push; empty = anonymous.
-	CredentialRef string `json:"credentialRef,omitempty"`
+	// GitCredentialRef references the credential center entry used for git
+	// fetch auth; empty = anonymous.
+	GitCredentialRef string `json:"gitCredentialRef,omitempty"`
+	// RegistryCredentialRef references the credential center entry used for
+	// registry push auth; empty = anonymous.
+	RegistryCredentialRef string `json:"registryCredentialRef,omitempty"`
 	// Provider pins the build runtime; empty = any.
 	Provider string `json:"provider,omitempty"`
 }

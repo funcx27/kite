@@ -34,7 +34,7 @@ const (
 	// authzResource is the pseudo-resource all endpoints authorize against.
 	authzResource = "builds"
 	// credentialsResource is the credential center pseudo-resource: a build
-	// referencing a credentialRef consumes that credential, which requires
+	// referencing a credential ref consumes that credential, which requires
 	// get on the center (usage authorization, design §9) beyond the builds
 	// capability — judged host-wide like the center's own CRUD.
 	credentialsResource = "credentials"
@@ -59,8 +59,8 @@ type Deps struct {
 	// providerNames are the provider names of the loaded buildfleet config,
 	// served to the workflow module's build-settings API.
 	providerNames []string
-	// creds injects credentialRef references from the credential center;
-	// nil when the center is not wired and credential passthrough is off.
+	// creds injects credential refs from the credential center; nil when the
+	// center is not wired and credential passthrough is off.
 	creds credentialsadapter.FleetCredentialInjector
 }
 
@@ -68,7 +68,7 @@ type Deps struct {
 // through the module's own config loader — preserving its env-expansion and
 // KnownFields validation — and assembles the runtime via app.Setup. cm backs
 // the managed build provider API (cluster validation, kubeconfig export).
-// creds may be nil: requests without credentialRef stay anonymous either way.
+// creds may be nil: requests without credential refs stay anonymous either way.
 func New(ctx context.Context, cm *cluster.ClusterManager, cfgNode *yaml.Node, creds credentialsadapter.FleetCredentialInjector) (*Deps, error) {
 	data, err := yaml.Marshal(cfgNode)
 	if err != nil {
@@ -189,8 +189,8 @@ func canUseCredentials(c *gin.Context) bool {
 }
 
 // buildRequest is the POST /builds body, mapped onto fleet.Request. Git and
-// registry credentials are not accepted inline: CredentialRef names a
-// credential center entry resolved server-side (design §9).
+// registry credentials are not accepted inline: the credential ref fields
+// name credential center entries resolved server-side (design §9).
 type buildRequest struct {
 	Git           *gitSource  `json:"git"`
 	HTTP          *httpSource `json:"http"`
@@ -203,9 +203,12 @@ type buildRequest struct {
 	OutputRef         string            `json:"outputRef"`
 	// Provider pins the build to the named provider; empty = any.
 	Provider string `json:"provider"`
-	// CredentialRef names the credential center entry used for the git
-	// fetch and the registry push; empty = anonymous (legacy clients).
-	CredentialRef string `json:"credentialRef"`
+	// GitCredentialRef names the credential center entry used for the git
+	// fetch; empty = anonymous.
+	GitCredentialRef string `json:"gitCredentialRef"`
+	// RegistryCredentialRef names the credential center entry used for the
+	// registry push; empty = anonymous.
+	RegistryCredentialRef string `json:"registryCredentialRef"`
 }
 
 type gitSource struct {
@@ -275,7 +278,7 @@ func (d *Deps) handleBuild(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid request body: %v", err)})
 		return
 	}
-	if req.CredentialRef != "" && !canUseCredentials(c) {
+	if (req.GitCredentialRef != "" || req.RegistryCredentialRef != "") && !canUseCredentials(c) {
 		return
 	}
 	freq, err := req.toFleetRequest()
@@ -283,8 +286,8 @@ func (d *Deps) handleBuild(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if req.CredentialRef != "" {
-		if err := d.injectCredentials(&freq, req.CredentialRef); err != nil {
+	if req.GitCredentialRef != "" || req.RegistryCredentialRef != "" {
+		if err := d.injectCredentials(&freq, req.GitCredentialRef, req.RegistryCredentialRef); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
@@ -311,13 +314,17 @@ type buildOutcome struct {
 	err error
 }
 
-// injectCredentials resolves ref into the request via the credential
-// center's shared resolver; resolution failures are client errors.
-func (d *Deps) injectCredentials(freq *fleet.Request, ref string) error {
+// injectCredentials resolves the two refs into the request via the
+// credential center's shared resolver; resolution failures are client errors.
+func (d *Deps) injectCredentials(freq *fleet.Request, gitRef, registryRef string) error {
 	if d.creds == nil {
+		ref := gitRef
+		if ref == "" {
+			ref = registryRef
+		}
 		return fmt.Errorf("credential %q cannot be resolved: credential center is not wired", ref)
 	}
-	return d.creds.InjectFleetCredentials(freq, ref)
+	return d.creds.InjectFleetCredentials(freq, gitRef, registryRef)
 }
 
 // applyProviderPodResources fills the request's unset per-instance resource
@@ -533,8 +540,8 @@ func writeSSE(c *gin.Context, flusher http.Flusher, event string, payload any) b
 
 // recordHistory persists one audit row when a build terminates. Request
 // payloads are never stored: they may carry Dockerfile content or source
-// URLs with embedded tokens, and credentialRef (a credential center
-// reference, not secret material) adds nothing worth persisting. Error
+// URLs with embedded tokens, and credential refs (credential center
+// references, not secret material) add nothing worth persisting. Error
 // text goes through credentialsadapter.RedactCredentials, because
 // module-side clone errors embed the full client-supplied source URL.
 func (d *Deps) recordHistory(operatorID uint, clusterName, outputRef string, res *fleet.BuildResult, err error) {

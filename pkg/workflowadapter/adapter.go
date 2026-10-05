@@ -55,7 +55,7 @@ type Deps struct {
 	// fleet is the in-process build capability; nil when the host config
 	// has no buildfleet section.
 	fleet FleetBuilder
-	// creds injects CredentialRef references from the credential center.
+	// creds injects credential refs from the credential center.
 	creds credentialsadapter.FleetCredentialInjector
 	// app is the application module's Deps wiring for the deploy facade.
 	app application.Deps
@@ -192,8 +192,8 @@ func (d *Deps) RecordHistory(entry workflow.HistoryEntry) {
 }
 
 // BuildImage runs one image build through the embedded buildfleet fleet
-// (design §5.1/§9): the request maps onto fleet.Request, CredentialRef
-// resolves into git source auth and the per-request registry table, and
+// (design §5.1/§9): the request maps onto fleet.Request, the credential refs
+// resolve into git source auth and the per-request registry table, and
 // builder events bridge to onLog text lines for the node's LogTail.
 func (d *Deps) BuildImage(ctx context.Context, req exec.BuildRequest, onLog func(string)) (exec.BuildResult, error) {
 	if d.fleet == nil {
@@ -237,8 +237,8 @@ func (d *Deps) ProviderFor(namespace string) (string, bool) {
 }
 
 // toFleetRequest maps exec.BuildRequest onto fleet.Request, resolving the
-// credential reference when present. Resolution failures carry the ref name
-// so node errors point at the misconfigured credential.
+// credential refs when present. Resolution failures carry the ref name so
+// node errors point at the misconfigured credential.
 func (d *Deps) toFleetRequest(req exec.BuildRequest) (fleet.Request, error) {
 	freq := fleet.Request{
 		Dockerfile:        req.Dockerfile,
@@ -259,22 +259,26 @@ func (d *Deps) toFleetRequest(req exec.BuildRequest) (fleet.Request, error) {
 	default:
 		return freq, fmt.Errorf("build request needs a git or http source")
 	}
-	if req.CredentialRef != "" {
-		if err := d.applyCredentials(&freq, req.CredentialRef); err != nil {
+	if req.GitCredentialRef != "" || req.RegistryCredentialRef != "" {
+		if err := d.applyCredentials(&freq, req.GitCredentialRef, req.RegistryCredentialRef); err != nil {
 			return freq, err
 		}
 	}
 	return freq, nil
 }
 
-// applyCredentials injects the resolved payload via the credential center's
+// applyCredentials injects the resolved payloads via the credential center's
 // shared resolver (git auth onto the git source, registry entries into the
 // per-request creds table).
-func (d *Deps) applyCredentials(freq *fleet.Request, ref string) error {
+func (d *Deps) applyCredentials(freq *fleet.Request, gitRef, registryRef string) error {
 	if d.creds == nil {
+		ref := gitRef
+		if ref == "" {
+			ref = registryRef
+		}
 		return fmt.Errorf("credential %q cannot be resolved: credential center is not wired", ref)
 	}
-	return d.creds.InjectFleetCredentials(freq, ref)
+	return d.creds.InjectFleetCredentials(freq, gitRef, registryRef)
 }
 
 // applyPodResources fills unset resource fields from the managed provider

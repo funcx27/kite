@@ -1,7 +1,7 @@
-// Credentials management (workflow-design §9, minimal M4 UI): a settings
-// section listing stored credentials as shape summaries (name / description /
-// git flag / registry hosts / non-secret accounts) with create + delete.
-// Payloads are write-only —
+// Credentials management (workflow-design §9, minimal M4 UI): two sections —
+// Git credentials (git fetch auth) and registry credentials (image push /
+// pull auth) — each listing shape summaries (name / description / hosts /
+// non-secret accounts) with create + delete. Payloads are write-only —
 // nothing is ever echoed back; "edit" replaces description + payload through
 // the module's atomic PUT, so all secret material must be re-entered.
 import '@/workflow/i18n'
@@ -31,13 +31,6 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { ActionTable } from '@/components/action-table'
 import { DeleteConfirmationDialog } from '@/components/delete-confirmation-dialog'
 
@@ -48,18 +41,13 @@ import {
   useUpdateCredentialMutation,
   WorkflowApiError,
 } from '../api'
-import type {
-  CredentialPayload,
-  CredentialSummary,
-  RegistryCredentialPayload,
-} from '../types'
+import type { CredentialSummary, RegistryCredentialPayload } from '../types'
 
 type CredentialKind = 'git' | 'registry'
 
 interface CredentialForm {
   name: string
   description: string
-  kind: CredentialKind
   gitHost: string
   gitUsername: string
   gitPassword: string
@@ -69,15 +57,14 @@ interface CredentialForm {
 const emptyForm: CredentialForm = {
   name: '',
   description: '',
-  kind: 'git',
   gitHost: '',
   gitUsername: '',
   gitPassword: '',
   registry: [{ host: '', username: '', password: '' }],
 }
 
-function payloadOf(form: CredentialForm): CredentialPayload | null {
-  if (form.kind === 'git') {
+function payloadOf(kind: CredentialKind, form: CredentialForm) {
+  if (kind === 'git') {
     if (form.gitUsername === '' || form.gitPassword === '') return null
     return {
       git: {
@@ -102,6 +89,9 @@ export function CredentialsManagement() {
   const updateMutation = useUpdateCredentialMutation()
   const deleteMutation = useDeleteCredentialMutation()
 
+  // One shared dialog: the section that opened it fixes the payload kind, so
+  // the form never needs the type selector.
+  const [dialogKind, setDialogKind] = useState<CredentialKind>('git')
   const [dialogOpen, setDialogOpen] = useState(false)
   const [form, setForm] = useState<CredentialForm>(emptyForm)
   const [editingName, setEditingName] = useState<string | null>(null)
@@ -117,13 +107,15 @@ export function CredentialsManagement() {
     setEditingName(null)
   }, [dialogOpen])
 
-  const openCreate = () => {
+  const openCreate = (kind: CredentialKind) => {
+    setDialogKind(kind)
     setForm(emptyForm)
     setEditingName(null)
     setDialogOpen(true)
   }
 
-  const openReplace = (credential: CredentialSummary) => {
+  const openReplace = (kind: CredentialKind, credential: CredentialSummary) => {
+    setDialogKind(kind)
     setForm({
       ...emptyForm,
       name: credential.name,
@@ -136,7 +128,7 @@ export function CredentialsManagement() {
   }
 
   const submit = () => {
-    const payload = payloadOf(form)
+    const payload = payloadOf(dialogKind, form)
     if (!payload) {
       toast.error(t('workflow.credentials.payloadRequired'))
       return
@@ -177,128 +169,29 @@ export function CredentialsManagement() {
         : null
   const conflict = dialogError !== null && dialogError.status === 409
 
+  const gitCredentials = (credentials ?? []).filter((c) => c.hasGit)
+  const registryCredentials = (credentials ?? []).filter(
+    (c) => c.registryHosts.length > 0
+  )
+
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-start justify-between space-y-0">
-        <div className="space-y-1">
-          <CardTitle className="flex items-center gap-2">
-            {t('workflow.credentials.title')}
-            <Badge variant="secondary">{t('workflow.globalBadge')}</Badge>
-          </CardTitle>
-          <CardDescription>
-            {t('workflow.credentials.description')}
-          </CardDescription>
-        </div>
-        <Button onClick={openCreate}>
-          <IconPlus className="mr-1.5 h-4 w-4" />
-          {t('workflow.credentials.create')}
-        </Button>
-      </CardHeader>
-      <CardContent>
-        <ActionTable<CredentialSummary>
-          data={credentials ?? []}
-          columns={[
-            {
-              accessorKey: 'name',
-              header: t('workflow.credentials.name'),
-              cell: ({ row }) => (
-                <span className="font-mono font-medium">
-                  {row.original.name}
-                </span>
-              ),
-            },
-            {
-              accessorKey: 'description',
-              header: t('workflow.credentials.descriptionLabel'),
-              cell: ({ row }) => (
-                <span className="text-muted-foreground">
-                  {row.original.description || '—'}
-                </span>
-              ),
-            },
-            {
-              id: 'shape',
-              header: t('workflow.credentials.shape'),
-              cell: ({ row }) => (
-                <div className="flex flex-wrap gap-1.5">
-                  {row.original.hasGit && (
-                    <Badge variant="secondary">
-                      {t('workflow.credentials.gitSummary')}
-                    </Badge>
-                  )}
-                  {row.original.registryHosts.map((host) => (
-                    <Badge key={host} variant="outline" className="font-mono">
-                      {host}
-                    </Badge>
-                  ))}
-                  {!row.original.hasGit &&
-                    row.original.registryHosts.length === 0 &&
-                    '—'}
-                </div>
-              ),
-            },
-            {
-              id: 'accounts',
-              header: t('workflow.credentials.accounts'),
-              cell: ({ row }) => {
-                const accounts = [
-                  ...(row.original.hasGit
-                    ? [
-                        row.original.gitHost
-                          ? `${row.original.gitHost}:${row.original.gitUsername}`
-                          : row.original.gitUsername,
-                      ]
-                    : []),
-                  ...row.original.registryAccounts.map(
-                    (a) => `${a.host}:${a.username}`
-                  ),
-                ]
-                if (accounts.length === 0) {
-                  return <span className="text-muted-foreground">—</span>
-                }
-                return (
-                  <div className="flex flex-wrap gap-1.5">
-                    {accounts.map((account, i) => (
-                      <Badge key={i} variant="outline" className="font-mono">
-                        {account}
-                      </Badge>
-                    ))}
-                  </div>
-                )
-              },
-            },
-            {
-              accessorKey: 'updatedAt',
-              header: t('workflow.list.updatedAt'),
-              cell: ({ row }) => (
-                <span className="text-xs text-muted-foreground">
-                  {formatDate(row.original.updatedAt)}
-                </span>
-              ),
-            },
-          ]}
-          actions={[
-            {
-              label: t('common.actions.edit'),
-              onClick: openReplace,
-            },
-            {
-              label: t('common.actions.delete'),
-              onClick: (credential) => setDeleteTarget(credential),
-            },
-          ]}
-        />
-        {isLoading && (
-          <p className="py-4 text-center text-sm text-muted-foreground">
-            {t('common.messages.loading')}
-          </p>
-        )}
-        {!isLoading && (credentials ?? []).length === 0 && (
-          <p className="py-4 text-center text-sm text-muted-foreground">
-            {t('workflow.credentials.empty')}
-          </p>
-        )}
-      </CardContent>
+    <div className="space-y-6">
+      <CredentialSection
+        kind="git"
+        credentials={gitCredentials}
+        isLoading={isLoading}
+        onCreate={openCreate}
+        onEdit={openReplace}
+        onDelete={setDeleteTarget}
+      />
+      <CredentialSection
+        kind="registry"
+        credentials={registryCredentials}
+        isLoading={isLoading}
+        onCreate={openCreate}
+        onEdit={openReplace}
+        onDelete={setDeleteTarget}
+      />
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-lg">
@@ -344,29 +237,7 @@ export function CredentialsManagement() {
               </div>
             </div>
 
-            <div className="space-y-1.5">
-              <Label className="text-xs">{t('workflow.params.type')}</Label>
-              <Select
-                value={form.kind}
-                onValueChange={(kind) =>
-                  setForm({ ...form, kind: kind as CredentialKind })
-                }
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="git">
-                    {t('workflow.credentials.typeGit')}
-                  </SelectItem>
-                  <SelectItem value="registry">
-                    {t('workflow.credentials.typeRegistry')}
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {form.kind === 'git' ? (
+            {dialogKind === 'git' ? (
               <>
                 <div className="space-y-1.5">
                   <Label className="text-xs">
@@ -559,6 +430,167 @@ export function CredentialsManagement() {
         resourceType="credential"
         additionalNote={t('workflow.credentials.deleteDescription')}
       />
+    </div>
+  )
+}
+
+// CredentialSection renders one kind's card: header with create button and
+// the filtered credential table. The kind is fixed by the parent's filter,
+// so every row has the same payload shape.
+function CredentialSection({
+  kind,
+  credentials,
+  isLoading,
+  onCreate,
+  onEdit,
+  onDelete,
+}: {
+  kind: CredentialKind
+  credentials: CredentialSummary[]
+  isLoading: boolean
+  onCreate: (kind: CredentialKind) => void
+  onEdit: (kind: CredentialKind, credential: CredentialSummary) => void
+  onDelete: (credential: CredentialSummary) => void
+}) {
+  const { t } = useTranslation()
+  const titleKey =
+    kind === 'git'
+      ? 'workflow.credentials.gitTitle'
+      : 'workflow.credentials.registryTitle'
+  const descriptionKey =
+    kind === 'git'
+      ? 'workflow.credentials.gitDescription'
+      : 'workflow.credentials.registryDescription'
+  const emptyKey =
+    kind === 'git'
+      ? 'workflow.credentials.gitEmpty'
+      : 'workflow.credentials.registryEmpty'
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-start justify-between space-y-0">
+        <div className="space-y-1">
+          <CardTitle className="flex items-center gap-2">
+            {t(titleKey)}
+            <Badge variant="secondary">{t('workflow.globalBadge')}</Badge>
+          </CardTitle>
+          <CardDescription>{t(descriptionKey)}</CardDescription>
+        </div>
+        <Button onClick={() => onCreate(kind)}>
+          <IconPlus className="mr-1.5 h-4 w-4" />
+          {t('workflow.credentials.create')}
+        </Button>
+      </CardHeader>
+      <CardContent>
+        <ActionTable<CredentialSummary>
+          data={credentials}
+          columns={[
+            {
+              accessorKey: 'name',
+              header: t('workflow.credentials.name'),
+              cell: ({ row }) => (
+                <span className="font-mono font-medium">
+                  {row.original.name}
+                </span>
+              ),
+            },
+            {
+              accessorKey: 'description',
+              header: t('workflow.credentials.descriptionLabel'),
+              cell: ({ row }) => (
+                <span className="text-muted-foreground">
+                  {row.original.description || '—'}
+                </span>
+              ),
+            },
+            {
+              id: 'shape',
+              header: t('workflow.credentials.shape'),
+              cell: ({ row }) => {
+                if (kind === 'git') {
+                  return row.original.gitHost ? (
+                    <Badge variant="secondary" className="font-mono">
+                      {row.original.gitHost}
+                    </Badge>
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )
+                }
+                if (row.original.registryHosts.length === 0) {
+                  return <span className="text-muted-foreground">—</span>
+                }
+                return (
+                  <div className="flex flex-wrap gap-1.5">
+                    {row.original.registryHosts.map((host) => (
+                      <Badge key={host} variant="outline" className="font-mono">
+                        {host}
+                      </Badge>
+                    ))}
+                  </div>
+                )
+              },
+            },
+            {
+              id: 'accounts',
+              header: t('workflow.credentials.accounts'),
+              cell: ({ row }) => {
+                if (kind === 'git') {
+                  return (
+                    <Badge variant="outline" className="font-mono">
+                      {row.original.gitUsername}
+                    </Badge>
+                  )
+                }
+                if (row.original.registryAccounts.length === 0) {
+                  return <span className="text-muted-foreground">—</span>
+                }
+                return (
+                  <div className="flex flex-wrap gap-1.5">
+                    {row.original.registryAccounts.map((account) => (
+                      <Badge
+                        key={account.host}
+                        variant="outline"
+                        className="font-mono"
+                      >
+                        {account.host}:{account.username}
+                      </Badge>
+                    ))}
+                  </div>
+                )
+              },
+            },
+            {
+              accessorKey: 'updatedAt',
+              header: t('workflow.list.updatedAt'),
+              cell: ({ row }) => (
+                <span className="text-xs text-muted-foreground">
+                  {formatDate(row.original.updatedAt)}
+                </span>
+              ),
+            },
+          ]}
+          actions={[
+            {
+              label: t('common.actions.edit'),
+              onClick: (credential) => onEdit(kind, credential),
+            },
+            {
+              label: t('common.actions.delete'),
+              onClick: onDelete,
+            },
+          ]}
+        />
+        {isLoading && (
+          <p className="py-4 text-center text-sm text-muted-foreground">
+            {t('common.messages.loading')}
+          </p>
+        )}
+        {!isLoading && credentials.length === 0 && (
+          <p className="py-4 text-center text-sm text-muted-foreground">
+            {t(emptyKey)}
+          </p>
+        )}
+      </CardContent>
     </Card>
   )
 }

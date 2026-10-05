@@ -60,8 +60,13 @@ type BuildProps struct {
 	Args              map[string]string `json:"args,omitempty"`
 	Platforms         []string          `json:"platforms,omitempty"`
 	OutputRef         string            `json:"outputRef,omitempty"`
-	CredentialRef     string            `json:"credentialRef,omitempty"`
-	Provider          string            `json:"provider,omitempty"`
+	// GitCredentialRef names the credential center entry used for git fetch
+	// auth; empty = anonymous.
+	GitCredentialRef string `json:"gitCredentialRef,omitempty"`
+	// RegistryCredentialRef names the credential center entry used for
+	// registry push auth; empty = anonymous.
+	RegistryCredentialRef string `json:"registryCredentialRef,omitempty"`
+	Provider              string `json:"provider,omitempty"`
 }
 
 // GitSource points the build at a git checkout.

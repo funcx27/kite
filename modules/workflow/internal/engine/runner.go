@@ -55,9 +55,15 @@ func (r buildRunner) Run(ctx context.Context, rendered spec.Props, run store.Wor
 		return nil, fmt.Errorf("decode build props: %w", err)
 	}
 	// Referencing a credential consumes its material — the same gate the
-	// REST build path applies (credentials:get, host-wide).
-	if p.CredentialRef != "" && !r.deps.AuthorizeUser(run.TriggeredBy, credentialsResource, "get", "", "") {
-		return nil, fmt.Errorf("user %d does not have permission to use credential %q", run.TriggeredBy, p.CredentialRef)
+	// REST build path applies (credentials:get, host-wide). Each non-empty
+	// ref is checked separately so the error names the one that failed.
+	for _, ref := range []string{p.GitCredentialRef, p.RegistryCredentialRef} {
+		if ref == "" {
+			continue
+		}
+		if !r.deps.AuthorizeUser(run.TriggeredBy, credentialsResource, "get", "", "") {
+			return nil, fmt.Errorf("user %d does not have permission to use credential %q", run.TriggeredBy, ref)
+		}
 	}
 	var source *exec.GitSource
 	var httpSource *exec.HTTPSource
@@ -86,15 +92,16 @@ func (r buildRunner) Run(ctx context.Context, rendered spec.Props, run store.Wor
 		}
 	}
 	res, err := r.deps.BuildImage(ctx, exec.BuildRequest{
-		Git:               source,
-		HTTP:              httpSource,
-		Dockerfile:        dockerfile,
-		DockerfileContent: p.DockerfileContent,
-		Args:              p.Args,
-		Platforms:         p.Platforms,
-		OutputRef:         p.OutputRef,
-		CredentialRef:     p.CredentialRef,
-		Provider:          provider,
+		Git:                   source,
+		HTTP:                  httpSource,
+		Dockerfile:            dockerfile,
+		DockerfileContent:     p.DockerfileContent,
+		Args:                  p.Args,
+		Platforms:             p.Platforms,
+		OutputRef:             p.OutputRef,
+		GitCredentialRef:      p.GitCredentialRef,
+		RegistryCredentialRef: p.RegistryCredentialRef,
+		Provider:              provider,
 	}, onLog)
 	if err != nil {
 		return nil, err

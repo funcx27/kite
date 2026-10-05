@@ -1,6 +1,6 @@
 // Package credentialsadapter wires kite capabilities to the credentials
 // module's Deps interface and exposes the Resolver that the buildfleet and
-// workflow adapters consume for credentialRef resolution. It is a kite-side
+// workflow adapters consume for credential ref resolution. It is a kite-side
 // bridge package (modules/README.md contract §1).
 package credentialsadapter
 
@@ -36,13 +36,14 @@ type Deps struct {
 var _ credentials.Deps = (*Deps)(nil)
 
 // FleetCredentialInjector is the build-path surface the credential center
-// exposes: resolve a credentialRef and inject it into a fleet build request.
-// Both the buildfleet REST facade and the workflow in-process build consume
-// it, so the resolve-and-inject mapping has exactly one implementation.
+// exposes: resolve the git/registry credential refs and inject them into a
+// fleet build request. Both the buildfleet REST facade and the workflow
+// in-process build consume it, so the resolve-and-inject mapping has exactly
+// one implementation.
 type FleetCredentialInjector interface {
-	// InjectFleetCredentials resolves ref and injects git auth plus the
-	// registry table into freq. Errors never contain secret material.
-	InjectFleetCredentials(freq *fleet.Request, ref string) error
+	// InjectFleetCredentials resolves gitRef/registryRef and injects git auth
+	// plus the registry table into freq. Errors never contain secret material.
+	InjectFleetCredentials(freq *fleet.Request, gitRef, registryRef string) error
 }
 
 // New builds the adapter, wires the module's secret codec and constructs
@@ -71,32 +72,49 @@ func (d *Deps) Resolve(name string) (*credentials.Credential, error) {
 	return d.module.Resolve(name)
 }
 
-// InjectFleetCredentials resolves ref and injects it into the request: git
-// basic auth onto the git source, registry entries into the per-request
-// creds table (longest-prefix match happens fleet-side). A git credential
-// on a non-git source is a client error, not a silent anonymous build.
-// Nil-receiver safe: an unwired center yields an explicit error.
-func (d *Deps) InjectFleetCredentials(freq *fleet.Request, ref string) error {
+// InjectFleetCredentials resolves the two refs and injects them into the
+// request: gitRef's basic auth onto the git source, registryRef's registry
+// entries into the per-request creds table (longest-prefix match happens
+// fleet-side). Each ref is resolved only when non-empty; two empty refs do
+// nothing. A git credential on a non-git source is a client error, not a
+// silent anonymous build. Nil-receiver safe: an unwired center yields an
+// explicit error for any non-empty ref.
+func (d *Deps) InjectFleetCredentials(freq *fleet.Request, gitRef, registryRef string) error {
+	if gitRef == "" && registryRef == "" {
+		return nil
+	}
 	if d == nil {
+		ref := gitRef
+		if ref == "" {
+			ref = registryRef
+		}
 		return fmt.Errorf("credential %q cannot be resolved: credential center is not wired", ref)
 	}
-	cred, err := d.module.Resolve(ref)
-	if err != nil {
-		return fmt.Errorf("resolve credential %q: %w", ref, err)
-	}
-	if cred.Git != nil {
-		if freq.Git == nil {
-			return fmt.Errorf("credential %q provides git auth but the build source is not git", ref)
+	if gitRef != "" {
+		cred, err := d.module.Resolve(gitRef)
+		if err != nil {
+			return fmt.Errorf("resolve credential %q: %w", gitRef, err)
 		}
-		freq.Git.Username = cred.Git.Username
-		freq.Git.Password = cred.Git.Password
+		if cred.Git != nil {
+			if freq.Git == nil {
+				return fmt.Errorf("credential %q provides git auth but the build source is not git", gitRef)
+			}
+			freq.Git.Username = cred.Git.Username
+			freq.Git.Password = cred.Git.Password
+		}
 	}
-	for _, rc := range cred.Registry {
-		freq.Creds = append(freq.Creds, creds.Credential{
-			Kind:   creds.Registry,
-			Match:  rc.Host,
-			Direct: &creds.Secret{Username: rc.Username, Secret: rc.Password},
-		})
+	if registryRef != "" {
+		cred, err := d.module.Resolve(registryRef)
+		if err != nil {
+			return fmt.Errorf("resolve credential %q: %w", registryRef, err)
+		}
+		for _, rc := range cred.Registry {
+			freq.Creds = append(freq.Creds, creds.Credential{
+				Kind:   creds.Registry,
+				Match:  rc.Host,
+				Direct: &creds.Secret{Username: rc.Username, Secret: rc.Password},
+			})
+		}
 	}
 	return nil
 }
