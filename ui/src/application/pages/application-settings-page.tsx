@@ -1,52 +1,62 @@
-import { useMemo } from 'react'
+import { useSpaces } from '@/platform/space-context'
 import { BuildProvidersManagement } from '@/workflow/components/build-providers-management'
 import { BuildRuntimeSettings } from '@/workflow/components/build-runtime-settings'
 import { CredentialsManagement } from '@/workflow/components/credentials-management'
 import { SpaceBuildSettings } from '@/workflow/components/space-build-settings'
 import { useTranslation } from 'react-i18next'
+import { Link, useSearchParams } from 'react-router-dom'
 
 import { usePageTitle } from '@/hooks/use-page-title'
-import { ResponsiveTabs } from '@/components/ui/responsive-tabs'
+import { Button } from '@/components/ui/button'
 
-// Application-mode settings (design §11): space settings lead since they are
-// the everyday surface, the global sections sit behind the second tab. The
-// active tab lives in ?tab= so /application-settings?tab=space&space=foo is
-// a shareable deep link.
+// Application-mode settings (design §11). The URL decides the view:
+// ?space=<name> shows that space's build settings, the bare path shows the
+// global sections. The header space picker writes ?space= on switch, so
+// picking a space while on this page lands in its settings view.
 export function ApplicationSettingsPage() {
   const { t } = useTranslation()
+  const { currentSpace } = useSpaces()
+  const [searchParams] = useSearchParams()
   usePageTitle(t('nav.settings'))
 
-  const tabs = useMemo(
-    () => [
-      {
-        value: 'space',
-        label: t('applicationSettings.tabs.space'),
-        content: <SpaceBuildSettings />,
-      },
-      {
-        value: 'global',
-        label: t('applicationSettings.tabs.global'),
-        content: (
-          <div className="space-y-6">
-            <CredentialsManagement />
-            <BuildProvidersManagement />
-            <BuildRuntimeSettings />
-          </div>
-        ),
-      },
-    ],
-    [t]
-  )
+  const space = searchParams.get('space') || null
 
   return (
     <div className="space-y-6">
-      <div className="space-y-1">
-        <h1 className="text-3xl">{t('nav.settings')}</h1>
-        <p className="text-muted-foreground">
-          {t('applicationSettings.description')}
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div className="space-y-1">
+          <h1 className="text-3xl">{t('nav.settings')}</h1>
+          <p className="text-muted-foreground">
+            {t('applicationSettings.description')}
+          </p>
+        </div>
+        {space !== null ? (
+          <Button variant="ghost" size="sm" asChild>
+            <Link to="/application-settings">
+              {t('applicationSettings.viewGlobal')}
+            </Link>
+          </Button>
+        ) : (
+          currentSpace !== null && (
+            <Button variant="ghost" size="sm" asChild>
+              <Link
+                to={`/application-settings?space=${encodeURIComponent(currentSpace)}`}
+              >
+                {t('applicationSettings.viewSpace', { name: currentSpace })}
+              </Link>
+            </Button>
+          )
+        )}
       </div>
-      <ResponsiveTabs tabs={tabs} />
+      {space !== null ? (
+        <SpaceBuildSettings space={space} />
+      ) : (
+        <div className="space-y-6">
+          <CredentialsManagement />
+          <BuildProvidersManagement />
+          <BuildRuntimeSettings />
+        </div>
+      )}
     </div>
   )
 }

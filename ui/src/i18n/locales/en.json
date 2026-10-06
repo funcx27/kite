@@ -798,10 +798,8 @@
   },
   "applicationSettings": {
     "description": "Manage settings for application mode",
-    "tabs": {
-      "space": "Space Settings",
-      "global": "Global Settings"
-    }
+    "viewGlobal": "View global settings",
+    "viewSpace": "View {{name}} space settings"
   },
   "generalManagement": {
     "title": "General",

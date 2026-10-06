@@ -806,10 +806,8 @@
   },
   "applicationSettings": {
     "description": "管理应用模式的设置",
-    "tabs": {
-      "space": "空间设置",
-      "global": "全局设置"
-    }
+    "viewGlobal": "查看全局设置",
+    "viewSpace": "查看 {{name}} 的空间设置"
   },
   "generalManagement": {
     "title": "通用设置",

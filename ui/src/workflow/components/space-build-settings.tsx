@@ -1,11 +1,10 @@
-// Per-space build settings: the build provider default of the currently
-// selected space. Saving upserts the space's build-settings row; "follow
-// global" deletes it, letting the global default row apply again. The page
-// renders this section only when a space is selected.
+// Per-space build settings: the build provider default of one space. Saving
+// upserts the space's build-settings row; "follow global" deletes it,
+// letting the global default row apply again. The settings page passes the
+// space from its ?space= URL param and renders this section only with one.
 import '@/workflow/i18n'
 
 import { useEffect, useMemo, useState } from 'react'
-import { useSpaces } from '@/platform/space-context'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -35,17 +34,16 @@ import {
 // Select sentinel for "follow the global default row".
 const FOLLOW_GLOBAL = '__global__'
 
-export function SpaceBuildSettings() {
+export function SpaceBuildSettings({ space }: { space: string | null }) {
   const { t } = useTranslation()
-  const { currentSpace } = useSpaces()
   const { data, isLoading } = useBuildSettings()
   const upsertMutation = useUpsertBuildSettingMutation()
   const deleteMutation = useDeleteBuildSettingMutation()
 
   const settings = useMemo(() => data?.settings ?? [], [data])
   const spaceRow = useMemo(
-    () => settings.find((s) => s.namespace === currentSpace),
-    [settings, currentSpace]
+    () => settings.find((s) => s.namespace === space),
+    [settings, space]
   )
 
   // null = untouched, so the select tracks the stored row until the user
@@ -53,9 +51,9 @@ export function SpaceBuildSettings() {
   const [selected, setSelected] = useState<string | null>(null)
   useEffect(() => {
     setSelected(null)
-  }, [currentSpace])
+  }, [space])
 
-  if (!currentSpace) {
+  if (!space) {
     return (
       <p className="text-sm text-muted-foreground">
         {t('workflow.spaceSettings.noSpace')}
@@ -67,17 +65,17 @@ export function SpaceBuildSettings() {
   const unchanged = value === (spaceRow?.provider ?? FOLLOW_GLOBAL)
 
   const save = () => {
-    if (!currentSpace || unchanged) return
+    if (!space || unchanged) return
     const onError = (err: Error) => toast.error(err.message)
     if (value === FOLLOW_GLOBAL) {
-      deleteMutation.mutate(currentSpace, {
+      deleteMutation.mutate(space, {
         onSuccess: () => toast.success(t('workflow.spaceSettings.saved')),
         onError,
       })
       return
     }
     upsertMutation.mutate(
-      { namespace: currentSpace, provider: value },
+      { namespace: space, provider: value },
       {
         onSuccess: () => toast.success(t('workflow.spaceSettings.saved')),
         onError,
@@ -91,7 +89,7 @@ export function SpaceBuildSettings() {
     <Card>
       <CardHeader>
         <CardTitle>
-          {t('workflow.spaceSettings.title', { name: currentSpace })}
+          {t('workflow.spaceSettings.title', { name: space })}
         </CardTitle>
         <CardDescription>
           {t('workflow.spaceSettings.providerHint')}
