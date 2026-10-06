@@ -20,6 +20,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import { usePageTitle } from '@/hooks/use-page-title'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -153,6 +154,9 @@ export function WorkflowEditorPage() {
 
   const [draftName, setDraftName] = useState('')
   const [draftNamespace, setDraftNamespace] = useState('')
+  // Namespace forced by a ?copy= / ?fromApp= prefill; keeps the select
+  // visible when it differs from the active space.
+  const [nsPrefill, setNsPrefill] = useState<string | null>(null)
   const [draftDescription, setDraftDescription] = useState('')
   const [params, setParams] = useState<ParamSpec[]>([])
   const [triggers, setTriggers] = useState<TriggerConfig>({})
@@ -173,6 +177,7 @@ export function WorkflowEditorPage() {
     setSelectedId(null)
     setDraftName('')
     setDraftNamespace('')
+    setNsPrefill(null)
     setDraftDescription('')
     setParams([])
     setTriggers({})
@@ -211,6 +216,7 @@ export function WorkflowEditorPage() {
     setFlowNodes(nodes)
     setFlowEdges(edges)
     setDraftName(`${copyWorkflow.name}-copy`)
+    setNsPrefill(copyWorkflow.namespace)
     setDraftNamespace(copyWorkflow.namespace)
     setDraftDescription(copyWorkflow.description)
     setParams(copyWorkflow.params ?? [])
@@ -252,19 +258,31 @@ export function WorkflowEditorPage() {
     const app = applications.find((a) => a.name === fromApp)
     if (app) {
       nsPrefilledFor.current = fromApp
+      setNsPrefill(app.namespace)
       setDraftNamespace(app.namespace)
     }
   }, [isCreate, fromApp, copySource, applications])
 
-  // A workflow lives in a labeled space, never an arbitrary namespace: seed
-  // the picker once spaces are known (current space first) and keep saving
-  // blocked while it is empty. With no spaces at all the hint tells the user
-  // to create one first.
+  // Namespace target: with an active space the workflow is created there and
+  // the picker renders as a read-only badge; the select only appears in
+  // all-spaces mode, or when a copy / app prefill points at a different
+  // space (the prefill wins and stays editable). With no spaces at all the
+  // hint tells the user to create one first.
   useEffect(() => {
-    if (!isCreate || draftNamespace !== '') return
-    const seed = currentSpace ?? spaces[0]
-    if (seed) setDraftNamespace(seed)
-  }, [isCreate, draftNamespace, currentSpace, spaces])
+    if (!isCreate) return
+    if (nsPrefill !== null && nsPrefill !== currentSpace) return
+    if (currentSpace !== null) {
+      setDraftNamespace(currentSpace)
+      return
+    }
+    if (draftNamespace === '') {
+      const seed = spaces[0]
+      if (seed) setDraftNamespace(seed)
+    }
+  }, [isCreate, currentSpace, nsPrefill, draftNamespace, spaces])
+
+  const showNamespaceSelect =
+    currentSpace === null || (nsPrefill !== null && nsPrefill !== currentSpace)
 
   // Keep a prefilled namespace selectable even when it is not a labeled
   // space on the current cluster (e.g. copied from another cluster).
@@ -531,25 +549,35 @@ export function WorkflowEditorPage() {
               aria-required
               className="w-48 font-mono"
             />
-            <Select
-              value={draftNamespace}
-              onValueChange={setDraftNamespace}
-              disabled={spaces.length === 0}
-            >
-              <SelectTrigger className="w-36 font-mono" aria-required>
-                <SelectValue
-                  placeholder={`${t('workflow.editor.namespace')} *`}
-                />
-              </SelectTrigger>
-              <SelectContent>
-                {namespaceOptions.map((space) => (
-                  <SelectItem key={space} value={space}>
-                    {space}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {isCreate && spaces.length === 0 && (
+            {showNamespaceSelect ? (
+              <Select
+                value={draftNamespace}
+                onValueChange={setDraftNamespace}
+                disabled={spaces.length === 0}
+              >
+                <SelectTrigger className="w-36 font-mono" aria-required>
+                  <SelectValue
+                    placeholder={`${t('workflow.editor.namespace')} *`}
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  {namespaceOptions.map((space) => (
+                    <SelectItem key={space} value={space}>
+                      {space}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <Badge
+                variant="secondary"
+                className="font-mono"
+                title={t('workflow.editor.namespaceBadgeHint')}
+              >
+                {draftNamespace || currentSpace}
+              </Badge>
+            )}
+            {showNamespaceSelect && spaces.length === 0 && (
               <span className="text-xs text-destructive">
                 {t('workflow.editor.noSpaces')}
               </span>

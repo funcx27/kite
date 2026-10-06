@@ -98,6 +98,7 @@
       "emptyGraph": "保存前请先添加至少一个节点。",
       "nameRequired": "请先填写工作流名称",
       "namespaceRequired": "请先选择所属空间",
+      "namespaceBadgeHint": "将创建到当前空间",
       "conflict": "工作流已被他人修改，请刷新后重试。",
       "selectNode": "节点属性",
       "selectNodeHint": "点击画布节点编辑参数",

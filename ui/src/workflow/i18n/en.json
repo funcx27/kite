@@ -98,6 +98,7 @@
       "emptyGraph": "Add at least one node before saving.",
       "nameRequired": "Enter a workflow name first",
       "namespaceRequired": "Select a space first",
+      "namespaceBadgeHint": "Will be created in the current space",
       "conflict": "The workflow was modified by someone else. Reload and retry.",
       "selectNode": "Node Properties",
       "selectNodeHint": "Select a node on the canvas to edit it",
