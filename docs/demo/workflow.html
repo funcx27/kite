@@ -470,9 +470,12 @@ const FORMS = {
     <div class="mb-3"><label class="label">Ref</label><input class="input font-mono text-xs" value="{{params.branch}}"></div>
     <div class="mb-3"><label class="label">Dockerfile 路径</label><input class="input font-mono text-xs" value="Dockerfile"></div>
     <div class="mb-3"><label class="label">输出镜像（outputRef）</label><input class="input font-mono text-xs" value="reg.acme/web:{{params.tag}}"></div>
-    <div class="mb-3"><label class="label">构建凭证（credentialRef）</label>
+    <div class="mb-3"><label class="label">Git 凭证（gitCredentialRef）</label>
       <select class="input"><option>gitlab-main</option><option>（不使用）</option></select>
-      <p class="mt-1 text-[11px] text-zinc-400">git 拉源 + registry 推送，随 solve 会话传递，实例不落凭证</p></div>
+      <p class="mt-1 text-[11px] text-zinc-400">git 拉源认证，随 clone 传递，实例不落凭证</p></div>
+    <div class="mb-3"><label class="label">Registry 凭证（registryCredentialRef）</label>
+      <select class="input"><option>reg-acme</option><option>（不使用）</option></select>
+      <p class="mt-1 text-[11px] text-zinc-400">registry 推送认证，随 solve 会话传递，实例不落凭证</p></div>
     <div class="mb-3"><label class="label">平台</label><select class="input"><option>linux/amd64</option><option>linux/amd64 + linux/arm64</option></select></div>
     <div><label class="label">失败策略</label>
       <label class="flex items-center gap-2 text-sm"><input type="radio" name="of" checked> 停止流水线（默认）</label>

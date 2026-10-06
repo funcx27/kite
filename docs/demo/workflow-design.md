@@ -13,7 +13,7 @@
 | 节点类型（MVP 四类） | **构建镜像**（buildfleet）、**部署应用**（application）、**人工审批**（门禁）、**通知**（webhook）。通用任务节点（跑任意镜像）进 Backlog |
 | 与发布门禁的关系 | **工作流不绕过应用模块的任何门禁**：deploy 节点经 application 的 deploy 语义执行，遇冲突（Live≠锚点）即节点失败并透出冲突明细——自动发布永远不覆盖集群手动修改，人工在应用模块合并后「从失败节点重试」 |
 | 定义与执行分离 | Workflow 定义带版本链（WorkflowRevision）；Run 钉住触发时的 rev，历史 run 永远可回溯当时定义 |
-| 凭证 | 节点以 `credentialRef` 引用**凭证中心**（独立前置模块，见 §9）；本模块不存凭证明文，只透传给宿主能力侧 |
+| 凭证 | 节点以 `gitCredentialRef` / `registryCredentialRef` 两个独立引用**凭证中心**（独立前置模块，见 §9）；本模块不存凭证明文，只透传给宿主能力侧 |
 | 触发器 | 手动（参数表单）/ git webhook（github、gitea、gitlab 载荷适配，每 workflow 独立 token）/ cron（模块内置轻量调度循环，不改 pkg/scheduler） |
 | 前端形态 | 住在 kite `ui/` 工程内，但**目录结构完全独立**：全部代码自包含在 `ui/src/workflow/` 单一目录（pages / components / api / i18n 自带），不向任何共享目录添加文件；风格复用同一套 Tailwind 主题与 shadcn 原语（import 而非修改）；宿主共享文件仅两处**追加式**改动：`routes.tsx` 一个路由块、`package.json` 一个依赖行（见 §2/§11） |
 | 可视化 | React Flow（`@xyflow/react`，MIT）自由画布：拖拽节点 + 连线 + 右侧属性抽屉；无显式 start/end 节点（无入边即起点）；DAG 无环校验 |
@@ -173,7 +173,8 @@ NodeRun(build)     NodeRun(approve)   NodeRun(deploy)
   "args":        { "VERSION": "{{params.tag}}" },
   "platforms":   ["linux/amd64"],
   "outputRef":   "reg.acme/web:{{params.tag}}",
-  "credentialRef": "gitlab-main",      // 凭证中心引用（可选）：git 拉源 + registry 推送
+  "gitCredentialRef": "gitlab-main",   // 凭证中心引用（可选）：git 拉源认证
+  "registryCredentialRef": "reg-acme", // 凭证中心引用（可选）：registry 推送认证
   "provider":    ""                    // 钉定 provider；空 = 任意
 }
 ```
@@ -272,13 +273,14 @@ node: pending ──> running ──┬─> succeeded ──(下游解锁)
 
 ## 9. 凭证接口契约（凭证中心 = 独立前置模块）
 
-构建节点访问私有 git / 推送私有 registry 需要**凭证中心**先行落地（或至少最小实现）。本模块的对接形状：**节点只透传 `credentialRef` 字符串**（BuildRequest 的组成字段），凭证的解析与注入由宿主能力实现侧完成——`pkg/workflowadapter` 实现 BuildImage 时经凭证中心按 ref 解析出 git/registry 凭证表，再填入 `fleet.Request.Creds`（进程内直调，SDK 原生支持按请求传递）。模块与引擎全程不接触凭证明文，也不感知凭证结构（解析失败 = 节点失败并透出来自 adapter 的明确错误）：
+构建节点访问私有 git / 推送私有 registry 需要**凭证中心**先行落地（或至少最小实现）。本模块的对接形状：**节点只透传 `gitCredentialRef` / `registryCredentialRef` 两个字符串字段**（BuildRequest 的组成字段，git 拉源认证与 registry 推送认证分开），凭证的解析与注入由宿主能力实现侧完成——`pkg/workflowadapter` 实现 BuildImage 时经凭证中心按 ref 解析出 git/registry 凭证表，再填入 `fleet.Request.Creds`（进程内直调，SDK 原生支持按请求传递）。模块与引擎全程不接触凭证明文，也不感知凭证结构（解析失败 = 节点失败并透出来自 adapter 的明确错误）：
 
 ```go
 // exec.BuildRequest 的凭证字段（模块侧只有这一形状）
 type BuildRequest struct {
     // ...
-    CredentialRef string // 凭证中心引用；空 = 匿名构建
+    GitCredentialRef      string // 凭证中心引用：git 拉源认证；空 = 匿名拉取
+    RegistryCredentialRef string // 凭证中心引用：registry 推送认证；空 = 匿名推送
 }
 
 // 凭证中心自身的接口契约（宿主侧，由其自身设计文档定稿；此处仅约定被消费面）
@@ -288,9 +290,9 @@ type Credential struct {
 }
 ```
 
-- 凭证中心自身（存储 `model.SecretString` 加密、管理 UI、RBAC）定位为独立模块/独立里程碑，不在本文档展开；落地形态可以是 `modules/credentials/` 或宿主 settings 页扩展，由其自身设计定。模块侧消费面即上文 `BuildRequest.CredentialRef` + adapter 内的解析注入。
-- buildfleet **REST 接线层的凭证缺口**（手动构建页暂不能传凭证）是同根问题的另一面：fleet SDK 的 `Request.Creds` 原生支持（git 进 clone、registry 进 solve 会话），workflow 走进程内直调天然可用；REST 门面的 `buildRequest` 补 `credentialRef` 字段即可复用同一 Resolver，建议与凭证中心同期修复。
-- **已落地（M2a）**：凭证中心住 `modules/credentials/`（payload SecretJSON 加密存储 + 按名 Resolve），宿主桥接 `pkg/credentialsadapter`；`pkg/buildfleetadapter`（REST `buildRequest.credentialRef`）与 `pkg/workflowadapter`（进程内 `BuildImage`）经其注入的同一 Resolver 解析后填入 `fleet.Request`（git 源认证 + registry 凭证表）。使用侧授权：引用凭据要求 `credentials` 资源 `get`（REST 逐请求检查 / workflow 节点以触发用户身份检查）。M2a 仅落地 Git basic auth（`Username`/`Password`）；`SSHKey` 形状留待后续里程碑（fleet gitctx 目前仅支持 http(s) basic auth）。
+- 凭证中心自身（存储 `model.SecretString` 加密、管理 UI、RBAC）定位为独立模块/独立里程碑，不在本文档展开；落地形态可以是 `modules/credentials/` 或宿主 settings 页扩展，由其自身设计定。模块侧消费面即上文 `BuildRequest.GitCredentialRef`/`RegistryCredentialRef` + adapter 内的解析注入。
+- buildfleet REST 接线层与 workflow 同型：fleet SDK 的 `Request.Creds` 原生支持（git 进 clone、registry 进 solve 会话），REST 门面的 `buildRequest` 已补 `gitCredentialRef`/`registryCredentialRef` 字段，与进程内构建复用同一 Resolver。
+- **已落地（M2a）**：凭证中心住 `modules/credentials/`（payload SecretJSON 加密存储 + 按名 Resolve），宿主桥接 `pkg/credentialsadapter`；`pkg/buildfleetadapter`（REST `buildRequest.gitCredentialRef`/`registryCredentialRef`）与 `pkg/workflowadapter`（进程内 `BuildImage`）经其注入的同一 Resolver 解析后填入 `fleet.Request`（git 源认证 + registry 凭证表，两个 ref 分别解析）。使用侧授权：引用凭据要求 `credentials` 资源 `get`（REST 逐请求检查 / workflow 节点以触发用户身份检查，两个 ref 分别校验）。凭证中心按「Git 凭证 / 镜像仓库凭证」两类管理，单条凭证只含其中一类。M2a 仅落地 Git basic auth（`Username`/`Password`）；`SSHKey` 形状留待后续里程碑（fleet gitctx 目前仅支持 http(s) basic auth）。
 
 ## 10. API 设计（模块内自查权限）
 
@@ -327,7 +329,7 @@ type Credential struct {
 | M3 | 触发与审批：webhook 公开端点 + token + 三家载荷适配、cron 循环、审批交互与超时巡检、从失败节点重试 | 待启动 |
 | M4 | 前端：`ui/src/workflow/` 自包含目录骨架（pages/components/api/i18n 自带）、React Flow 编辑器（属性抽屉/校验）、run 视图（着色/日志抽屉/审批内联）、列表页、`routes.tsx` 单块接入 + `package.json` 依赖 | 待启动 |
 
-**Backlog（不承诺）**：通用任务节点（跑任意镜像，承载单测/trivy 扫描；需 k8s Job 宿主能力——新内置 runner + 新 Deps 方法——或 buildfleet 扩展）；画布 ⇄ YAML 双模编辑；通知渠道扩展（钉钉/企微/飞书/邮件，待通知中心）；PR 触发（v1 仅 push）；run 定时清理策略（当前 50 条保留）；手动构建页 REST 层 credentialRef 透传（与凭证中心同期）。
+**Backlog（不承诺）**：通用任务节点（跑任意镜像，承载单测/trivy 扫描；需 k8s Job 宿主能力——新内置 runner + 新 Deps 方法——或 buildfleet 扩展）；画布 ⇄ YAML 双模编辑；通知渠道扩展（钉钉/企微/飞书/邮件，待通知中心）；PR 触发（v1 仅 push）；run 定时清理策略（当前 50 条保留）。
 
 ## 13. 验证口径
 
@@ -341,7 +343,7 @@ type Credential struct {
 | 项目 | 借鉴点 | 许可 |
 |---|---|---|
 | [Dify](https://github.com/langgenius/dify) | 工作流编辑器整体形态：React + React Flow 同构技术栈、左侧节点面板 + 右侧属性抽屉 + 运行日志逐节点查看 | Apache-2.0（附加条件） |
-| [n8n](https://github.com/n8n-io/n8n) | 节点 + 凭证引用模型：凭证集中存储、节点只挂 credentialRef——§9 的直接样板 | fair-code（参考不抄码） |
+| [n8n](https://github.com/n8n-io/n8n) | 节点 + 凭证引用模型：凭证集中存储、节点只挂凭证引用——§9 的直接样板（本项目已细化为 git/registry 双 ref） | fair-code（参考不抄码） |
 | [Apache DolphinScheduler](https://github.com/apache/dolphinscheduler) | DAG 引擎语义：失败重试、超时策略、并行分支、补数；节点状态机参考 | Apache-2.0 |
 | [Kestra](https://github.com/kestra-io/kestra) | run 模型：执行与定义版本分离、inputs 快照 | Apache-2.0 |
 | [Argo Workflows UI](https://github.com/argoproj/argo-workflows) | run 视图：拓扑着色、节点详情抽屉的呈现密度 | Apache-2.0 |
