@@ -275,6 +275,15 @@ export function WorkflowEditorPage() {
     return spaces
   }, [spaces, draftNamespace])
 
+  // Why the create-page save button is disabled; validate() reports the same
+  // blocker so "validation passed" always means "savable".
+  const saveBlocker: 'name' | 'namespace' | null = useMemo(() => {
+    if (!isCreate) return null
+    if (draftName.trim() === '') return 'name'
+    if (draftNamespace.trim() === '') return 'namespace'
+    return null
+  }, [isCreate, draftName, draftNamespace])
+
   const selectedNode = useMemo(
     () => flowNodes.find((n) => n.id === selectedId) ?? null,
     [flowNodes, selectedId]
@@ -300,6 +309,12 @@ export function WorkflowEditorPage() {
   }, [flowNodes, flowEdges])
 
   const validate = (): string | null => {
+    if (saveBlocker === 'name') {
+      return t('workflow.editor.nameRequired')
+    }
+    if (saveBlocker === 'namespace') {
+      return t('workflow.editor.namespaceRequired')
+    }
     if (flowNodes.length === 0) {
       return t('workflow.editor.emptyGraph')
     }
@@ -512,12 +527,19 @@ export function WorkflowEditorPage() {
             <Input
               value={draftName}
               onChange={(e) => setDraftName(e.target.value)}
-              placeholder={t('workflow.editor.name')}
+              placeholder={`${t('workflow.editor.name')} *`}
+              aria-required
               className="w-48 font-mono"
             />
-            <Select value={draftNamespace} onValueChange={setDraftNamespace}>
-              <SelectTrigger className="w-36 font-mono">
-                <SelectValue placeholder={t('workflow.editor.namespace')} />
+            <Select
+              value={draftNamespace}
+              onValueChange={setDraftNamespace}
+              disabled={spaces.length === 0}
+            >
+              <SelectTrigger className="w-36 font-mono" aria-required>
+                <SelectValue
+                  placeholder={`${t('workflow.editor.namespace')} *`}
+                />
               </SelectTrigger>
               <SelectContent>
                 {namespaceOptions.map((space) => (
@@ -576,10 +598,13 @@ export function WorkflowEditorPage() {
           </Button>
           <Button
             size="sm"
-            disabled={
-              saveMutation.isPending ||
-              (isCreate && draftName.trim() === '') ||
-              (isCreate && draftNamespace.trim() === '')
+            disabled={saveMutation.isPending || saveBlocker !== null}
+            title={
+              saveBlocker === 'name'
+                ? t('workflow.editor.nameRequired')
+                : saveBlocker === 'namespace'
+                  ? t('workflow.editor.namespaceRequired')
+                  : undefined
             }
             onClick={handleSave}
           >
