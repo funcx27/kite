@@ -351,9 +351,10 @@ func parse(overlay []byte, name string) (*Config, error) {
 			return nil, fmt.Errorf("config: parse %s: %w", name, err)
 		}
 	}
-	if len(c.Providers) == 0 {
-		return nil, fmt.Errorf("config: at least one provider (docker | k8s) is required")
-	}
+	// Providers may legitimately be empty for the kite host: its managed
+	// providers live in the database and register via the API, so builds
+	// fail per-request until one is added. Standalone buildfleetd users
+	// configure providers explicitly (buildfleet.example.yaml).
 	// Providers overlay onto their type's defaults (embedded
 	// providerDefaults), so entries only carry their specifics.
 	for i := range c.Providers {

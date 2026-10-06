@@ -1,8 +1,9 @@
-// Managed build providers: k8s build providers created from kite's managed
-// clusters in the settings UI and injected into the buildfleet runtime without
-// a config change or restart. The default provider is marked on its name
-// (click to switch); the create/edit dialog also carries the "set as default"
-// switch, which upserts/deletes the global build-settings row on save.
+// Managed build providers: k8s (managed-cluster) and docker (the kite host's
+// daemon) build providers created in the settings UI and injected into the
+// buildfleet runtime without a config change or restart. The default provider
+// is marked on its name (click to switch); the create/edit dialog also
+// carries the "set as default" switch, which upserts/deletes the global
+// build-settings row on save.
 import '@/workflow/i18n'
 
 import { useMemo, useState } from 'react'
@@ -62,6 +63,7 @@ import {
 import type {
   BuildProvider,
   BuildProviderCache,
+  BuildProviderDefaults,
   UpdateBuildProviderRequest,
 } from '../types'
 
@@ -81,16 +83,23 @@ const memoryGiOf = (quantity: string) => {
 
 // Dialog form state; numeric fields stay strings until validation.
 interface ProviderForm {
+  type: 'k8s' | 'docker'
   name: string
   cluster: string
   namespace: string
+  // Docker daemon endpoint + optional mutual-TLS material (host file paths).
+  address: string
+  tlsCa: string
+  tlsCert: string
+  tlsKey: string
+  tlsInsecure: boolean
   // Fleet capacity caps (cpu cores / memory Gi).
   cpu: string
   memory: string
   // Runtime profile name; always one of the API's runtimes ('' never occurs —
   // the default profile is its own entry).
   runtime: string
-  // Per-instance build pod shape (cpu cores / memory Gi).
+  // Per-instance build pod shape (cpu cores / memory Gi). k8s only.
   podCpu: string
   podMemoryGi: string
   cacheEnabled: boolean
@@ -98,34 +107,67 @@ interface ProviderForm {
   cacheStorageClass: string
   cacheSize: string
   cacheGcSchedule: string
-  // Buildkitd readiness wait in seconds; '' = module default.
+  // Buildkitd readiness wait in seconds; k8s only.
   readyTimeoutSeconds: string
   setDefault: boolean
 }
 
-const emptyForm = (): ProviderForm => ({
+// Mirrors the backend's built-in defaults (buildfleet providerDefaults and
+// the module defaults) for the case the API is unreachable.
+const DEFAULTS_FALLBACK: BuildProviderDefaults = {
+  readyTimeoutSeconds: 60,
+  podCpu: 2,
+  podMemoryGi: 4,
+  cacheImage: 'registry:3',
+  cacheSize: '20Gi',
+  cacheGcSchedule: '0 3 * * *',
+  dockerCpu: 8,
+  dockerMemory: '16Gi',
+}
+
+// emptyForm prefills every default-carrying field from the API's defaults so
+// the dialog shows the effective values instead of empty boxes.
+const emptyForm = (defaults: BuildProviderDefaults): ProviderForm => ({
+  type: 'k8s',
   name: '',
   cluster: '',
   namespace: '',
+  address: '',
+  tlsCa: '',
+  tlsCert: '',
+  tlsKey: '',
+  tlsInsecure: false,
   cpu: '',
   memory: '',
   runtime: 'default',
-  podCpu: '2',
-  podMemoryGi: '4',
+  podCpu: defaults.podCpu ? String(defaults.podCpu) : '',
+  podMemoryGi: defaults.podMemoryGi ? String(defaults.podMemoryGi) : '',
   cacheEnabled: false,
-  cacheImage: '',
+  cacheImage: defaults.cacheImage,
   cacheStorageClass: '',
-  cacheSize: '20',
-  cacheGcSchedule: '0 3 * * *',
-  readyTimeoutSeconds: '',
+  cacheSize: memoryGiOf(defaults.cacheSize),
+  cacheGcSchedule: defaults.cacheGcSchedule,
+  readyTimeoutSeconds: defaults.readyTimeoutSeconds
+    ? String(defaults.readyTimeoutSeconds)
+    : '',
   setDefault: false,
 })
 
-const formOf = (provider: BuildProvider, isDefault: boolean): ProviderForm => ({
-  ...emptyForm(),
+const formOf = (
+  provider: BuildProvider,
+  isDefault: boolean,
+  defaults: BuildProviderDefaults
+): ProviderForm => ({
+  ...emptyForm(defaults),
+  type: provider.type,
   name: provider.name,
   cluster: provider.cluster,
   namespace: provider.namespace,
+  address: provider.address,
+  tlsCa: provider.tls?.ca ?? '',
+  tlsCert: provider.tls?.cert ?? '',
+  tlsKey: provider.tls?.key ?? '',
+  tlsInsecure: provider.tls?.insecureSkipVerify ?? false,
   cpu: provider.cpu ? String(provider.cpu) : '',
   memory: memoryGiOf(provider.memory),
   runtime: provider.runtime || 'default',
@@ -134,8 +176,10 @@ const formOf = (provider: BuildProvider, isDefault: boolean): ProviderForm => ({
   cacheEnabled: provider.cache?.enabled ?? false,
   cacheImage: provider.cache?.image ?? '',
   cacheStorageClass: provider.cache?.storageClass ?? '',
-  cacheSize: provider.cache ? memoryGiOf(provider.cache.size) : '20',
-  cacheGcSchedule: provider.cache?.gcSchedule ?? '0 3 * * *',
+  cacheSize: provider.cache
+    ? memoryGiOf(provider.cache.size)
+    : memoryGiOf(defaults.cacheSize),
+  cacheGcSchedule: provider.cache?.gcSchedule ?? defaults.cacheGcSchedule,
   readyTimeoutSeconds: provider.readyTimeoutSeconds
     ? String(provider.readyTimeoutSeconds)
     : '',
@@ -157,6 +201,7 @@ export function BuildProvidersManagement() {
   const providers = useMemo(() => data?.providers ?? [], [data])
   const configProviders = useMemo(() => data?.configProviders ?? [], [data])
   const runtimes = useMemo(() => data?.runtimes ?? [], [data])
+  const defaults = useMemo(() => data?.defaults ?? DEFAULTS_FALLBACK, [data])
   const { data: settingsData } = useBuildSettings()
   const settings = useMemo(() => settingsData?.settings ?? [], [settingsData])
   const defaultProvider =
@@ -175,7 +220,9 @@ export function BuildProvidersManagement() {
 
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editingName, setEditingName] = useState<string | null>(null)
-  const [form, setForm] = useState<ProviderForm>(emptyForm)
+  const [form, setForm] = useState<ProviderForm>(() =>
+    emptyForm(DEFAULTS_FALLBACK)
+  )
   const [deleteTarget, setDeleteTarget] = useState<BuildProvider | null>(null)
 
   // Referenced-by hint only: deletion is never blocked, the run-time error
@@ -194,28 +241,62 @@ export function BuildProvidersManagement() {
     error instanceof WorkflowApiError && error.status === 404
 
   const openCreate = () => {
-    setForm(emptyForm())
+    setForm(emptyForm(defaults))
     setEditingName(null)
     setDialogOpen(true)
   }
 
   const openEdit = (provider: BuildProvider) => {
-    setForm(formOf(provider, provider.name === defaultProvider))
+    setForm(formOf(provider, provider.name === defaultProvider, defaults))
     setEditingName(provider.name)
     setDialogOpen(true)
+  }
+
+  // switchType seeds the docker capacity caps from the API defaults the first
+  // time the user flips to docker on an untouched capacity pair.
+  const switchType = (type: 'k8s' | 'docker') => {
+    setForm((prev) => {
+      if (
+        type === 'docker' &&
+        prev.type === 'k8s' &&
+        prev.cpu === '' &&
+        prev.memory === ''
+      ) {
+        return {
+          ...prev,
+          type,
+          cpu: defaults.dockerCpu ? String(defaults.dockerCpu) : '',
+          memory: memoryGiOf(defaults.dockerMemory),
+        }
+      }
+      return { ...prev, type }
+    })
   }
 
   // validate turns the form into the API request shared by create and update,
   // or null after toasting the first problem.
   const validate = (f: ProviderForm): UpdateBuildProviderRequest | null => {
+    const isDocker = f.type === 'docker'
     const cluster = f.cluster
     const namespace = f.namespace.trim()
-    if (cluster === '') {
-      toast.error(t('workflow.buildProviders.clusterRequired'))
-      return null
+    if (!isDocker) {
+      if (cluster === '') {
+        toast.error(t('workflow.buildProviders.clusterRequired'))
+        return null
+      }
+      if (!validDNS1123Label(namespace)) {
+        toast.error(t('workflow.buildProviders.namespaceInvalid'))
+        return null
+      }
     }
-    if (!validDNS1123Label(namespace)) {
-      toast.error(t('workflow.buildProviders.namespaceInvalid'))
+    const address = f.address.trim()
+    if (
+      isDocker &&
+      address !== '' &&
+      !address.startsWith('unix://') &&
+      !address.startsWith('tcp://')
+    ) {
+      toast.error(t('workflow.buildProviders.addressInvalid'))
       return null
     }
     const cpu = positiveOrUndefined(f.cpu)
@@ -241,6 +322,7 @@ export function BuildProvidersManagement() {
     const ready = f.readyTimeoutSeconds.trim()
     const readyTimeoutSeconds = ready === '' ? undefined : Number(ready)
     if (
+      !isDocker &&
       readyTimeoutSeconds !== undefined &&
       (!Number.isInteger(readyTimeoutSeconds) || readyTimeoutSeconds < 0)
     ) {
@@ -248,7 +330,7 @@ export function BuildProvidersManagement() {
       return null
     }
     let cache: BuildProviderCache | null = null
-    if (f.cacheEnabled) {
+    if (!isDocker && f.cacheEnabled) {
       const sizeGi = positiveOrUndefined(f.cacheSize)
       if (
         f.cacheImage.trim() === '' ||
@@ -270,16 +352,29 @@ export function BuildProvidersManagement() {
         gcSchedule: f.cacheGcSchedule.trim(),
       }
     }
+    const tls =
+      isDocker &&
+      (f.tlsCa !== '' || f.tlsCert !== '' || f.tlsKey !== '' || f.tlsInsecure)
+        ? {
+            ca: f.tlsCa.trim(),
+            cert: f.tlsCert.trim(),
+            key: f.tlsKey.trim(),
+            insecureSkipVerify: f.tlsInsecure,
+          }
+        : null
     return {
-      cluster,
-      namespace,
+      type: f.type,
+      cluster: isDocker ? undefined : cluster,
+      namespace: isDocker ? undefined : namespace,
+      address: isDocker ? address : undefined,
+      tls,
       cpu: cpu.value,
       memory: memoryGi.value === undefined ? undefined : `${memoryGi.value}Gi`,
       runtime: f.runtime,
-      readyTimeoutSeconds,
-      podCpu: podCpu.value,
-      podMemoryGi: podMemoryGi.value,
-      cache,
+      readyTimeoutSeconds: isDocker ? undefined : readyTimeoutSeconds,
+      podCpu: isDocker ? undefined : podCpu.value,
+      podMemoryGi: isDocker ? undefined : podMemoryGi.value,
+      cache: isDocker ? null : cache,
     }
   }
 
@@ -387,12 +482,15 @@ export function BuildProvidersManagement() {
               <TableRow key={provider.name}>
                 <TableCell>
                   <span className="font-mono text-sm">{provider.name}</span>
+                  <Badge variant="outline" className="ml-2">
+                    {provider.type === 'docker' ? 'Docker' : 'k8s'}
+                  </Badge>
                 </TableCell>
                 <TableCell>
-                  <span className="font-mono">{provider.cluster}</span>
+                  <span className="font-mono">{provider.cluster || '—'}</span>
                 </TableCell>
                 <TableCell>
-                  <span className="font-mono">{provider.namespace}</span>
+                  <span className="font-mono">{provider.namespace || '—'}</span>
                 </TableCell>
                 <TableCell>{instanceSpecCell(provider)}</TableCell>
                 <TableCell className="text-right">
@@ -491,47 +589,164 @@ export function BuildProvidersManagement() {
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs">
-                  {t('workflow.buildProviders.namespace')}
+                  {t('workflow.buildProviders.type')}
                 </Label>
-                <Input
-                  value={form.namespace}
-                  onChange={(e) =>
-                    setForm({ ...form, namespace: e.target.value })
-                  }
-                  placeholder={t(
-                    'workflow.buildProviders.namespacePlaceholder'
-                  )}
-                  className="font-mono"
-                />
-                <p className="text-[11px] text-muted-foreground">
-                  {t('workflow.buildProviders.namespaceHint')}
-                </p>
+                {editingName === null ? (
+                  <Select value={form.type} onValueChange={switchType}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="k8s">
+                        {t('workflow.buildProviders.typeK8s')}
+                      </SelectItem>
+                      <SelectItem value="docker">
+                        {t('workflow.buildProviders.typeDocker')}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input
+                    value={
+                      form.type === 'docker'
+                        ? t('workflow.buildProviders.typeDocker')
+                        : t('workflow.buildProviders.typeK8s')
+                    }
+                    disabled
+                  />
+                )}
+                {editingName === null && (
+                  <p className="text-[11px] text-muted-foreground">
+                    {t('workflow.buildProviders.typeHint')}
+                  </p>
+                )}
               </div>
             </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">
-                {t('workflow.buildProviders.cluster')}
-              </Label>
-              <Select
-                value={form.cluster}
-                onValueChange={(cluster) => setForm({ ...form, cluster })}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue
-                    placeholder={t(
-                      'workflow.buildProviders.clusterPlaceholder'
-                    )}
+            {form.type === 'docker' ? (
+              <>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">
+                    {t('workflow.buildProviders.address')}
+                  </Label>
+                  <Input
+                    value={form.address}
+                    onChange={(e) =>
+                      setForm({ ...form, address: e.target.value })
+                    }
+                    placeholder="unix:///var/run/docker.sock"
+                    className="font-mono"
                   />
-                </SelectTrigger>
-                <SelectContent>
-                  {healthyClusters.map((cluster) => (
-                    <SelectItem key={cluster.name} value={cluster.name}>
-                      {cluster.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    {t('workflow.buildProviders.addressHint')}
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-muted-foreground">
+                    {t('workflow.buildProviders.tlsSection')}
+                  </p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">
+                        {t('workflow.buildProviders.tlsCa')}
+                      </Label>
+                      <Input
+                        value={form.tlsCa}
+                        onChange={(e) =>
+                          setForm({ ...form, tlsCa: e.target.value })
+                        }
+                        className="font-mono text-xs"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">
+                        {t('workflow.buildProviders.tlsCert')}
+                      </Label>
+                      <Input
+                        value={form.tlsCert}
+                        onChange={(e) =>
+                          setForm({ ...form, tlsCert: e.target.value })
+                        }
+                        className="font-mono text-xs"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">
+                        {t('workflow.buildProviders.tlsKey')}
+                      </Label>
+                      <Input
+                        value={form.tlsKey}
+                        onChange={(e) =>
+                          setForm({ ...form, tlsKey: e.target.value })
+                        }
+                        className="font-mono text-xs"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="provider-tls-insecure"
+                      checked={form.tlsInsecure}
+                      onCheckedChange={(checked) =>
+                        setForm({ ...form, tlsInsecure: checked === true })
+                      }
+                    />
+                    <Label
+                      htmlFor="provider-tls-insecure"
+                      className="text-xs font-medium"
+                    >
+                      {t('workflow.buildProviders.tlsInsecure')}
+                    </Label>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">
+                      {t('workflow.buildProviders.namespace')}
+                    </Label>
+                    <Input
+                      value={form.namespace}
+                      onChange={(e) =>
+                        setForm({ ...form, namespace: e.target.value })
+                      }
+                      placeholder={t(
+                        'workflow.buildProviders.namespacePlaceholder'
+                      )}
+                      className="font-mono"
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      {t('workflow.buildProviders.namespaceHint')}
+                    </p>
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">
+                    {t('workflow.buildProviders.cluster')}
+                  </Label>
+                  <Select
+                    value={form.cluster}
+                    onValueChange={(cluster) => setForm({ ...form, cluster })}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue
+                        placeholder={t(
+                          'workflow.buildProviders.clusterPlaceholder'
+                        )}
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {healthyClusters.map((cluster) => (
+                        <SelectItem key={cluster.name} value={cluster.name}>
+                          {cluster.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </>
+            )}
 
             <Separator />
             <SectionLabel label={t('workflow.buildProviders.runtimeSection')} />
@@ -577,112 +792,128 @@ export function BuildProvidersManagement() {
               />
             </div>
 
-            <Separator />
-            <SectionLabel label={t('workflow.buildProviders.podSpecSection')} />
-            <div className="grid grid-cols-2 gap-3">
-              <NumberField
-                label={t('workflow.buildProviders.podCpu')}
-                unit={t('workflow.buildProviders.cpuUnit')}
-                value={form.podCpu}
-                onChange={(podCpu) => setForm({ ...form, podCpu })}
-              />
-              <NumberField
-                label={t('workflow.buildProviders.podMemory')}
-                unit="Gi"
-                value={form.podMemoryGi}
-                onChange={(podMemoryGi) => setForm({ ...form, podMemoryGi })}
-              />
-            </div>
-            <p className="text-[11px] text-muted-foreground">
-              {t('workflow.buildProviders.podSpecHint')}
-            </p>
-
-            <Separator />
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="provider-cache-enabled"
-                checked={form.cacheEnabled}
-                onCheckedChange={(checked) =>
-                  setForm({ ...form, cacheEnabled: checked === true })
-                }
-              />
-              <Label
-                htmlFor="provider-cache-enabled"
-                className="text-xs font-medium"
-              >
-                {t('workflow.buildProviders.cacheEnable')}
-              </Label>
-            </div>
-            {form.cacheEnabled && (
-              <div className="space-y-3">
+            {form.type === 'k8s' && (
+              <>
+                <Separator />
+                <SectionLabel
+                  label={t('workflow.buildProviders.podSpecSection')}
+                />
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">
-                      {t('workflow.buildProviders.cacheImage')}
-                    </Label>
-                    <Input
-                      value={form.cacheImage}
-                      onChange={(e) =>
-                        setForm({ ...form, cacheImage: e.target.value })
-                      }
-                      placeholder="registry.local:5000/buildkit-cache"
-                      className="font-mono text-xs"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">
-                      {t('workflow.buildProviders.cacheStorageClass')}
-                    </Label>
-                    <Input
-                      value={form.cacheStorageClass}
-                      onChange={(e) =>
-                        setForm({ ...form, cacheStorageClass: e.target.value })
-                      }
-                      className="font-mono text-xs"
-                    />
-                  </div>
                   <NumberField
-                    label={t('workflow.buildProviders.cacheSize')}
-                    unit="Gi"
-                    value={form.cacheSize}
-                    onChange={(cacheSize) => setForm({ ...form, cacheSize })}
+                    label={t('workflow.buildProviders.podCpu')}
+                    unit={t('workflow.buildProviders.cpuUnit')}
+                    value={form.podCpu}
+                    onChange={(podCpu) => setForm({ ...form, podCpu })}
                   />
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">
-                      {t('workflow.buildProviders.cacheGcSchedule')}
-                    </Label>
-                    <Input
-                      value={form.cacheGcSchedule}
-                      onChange={(e) =>
-                        setForm({ ...form, cacheGcSchedule: e.target.value })
-                      }
-                      className="font-mono text-xs"
-                    />
-                  </div>
+                  <NumberField
+                    label={t('workflow.buildProviders.podMemory')}
+                    unit="Gi"
+                    value={form.podMemoryGi}
+                    onChange={(podMemoryGi) =>
+                      setForm({ ...form, podMemoryGi })
+                    }
+                  />
                 </div>
                 <p className="text-[11px] text-muted-foreground">
-                  {t('workflow.buildProviders.cacheHint')}
+                  {t('workflow.buildProviders.podSpecHint')}
                 </p>
-              </div>
-            )}
 
-            <Separator />
-            <SectionLabel
-              label={t('workflow.buildProviders.advancedSection')}
-            />
-            <div className="space-y-1.5">
-              <NumberField
-                label={t('workflow.buildProviders.readyTimeout')}
-                unit="s"
-                value={form.readyTimeoutSeconds}
-                onChange={(readyTimeoutSeconds) =>
-                  setForm({ ...form, readyTimeoutSeconds })
-                }
-              />
-              <p className="text-[11px] text-muted-foreground">
-                {t('workflow.buildProviders.readyTimeoutHint')}
-              </p>
-            </div>
+                <Separator />
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="provider-cache-enabled"
+                    checked={form.cacheEnabled}
+                    onCheckedChange={(checked) =>
+                      setForm({ ...form, cacheEnabled: checked === true })
+                    }
+                  />
+                  <Label
+                    htmlFor="provider-cache-enabled"
+                    className="text-xs font-medium"
+                  >
+                    {t('workflow.buildProviders.cacheEnable')}
+                  </Label>
+                </div>
+                {form.cacheEnabled && (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1.5">
+                        <Label className="text-xs">
+                          {t('workflow.buildProviders.cacheImage')}
+                        </Label>
+                        <Input
+                          value={form.cacheImage}
+                          onChange={(e) =>
+                            setForm({ ...form, cacheImage: e.target.value })
+                          }
+                          placeholder="registry.local:5000/buildkit-cache"
+                          className="font-mono text-xs"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs">
+                          {t('workflow.buildProviders.cacheStorageClass')}
+                        </Label>
+                        <Input
+                          value={form.cacheStorageClass}
+                          onChange={(e) =>
+                            setForm({
+                              ...form,
+                              cacheStorageClass: e.target.value,
+                            })
+                          }
+                          className="font-mono text-xs"
+                        />
+                      </div>
+                      <NumberField
+                        label={t('workflow.buildProviders.cacheSize')}
+                        unit="Gi"
+                        value={form.cacheSize}
+                        onChange={(cacheSize) =>
+                          setForm({ ...form, cacheSize })
+                        }
+                      />
+                      <div className="space-y-1.5">
+                        <Label className="text-xs">
+                          {t('workflow.buildProviders.cacheGcSchedule')}
+                        </Label>
+                        <Input
+                          value={form.cacheGcSchedule}
+                          onChange={(e) =>
+                            setForm({
+                              ...form,
+                              cacheGcSchedule: e.target.value,
+                            })
+                          }
+                          className="font-mono text-xs"
+                        />
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      {t('workflow.buildProviders.cacheHint')}
+                    </p>
+                  </div>
+                )}
+
+                <Separator />
+                <SectionLabel
+                  label={t('workflow.buildProviders.advancedSection')}
+                />
+                <div className="space-y-1.5">
+                  <NumberField
+                    label={t('workflow.buildProviders.readyTimeout')}
+                    unit="s"
+                    value={form.readyTimeoutSeconds}
+                    onChange={(readyTimeoutSeconds) =>
+                      setForm({ ...form, readyTimeoutSeconds })
+                    }
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    {t('workflow.buildProviders.readyTimeoutHint')}
+                  </p>
+                </div>
+              </>
+            )}
 
             <Separator />
             <div className="flex items-center gap-2">
@@ -708,7 +939,7 @@ export function BuildProvidersManagement() {
             <Button
               disabled={
                 pending ||
-                form.cluster === '' ||
+                (form.type === 'k8s' && form.cluster === '') ||
                 (!editingName && form.name.trim() === '')
               }
               onClick={submit}

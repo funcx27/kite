@@ -26,6 +26,6 @@ providerDefaults:            # 各类型 provider 的字段级默认；providers
       size: 20Gi
       gcSchedule: "0 3 * * *"
 
-providers:
-  - type: docker            # 默认仅本机 docker；k8s 见 buildfleet.example.yaml
-    name: local-docker
+# 默认不带任何 provider：kite 宿主的 provider 住在数据库、经 API 注册（构建在
+# 未配置任何 provider 时逐请求报错）；buildfleetd 独立部署请显式配置
+# providers，参考 buildfleet.example.yaml。

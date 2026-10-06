@@ -220,7 +220,7 @@ export interface BuildSettingsResponse {
   providers: string[]
 }
 
-// ── Managed build providers (settings-created k8s build providers) ──
+// ── Managed build providers (settings-created k8s / docker build providers) ──
 
 export interface BuildProviderCache {
   enabled: boolean
@@ -232,21 +232,49 @@ export interface BuildProviderCache {
   gcSchedule: string
 }
 
+// Docker mutual-TLS material; file paths on the kite host.
+export interface BuildProviderTls {
+  ca: string
+  cert: string
+  key: string
+  insecureSkipVerify: boolean
+}
+
 export interface BuildProvider {
+  // 'k8s' (managed cluster) or 'docker' (the kite host's daemon).
+  type: 'k8s' | 'docker'
   name: string
+  // k8s only: the cluster the provider builds on and the namespace that
+  // receives the buildkitd pods.
   cluster: string
   namespace: string
+  // Docker only: daemon endpoint ('' = the host's default daemon).
+  address: string
+  tls: BuildProviderTls | null
   // Fleet capacity caps: cpu cores and a memory quantity like "16Gi".
   cpu: number
   memory: string
   // Runtime profile name; '' = the default profile.
   runtime: string
-  // Buildkitd pod readiness wait in seconds; 0 = module default.
+  // Buildkitd pod readiness wait in seconds; 0 = module default. k8s only.
   readyTimeoutSeconds: number
-  // Per-instance build pod shape (cpu cores / memory Gi).
+  // Per-instance build pod shape (cpu cores / memory Gi). k8s only.
   podCpu: number
   podMemoryGi: number
   cache: BuildProviderCache | null
+}
+
+// Effective built-in defaults the UI displays in the create dialog instead
+// of empty fields.
+export interface BuildProviderDefaults {
+  readyTimeoutSeconds: number
+  podCpu: number
+  podMemoryGi: number
+  cacheImage: string
+  cacheSize: string
+  cacheGcSchedule: string
+  dockerCpu: number
+  dockerMemory: string
 }
 
 export interface BuildProvidersResponse {
@@ -256,6 +284,7 @@ export interface BuildProvidersResponse {
   configProviders: string[]
   // Configured runtime profile names, usable as the provider runtime choice.
   runtimes: string[]
+  defaults: BuildProviderDefaults
 }
 
 // Provider fields shared by create and update (everything but the identity
@@ -263,6 +292,8 @@ export interface BuildProvidersResponse {
 // default, an empty runtime selects the default profile, null cache disables
 // the in-cluster registry cache.
 export interface BuildProviderFields {
+  // Runtime kind; immutable after creation.
+  type: 'k8s' | 'docker'
   runtime?: string
   readyTimeoutSeconds?: number
   podCpu?: number
@@ -272,16 +303,21 @@ export interface BuildProviderFields {
 
 export interface CreateBuildProviderRequest extends BuildProviderFields {
   name: string
-  cluster: string
-  namespace: string
+  type: 'k8s' | 'docker'
+  cluster?: string
+  namespace?: string
+  address?: string
+  tls?: BuildProviderTls | null
   cpu?: number
   memory?: string
 }
 
-// The provider name is immutable: renaming means recreating.
+// The provider name and type are immutable: changing either means recreating.
 export interface UpdateBuildProviderRequest extends BuildProviderFields {
-  cluster: string
-  namespace: string
+  cluster?: string
+  namespace?: string
+  address?: string
+  tls?: BuildProviderTls | null
   cpu?: number
   memory?: string
 }

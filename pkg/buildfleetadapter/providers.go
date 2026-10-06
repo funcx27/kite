@@ -18,6 +18,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/funcx27/kite/modules/buildfleet/config"
+	bfresource "github.com/funcx27/kite/modules/buildfleet/resource"
 	"github.com/zxh326/kite/pkg/cluster"
 	"github.com/zxh326/kite/pkg/model"
 	"github.com/zxh326/kite/pkg/rbac"
@@ -67,14 +68,51 @@ func exportKubeconfig(name string, kubeconfig model.SecretString) (string, error
 	return path, nil
 }
 
-// buildProviderConfig validates the row's target cluster (exists, connected,
-// kubeconfig-exportable) and returns the fleet provider config pointing at
-// the exported kubeconfig. In-cluster installs keep Kubeconfig empty: the
-// provider then uses the same ServiceAccount identity as the kite host.
-// Out-of-cluster targets get PortForward on: runtime pods are addressed
-// through an apiserver tunnel, since the daemon outside the cluster cannot
-// resolve in-cluster Service DNS.
-func (d *Deps) buildProviderConfig(row model.BuildProvider) (config.Provider, error) {
+// providerConfig validates the row and returns the fleet provider config.
+// k8s rows validate the target cluster (exists, connected, kubeconfig-
+// exportable) and point at the exported kubeconfig; docker rows carry the
+// daemon endpoint and optional TLS file paths, with no cluster involved.
+func (d *Deps) providerConfig(row model.BuildProvider) (config.Provider, error) {
+	if effectiveType(row) == "docker" {
+		return d.dockerProviderConfig(row), nil
+	}
+	return d.k8sProviderConfig(row)
+}
+
+// dockerProviderConfig renders the row as a fleet docker provider config.
+// Registration-time endpoint validation happens in docker.New (remote tcp
+// daemons cannot bind-mount the shared buildkitd.toml).
+func (d *Deps) dockerProviderConfig(row model.BuildProvider) config.Provider {
+	pc := config.Provider{
+		Type:    "docker",
+		Name:    row.Name,
+		Address: row.Address,
+		Runtime: row.Runtime,
+	}
+	if row.CPU > 0 {
+		pc.Total.CPU = row.CPU
+	}
+	if row.Memory != "" {
+		pc.Total.Memory = row.Memory
+	}
+	if row.TLS != nil {
+		pc.TLS = &config.TLS{
+			CA:                 row.TLS.CA,
+			Cert:               row.TLS.Cert,
+			Key:                row.TLS.Key,
+			InsecureSkipVerify: row.TLS.InsecureSkipVerify,
+		}
+	}
+	return pc
+}
+
+// k8sProviderConfig validates the row's target cluster and returns the fleet
+// provider config pointing at the exported kubeconfig. In-cluster installs
+// keep Kubeconfig empty: the provider then uses the same ServiceAccount
+// identity as the kite host. Out-of-cluster targets get PortForward on:
+// runtime pods are addressed through an apiserver tunnel, since the daemon
+// outside the cluster cannot resolve in-cluster Service DNS.
+func (d *Deps) k8sProviderConfig(row model.BuildProvider) (config.Provider, error) {
 	pc := config.Provider{Type: "k8s", Name: row.Name, Namespace: row.Namespace}
 	if row.CPU > 0 {
 		pc.Total.CPU = row.CPU
@@ -170,10 +208,20 @@ type buildProviderCacheJSON struct {
 	GCSchedule   string `json:"gcSchedule"`
 }
 
+type buildProviderTLSJSON struct {
+	CA                 string `json:"ca"`
+	Cert               string `json:"cert"`
+	Key                string `json:"key"`
+	InsecureSkipVerify bool   `json:"insecureSkipVerify"`
+}
+
 type buildProviderJSON struct {
+	Type                string                  `json:"type"`
 	Name                string                  `json:"name"`
 	Cluster             string                  `json:"cluster"`
 	Namespace           string                  `json:"namespace"`
+	Address             string                  `json:"address"`
+	TLS                 *buildProviderTLSJSON   `json:"tls"`
 	CPU                 float64                 `json:"cpu"`
 	Memory              string                  `json:"memory"`
 	Runtime             string                  `json:"runtime"`
@@ -183,17 +231,35 @@ type buildProviderJSON struct {
 	Cache               *buildProviderCacheJSON `json:"cache"`
 }
 
+// effectiveType maps pre-type rows ("") onto k8s.
+func effectiveType(row model.BuildProvider) string {
+	if row.Type == "docker" {
+		return "docker"
+	}
+	return "k8s"
+}
+
 func toBuildProviderJSON(r model.BuildProvider) buildProviderJSON {
 	out := buildProviderJSON{
+		Type:                effectiveType(r),
 		Name:                r.Name,
 		Cluster:             r.Cluster,
 		Namespace:           r.Namespace,
+		Address:             r.Address,
 		CPU:                 r.CPU,
 		Memory:              r.Memory,
 		Runtime:             r.Runtime,
 		ReadyTimeoutSeconds: r.ReadyTimeoutSeconds,
 		PodCPU:              r.PodCPU,
 		PodMemoryGi:         r.PodMemoryGi,
+	}
+	if r.TLS != nil {
+		out.TLS = &buildProviderTLSJSON{
+			CA:                 r.TLS.CA,
+			Cert:               r.TLS.Cert,
+			Key:                r.TLS.Key,
+			InsecureSkipVerify: r.TLS.InsecureSkipVerify,
+		}
 	}
 	if r.Cache != nil {
 		out.Cache = &buildProviderCacheJSON{
@@ -219,6 +285,54 @@ func (d *Deps) runtimeNames() []string {
 	return names
 }
 
+// registerProvider attaches one provider config to the fleet runtime,
+// dispatching on its type.
+func (d *Deps) registerProvider(ctx context.Context, pc config.Provider) error {
+	if pc.Type == "docker" {
+		return d.app.RegisterDockerProvider(ctx, pc)
+	}
+	return d.app.RegisterK8sProvider(ctx, pc)
+}
+
+// providerDefaultsJSON surfaces the effective built-in defaults so the UI
+// displays them instead of empty fields: the module's ready-timeout default,
+// the default runtime profile's pod shape, and the config's per-type
+// providerDefaults (k8s cache fields, docker capacity).
+type providerDefaultsJSON struct {
+	ReadyTimeoutSeconds int     `json:"readyTimeoutSeconds"`
+	PodCPU              float64 `json:"podCpu"`
+	PodMemoryGi         float64 `json:"podMemoryGi"`
+	CacheImage          string  `json:"cacheImage"`
+	CacheSize           string  `json:"cacheSize"`
+	CacheGCSchedule     string  `json:"cacheGcSchedule"`
+	DockerCPU           float64 `json:"dockerCpu"`
+	DockerMemory        string  `json:"dockerMemory"`
+}
+
+func (d *Deps) providerDefaults() providerDefaultsJSON {
+	out := providerDefaultsJSON{
+		// The module's pod-Ready poll default (ReadyTimeoutParsed, empty = 60s).
+		ReadyTimeoutSeconds: 60,
+	}
+	def := d.cfg.DefaultRuntime()
+	out.PodCPU = def.DefaultResources.CPU
+	if out.PodMemoryGi == 0 && def.DefaultResources.Memory != "" {
+		if b, err := bfresource.ParseQuantity(def.DefaultResources.Memory); err == nil {
+			out.PodMemoryGi = float64(b) / float64(bfresource.Giga)
+		}
+	}
+	if k8sDef, ok := d.cfg.ProviderDefaults["k8s"]; ok && k8sDef.Cache != nil {
+		out.CacheImage = k8sDef.Cache.Image
+		out.CacheSize = k8sDef.Cache.Size
+		out.CacheGCSchedule = k8sDef.Cache.GCSchedule
+	}
+	if dockerDef, ok := d.cfg.ProviderDefaults["docker"]; ok {
+		out.DockerCPU = dockerDef.Total.CPU
+		out.DockerMemory = dockerDef.Total.Memory
+	}
+	return out
+}
+
 // handleListProviders returns the managed providers plus the config-file
 // provider names (which are read-only here and rejected at creation).
 func (d *Deps) handleListProviders(c *gin.Context) {
@@ -237,7 +351,7 @@ func (d *Deps) handleListProviders(c *gin.Context) {
 		}
 		out = append(out, toBuildProviderJSON(rows[i]))
 	}
-	c.JSON(http.StatusOK, gin.H{"providers": out, "configProviders": d.providerNames, "runtimes": d.runtimeNames()})
+	c.JSON(http.StatusOK, gin.H{"providers": out, "configProviders": d.providerNames, "runtimes": d.runtimeNames(), "defaults": d.providerDefaults()})
 }
 
 // buildProviderFields carries the request fields shared by create and update.
@@ -290,23 +404,55 @@ func (d *Deps) applyBuildProviderFields(row *model.BuildProvider, f buildProvide
 }
 
 type createBuildProviderRequest struct {
-	Name      string  `json:"name" binding:"required"`
-	Cluster   string  `json:"cluster" binding:"required"`
-	Namespace string  `json:"namespace" binding:"required"`
-	CPU       float64 `json:"cpu"`
-	Memory    string  `json:"memory"`
+	Name string `json:"name" binding:"required"`
+	// Type selects the runtime kind; empty = k8s.
+	Type    string `json:"type"`
+	Cluster string `json:"cluster"`
+	// Namespace is required for k8s providers, rejected for docker ones.
+	Namespace string                `json:"namespace"`
+	Address   string                `json:"address"`
+	TLS       *buildProviderTLSJSON `json:"tls"`
+	CPU       float64               `json:"cpu"`
+	Memory    string                `json:"memory"`
 	buildProviderFields
 }
 
-// handleCreateProvider registers a k8s build provider from a managed cluster:
-// validate → export kubeconfig → register with the fleet runtime → persist.
+// applyDockerFields copies the docker-only request fields onto the row; an
+// all-empty TLS block stores as nil.
+func applyDockerFields(row *model.BuildProvider, address string, tls *buildProviderTLSJSON) {
+	row.Address = strings.TrimSpace(address)
+	if tls != nil {
+		parsed := &model.BuildProviderTLS{
+			CA:                 strings.TrimSpace(tls.CA),
+			Cert:               strings.TrimSpace(tls.Cert),
+			Key:                strings.TrimSpace(tls.Key),
+			InsecureSkipVerify: tls.InsecureSkipVerify,
+		}
+		if parsed.CA != "" || parsed.Cert != "" || parsed.Key != "" || parsed.InsecureSkipVerify {
+			row.TLS = parsed
+		}
+	}
+}
+
+// handleCreateProvider registers a build provider from the settings UI:
+// validate → (k8s: export kubeconfig) → register with the fleet runtime →
+// persist.
 func (d *Deps) handleCreateProvider(c *gin.Context) {
 	var req createBuildProviderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid request body: %v", err)})
 		return
 	}
+	ptype := req.Type
+	if ptype == "" {
+		ptype = "k8s"
+	}
+	if ptype != "k8s" && ptype != "docker" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("type must be k8s or docker, got %q", req.Type)})
+		return
+	}
 	row := model.BuildProvider{
+		Type:      ptype,
 		Name:      strings.TrimSpace(req.Name),
 		Cluster:   strings.TrimSpace(req.Cluster),
 		Namespace: strings.TrimSpace(req.Namespace),
@@ -317,16 +463,28 @@ func (d *Deps) handleCreateProvider(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "name must be a DNS-1123 label (lowercase letters, digits and dashes, 63 chars max)"})
 		return
 	}
-	if !validDNS1123Label(row.Namespace) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "namespace must be a DNS-1123 label (lowercase letters, digits and dashes, 63 chars max)"})
-		return
+	if ptype == "docker" {
+		// Docker providers build on the kite host's daemon: no cluster row,
+		// no namespace, no kubeconfig export.
+		row.Cluster, row.Namespace = "", ""
+		applyDockerFields(&row, req.Address, req.TLS)
+	} else {
+		if row.Cluster == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "cluster is required"})
+			return
+		}
+		if !validDNS1123Label(row.Namespace) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "namespace must be a DNS-1123 label (lowercase letters, digits and dashes, 63 chars max)"})
+			return
+		}
 	}
 	if err := d.applyBuildProviderFields(&row, req.buildProviderFields); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	// The gate targets the row's cluster: this is the cluster whose
-	// kubeconfig gets exported and where buildkitd is provisioned.
+	// kubeconfig gets exported and where buildkitd is provisioned. Docker
+	// rows carry empty cluster/namespace, i.e. the host-wide judgment.
 	if !authorizeProvider(c, "create", row.Cluster, row.Namespace) {
 		return
 	}
@@ -343,12 +501,12 @@ func (d *Deps) handleCreateProvider(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	pc, err := d.buildProviderConfig(row)
+	pc, err := d.providerConfig(row)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := d.app.RegisterK8sProvider(c.Request.Context(), pc); err != nil {
+	if err := d.registerProvider(c.Request.Context(), pc); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -365,12 +523,15 @@ func (d *Deps) handleCreateProvider(c *gin.Context) {
 
 // updateBuildProviderRequest is the PUT body; the name rides the path and is
 // immutable — renaming means recreating, since workflows pin providers by
-// name and the kubeconfig cache file is keyed by it.
+// name and the kubeconfig cache file is keyed by it. The type is immutable
+// too (recreating is the honest path between docker and k8s).
 type updateBuildProviderRequest struct {
-	Cluster   string  `json:"cluster" binding:"required"`
-	Namespace string  `json:"namespace" binding:"required"`
-	CPU       float64 `json:"cpu"`
-	Memory    string  `json:"memory"`
+	Cluster   string                `json:"cluster"`
+	Namespace string                `json:"namespace"`
+	Address   string                `json:"address"`
+	TLS       *buildProviderTLSJSON `json:"tls"`
+	CPU       float64               `json:"cpu"`
+	Memory    string                `json:"memory"`
 	buildProviderFields
 }
 
@@ -405,7 +566,10 @@ func (d *Deps) handleUpdateProvider(c *gin.Context) {
 	row.Namespace = strings.TrimSpace(req.Namespace)
 	row.CPU = req.CPU
 	row.Memory = strings.TrimSpace(req.Memory)
-	if !validDNS1123Label(row.Namespace) {
+	if effectiveType(*row) == "docker" {
+		row.Cluster, row.Namespace = "", ""
+		applyDockerFields(row, req.Address, req.TLS)
+	} else if !validDNS1123Label(row.Namespace) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "namespace must be a DNS-1123 label (lowercase letters, digits and dashes, 63 chars max)"})
 		return
 	}
@@ -416,12 +580,12 @@ func (d *Deps) handleUpdateProvider(c *gin.Context) {
 	if !authorizeProvider(c, "update", row.Cluster, row.Namespace) {
 		return
 	}
-	newPC, err := d.buildProviderConfig(*row)
+	newPC, err := d.providerConfig(*row)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	oldPC, pcErr := d.buildProviderConfig(oldRow)
+	oldPC, pcErr := d.providerConfig(oldRow)
 	// Swap the runtime registration first: a persist failure below can put
 	// the old shape back, while the reverse order would leave the runtime
 	// serving a shape the row no longer describes.
@@ -430,7 +594,7 @@ func (d *Deps) handleUpdateProvider(c *gin.Context) {
 		// below still records the new shape.
 		klog.Warningf("build provider %s was not registered before update: %v", name, err)
 	}
-	if err := d.app.RegisterK8sProvider(c.Request.Context(), newPC); err != nil {
+	if err := d.registerProvider(c.Request.Context(), newPC); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -439,7 +603,7 @@ func (d *Deps) handleUpdateProvider(c *gin.Context) {
 			klog.Errorf("failed to unregister build provider %s after failed persist: %v", name, rmErr)
 		}
 		if pcErr == nil {
-			if reErr := d.app.RegisterK8sProvider(c.Request.Context(), oldPC); reErr != nil {
+			if reErr := d.registerProvider(c.Request.Context(), oldPC); reErr != nil {
 				klog.Errorf("failed to re-register old shape of build provider %s: %v", name, reErr)
 			}
 		}
@@ -649,12 +813,12 @@ func (d *Deps) remountManagedProviders(ctx context.Context) {
 			// register below still applies the new shape.
 			klog.Warningf("build provider %s was not registered while remounting: %v", name, err)
 		}
-		pc, err := d.buildProviderConfig(rows[i])
+		pc, err := d.providerConfig(rows[i])
 		if err != nil {
 			klog.Errorf("skipping build provider %s while remounting: %v", name, err)
 			continue
 		}
-		if err := d.app.RegisterK8sProvider(ctx, pc); err != nil {
+		if err := d.registerProvider(ctx, pc); err != nil {
 			klog.Errorf("failed to re-register build provider %s: %v", name, err)
 		}
 	}
@@ -690,12 +854,12 @@ func (d *Deps) restoreProviders(ctx context.Context) {
 		return
 	}
 	for i := range rows {
-		pc, err := d.buildProviderConfig(rows[i])
+		pc, err := d.providerConfig(rows[i])
 		if err != nil {
 			klog.Errorf("skipping build provider %s: %v", rows[i].Name, err)
 			continue
 		}
-		if err := d.app.RegisterK8sProvider(ctx, pc); err != nil {
+		if err := d.registerProvider(ctx, pc); err != nil {
 			klog.Errorf("failed to register build provider %s: %v", rows[i].Name, err)
 		}
 	}

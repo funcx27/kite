@@ -292,12 +292,14 @@ func TestOverlayOnEmbeddedDefaults(t *testing.T) {
 		t.Fatalf("embedded idleTtl lost: %q", c.Runtimes["default"].IdleTTL)
 	}
 
-	// No path at all: embedded defaults alone must validate.
+	// No path at all: embedded defaults alone must validate. The embedded
+	// defaults carry no providers — the kite host manages them via the API
+	// (DB), so an empty list is a valid state.
 	c2, err := Load("")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(c2.Providers) != 1 || c2.Providers[0].Type != "docker" {
+	if len(c2.Providers) != 0 {
 		t.Fatalf("embedded default providers: %+v", c2.Providers)
 	}
 	for _, name := range []string{"default", "rootful", "rootless"} {

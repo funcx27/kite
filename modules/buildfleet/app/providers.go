@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -116,6 +117,52 @@ func effectiveRegTable(cfg *config.Config) (registry.Table, error) {
 		})
 	}
 	return regTable, nil
+}
+
+// RegisterDockerProvider constructs a docker provider from pc and attaches it
+// to the pool at runtime, mirroring the startup docker branch: the shared
+// buildkitd.toml bind-mount means remote tcp daemons are rejected by
+// docker.New the same way. The toml itself was written once at startup.
+func (a *App) RegisterDockerProvider(_ context.Context, pc config.Provider) error {
+	regTable, err := effectiveRegTable(a.cfg)
+	if err != nil {
+		return fmt.Errorf("provider %s: %w", pc.Name, err)
+	}
+	total, err := pc.Total.Parse()
+	if err != nil {
+		return fmt.Errorf("provider %s: %w", pc.Name, err)
+	}
+	profile := a.cfg.Profile(pc)
+	dcfg := docker.Config{
+		Total:      total,
+		Image:      profile.Image(),
+		Registries: regTable,
+		TomlPath:   filepath.Join(a.cfg.Store, "buildkitd.toml"),
+		Address:    pc.Address,
+		Privileged: profile.Privileged(),
+		ConfigGen:  profile.Gen(regTable),
+		ExtraHosts: extraHosts(a.cfg.DefaultRuntime().Hosts),
+	}
+	if pc.TLS != nil {
+		dcfg.TLS = &docker.TLSConfig{
+			CA:                 pc.TLS.CA,
+			Cert:               pc.TLS.Cert,
+			Key:                pc.TLS.Key,
+			InsecureSkipVerify: pc.TLS.InsecureSkipVerify,
+		}
+	}
+	if profile.Rootless() {
+		dcfg.SecurityOpt = append([]string{"seccomp=unconfined"}, pc.SecurityOpt...)
+	}
+	dp, err := docker.New(dcfg)
+	if err != nil {
+		return fmt.Errorf("provider %s: %w", pc.Name, err)
+	}
+	if err := a.multi.Register(runtime.NamedProvider{Name: pc.Name, Provider: dp}); err != nil {
+		return fmt.Errorf("provider %s: %w", pc.Name, err)
+	}
+	slog.Info("registered docker build provider", "provider", pc.Name, "address", pc.Address)
+	return nil
 }
 
 // buildK8sProvider constructs one k8s provider from its config entry; shared

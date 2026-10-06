@@ -6,19 +6,30 @@ import (
 	"gorm.io/gorm"
 )
 
-// BuildProvider is a kite-managed k8s build provider: created in the settings
-// UI from a managed cluster and injected into the buildfleet runtime without
-// a config change or restart. The cluster's kubeconfig is exported to a
-// 0600 file the provider points at; no secret material is stored here.
+// BuildProvider is a kite-managed build provider: created in the settings UI
+// and injected into the buildfleet runtime without a config change or
+// restart. k8s providers build on a managed cluster whose kubeconfig is
+// exported to a 0600 file; docker providers run buildkitd containers on the
+// kite host's docker daemon. No secret material is stored here.
 type BuildProvider struct {
 	Model
+	// Type selects the runtime kind: "k8s" or "docker". Empty (pre-type
+	// rows) reads as k8s.
+	Type string `json:"type" gorm:"type:varchar(16);not null;default:'k8s'"`
 	// Name is the fleet provider name; DNS-1123, unique across config-file
 	// and managed providers (the create API rejects config collisions).
 	Name string `json:"name" gorm:"type:varchar(63);uniqueIndex;not null"`
-	// Cluster is the kite cluster name the provider builds on.
+	// Cluster is the kite cluster name the provider builds on (k8s only).
 	Cluster string `json:"cluster" gorm:"type:varchar(100);not null"`
-	// Namespace receives the buildkitd runtime pods.
+	// Namespace receives the buildkitd runtime pods (k8s only).
 	Namespace string `json:"namespace" gorm:"type:varchar(63);not null"`
+	// Docker-only: daemon endpoint — empty = the host's default daemon;
+	// unix:///path for a specific socket. Remote tcp daemons cannot
+	// bind-mount the shared buildkitd.toml and are rejected at registration.
+	Address string `json:"address" gorm:"type:varchar(255);not null;default:''"`
+	// Docker-only mutual-TLS material; file paths on the kite host, read by
+	// the docker client only. Nil = no TLS.
+	TLS *BuildProviderTLS `json:"tls" gorm:"serializer:json;type:text"`
 	// Optional capacity caps; zero values fall back to the namespace
 	// ResourceQuota. Memory is a quantity string, e.g. 16Gi.
 	CPU    float64 `json:"cpu" gorm:"not null;default:0"`
@@ -27,18 +38,27 @@ type BuildProvider struct {
 	// empty = "default".
 	Runtime string `json:"runtime" gorm:"type:varchar(63);not null;default:''"`
 	// ReadyTimeoutSeconds overrides the buildkitd pod-Ready poll timeout;
-	// 0 = the module default (60s).
+	// 0 = the module default (60s). k8s only.
 	ReadyTimeoutSeconds int `json:"readyTimeoutSeconds" gorm:"not null;default:0"`
 	// PodCPU / PodMemoryGi shape the per-instance buildkitd pod (cores /
 	// GiB); 0 = the built-in default (2 cores / 4Gi). Distinct from
-	// CPU/Memory above, which gate the fleet's total capacity.
+	// CPU/Memory above, which gate the fleet's total capacity. k8s only.
 	PodCPU      float64 `json:"podCpu" gorm:"not null;default:0"`
 	PodMemoryGi float64 `json:"podMemoryGi" gorm:"not null;default:0"`
 	// Cache configures the provider's in-cluster layer-cache registry;
 	// nil = disabled. Managed providers bypass the config file's
 	// providerDefaults merge, so an enabled cache must carry its fields
-	// complete.
+	// complete. k8s only.
 	Cache *BuildProviderCache `json:"cache" gorm:"serializer:json;type:text"`
+}
+
+// BuildProviderTLS mirrors buildfleet's docker mutual-TLS block; the fields
+// are file paths on the kite host.
+type BuildProviderTLS struct {
+	CA                 string `json:"ca"`
+	Cert               string `json:"cert"`
+	Key                string `json:"key"`
+	InsecureSkipVerify bool   `json:"insecureSkipVerify"`
 }
 
 // BuildProviderCache mirrors buildfleet's k8s cache-registry block.
