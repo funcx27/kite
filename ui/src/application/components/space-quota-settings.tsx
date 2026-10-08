@@ -78,7 +78,8 @@ export function ClusterQuotaFields({
   const suffixField = (
     key: 'cpu' | 'memory',
     suffix: string,
-    isOver: boolean
+    isOver: boolean,
+    limit: string
   ) => (
     <div className="min-w-0 flex-1">
       <div className="relative">
@@ -104,33 +105,40 @@ export function ClusterQuotaFields({
           {suffix}
         </span>
       </div>
+      {isOver && (
+        <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+          {t('applications.spaceQuota.overCapacityHint', { limit })}
+        </p>
+      )}
     </div>
   )
   return (
-    <div className="min-w-0 flex-1 space-y-1">
-      <div
-        className="flex gap-2"
-        title={
-          hasCapacity
-            ? t('applications.spaceQuota.capacityHint', {
-                cpu: formatCores(data.cpuCores),
-                memory: formatGiB(data.memoryGiB),
-                nodes: data.nodes,
-              })
-            : undefined
-        }
-      >
-        {suffixField('cpu', cpuSuffix, cpuOver)}
-        {suffixField('memory', memSuffix, memOver)}
+    <div
+      className="min-w-0 flex-1"
+      title={
+        hasCapacity
+          ? t('applications.spaceQuota.capacityHint', {
+              cpu: formatCores(data.cpuCores),
+              memory: formatGiB(data.memoryGiB),
+              nodes: data.nodes,
+            })
+          : undefined
+      }
+    >
+      <div className="flex gap-2">
+        {suffixField(
+          'cpu',
+          cpuSuffix,
+          cpuOver,
+          `${formatCores(data?.cpuCores ?? 0)} core`
+        )}
+        {suffixField(
+          'memory',
+          memSuffix,
+          memOver,
+          `${formatGiB(data?.memoryGiB ?? 0)} GiB`
+        )}
       </div>
-      {(cpuOver || memOver) && (
-        <p className="text-xs text-amber-600 dark:text-amber-400">
-          {t('applications.spaceQuota.overCapacityHint', {
-            cpu: formatCores(data.cpuCores),
-            memory: formatGiB(data.memoryGiB),
-          })}
-        </p>
-      )}
     </div>
   )
 }

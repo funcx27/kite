@@ -362,7 +362,7 @@
       "memory": "Memory",
       "capacityHint": "Total resources (allocatable): {{cpu}} core / {{memory}} GiB · {{nodes}} nodes",
       "overCapacity": "Quota exceeds the cluster's allocatable capacity",
-      "overCapacityHint": "Exceeds the cluster's allocatable capacity ({{cpu}} core / {{memory}} GiB). Oversubscription is allowed on shared clusters, but this is usually a typo.",
+      "overCapacityHint": "Exceeds the cluster's allocatable {{limit}}. Oversubscription is allowed on shared clusters, but this is usually a typo.",
       "unconfigured": "Not configured",
       "unauthorized": "No permission to read quotas",
       "empty": "This space has no namespace on any known cluster yet.",
