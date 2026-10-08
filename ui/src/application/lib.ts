@@ -9,6 +9,24 @@ export const SPACE_LABEL = 'kite.application/space'
 export const SPACE_LABEL_SELECTOR = `${SPACE_LABEL}=true`
 export const APP_NAME_LABEL = 'kite.application/name'
 
+// ── Space quota fields (plain-number core / GiB inputs) ──
+
+export interface QuotaFieldValue {
+  cpu: string
+  memory: string
+}
+
+// Both quota inputs must be finite numbers greater than 0; the units are
+// fixed (core / GiB).
+export function quotaFieldValid(value: QuotaFieldValue | undefined): boolean {
+  if (!value) return false
+  const cpu = Number(value.cpu)
+  const memory = Number(value.memory)
+  return (
+    Number.isFinite(cpu) && cpu > 0 && Number.isFinite(memory) && memory > 0
+  )
+}
+
 export type WorkMode = 'application' | 'professional'
 
 export const APPLICATION_STATUSES = [

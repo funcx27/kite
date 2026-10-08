@@ -20,13 +20,15 @@
       "empty": "无匹配空间",
       "create": "新建空间",
       "createTitle": "新建空间",
-      "createDescription": "将在每个所选集群上创建命名空间并打 kite.application/space 标记，作为空间显示在此处。向其他集群发布应用时，会在该集群按需自动创建同名空间。",
+      "createDescription": "将在每个所选集群上创建空间（打 kite.application/space 标记的命名空间）并应用所填的资源配额；失败集群可重试，已成功集群保留。",
       "targetClusters": "目标集群（可多选）",
       "noHealthyCluster": "暂无健康集群可选",
       "clusterRequired": "请至少选择一个目标集群。",
       "namePlaceholder": "空间名称（如 my-team）",
       "invalidName": "名称需为小写 DNS 标签：小写字母、数字和中划线，最长 63 个字符。",
       "nameExists": "已存在同名空间。",
+      "quotaTitle": "各集群配额",
+      "quotaRequired": "请为每个所选集群填写大于 0 的 CPU（core）与内存（GiB）配额。",
       "createSuccess": "已在集群 {{clusters}} 创建空间 {{name}}",
       "createPartial": "已在 {{succeeded}} 创建空间 {{name}}；以下集群创建失败：{{failed}}（已成功的集群保留，不回滚）",
       "createFailed": "创建空间 {{name}} 失败：{{failed}}"
@@ -351,6 +353,24 @@
       "addPort": "添加端口",
       "ingressClass": "IngressClass",
       "ingressClassPlaceholder": "集群默认"
+    },
+    "spaceQuota": {
+      "title": "资源配额 · {{name}}",
+      "description": "空间在各集群的配额，由该空间命名空间内 kite 管理的 ResourceQuota 生效（cpu / memory 与 limits.cpu / limits.memory 同值）。",
+      "cluster": "集群",
+      "quota": "配额",
+      "used": "已用",
+      "cpu": "CPU",
+      "memory": "内存",
+      "capacityHint": "总资源（可分配）：{{cpu}} core / {{memory}} GiB · {{nodes}} 个节点",
+      "unconfigured": "未配置",
+      "unauthorized": "无权限读取配额",
+      "empty": "该空间尚未在任何已知集群存在命名空间。",
+      "setQuota": "设置配额",
+      "editTitle": "配额 · {{cluster}}",
+      "editHint": "将在 {{cluster}} 该空间命名空间内更新 kite 管理的 ResourceQuota。请求幂等，失败后可直接重试。",
+      "saved": "已保存 {{cluster}} 的配额",
+      "saveFailed": "保存 {{cluster}} 配额失败：{{error}}"
     }
   },
   "editors": {

@@ -20,13 +20,15 @@
       "empty": "No matching spaces",
       "create": "New Space",
       "createTitle": "Create Space",
-      "createDescription": "Creates a namespace labeled kite.application/space on every selected cluster, listed here as spaces. Publishing an app to another cluster creates the same-named space there on demand.",
+      "createDescription": "Creates the space (a namespace labeled kite.application/space) on every selected cluster and applies the entered resource quota there; failed clusters keep the succeeded ones and can be retried.",
       "targetClusters": "Target clusters (multi-select)",
       "noHealthyCluster": "No healthy cluster available",
       "clusterRequired": "Select at least one target cluster.",
       "namePlaceholder": "Space name (e.g. my-team)",
       "invalidName": "Name must be a lowercase DNS label: a-z, 0-9 and \"-\", at most 63 characters.",
       "nameExists": "A space with this name already exists.",
+      "quotaTitle": "Per-cluster quotas",
+      "quotaRequired": "Enter a CPU (core) and memory (GiB) quota greater than 0 for every selected cluster.",
       "createSuccess": "Space {{name}} created on {{clusters}}",
       "createPartial": "Space {{name}} created on {{succeeded}}; failed on {{failed}} (succeeded clusters are kept)",
       "createFailed": "Failed to create space {{name}}: {{failed}}"
@@ -351,6 +353,24 @@
       "addPort": "Add port",
       "ingressClass": "IngressClass",
       "ingressClassPlaceholder": "Cluster default"
+    },
+    "spaceQuota": {
+      "title": "Resource Quotas · {{name}}",
+      "description": "Per-cluster quota of this space, enforced by the kite-managed ResourceQuota in the space's namespace (cpu / memory and limits.cpu / limits.memory share the same value).",
+      "cluster": "Cluster",
+      "quota": "Quota",
+      "used": "Used",
+      "cpu": "CPU",
+      "memory": "Memory",
+      "capacityHint": "Total resources (allocatable): {{cpu}} core / {{memory}} GiB · {{nodes}} nodes",
+      "unconfigured": "Not configured",
+      "unauthorized": "No permission to read quotas",
+      "empty": "This space has no namespace on any known cluster yet.",
+      "setQuota": "Set Quota",
+      "editTitle": "Quota · {{cluster}}",
+      "editHint": "Applies the kite-managed ResourceQuota in this space's namespace on {{cluster}}. The request is idempotent — retrying after a failure is safe.",
+      "saved": "Quota saved on {{cluster}}",
+      "saveFailed": "Failed to save the quota on {{cluster}}: {{error}}"
     }
   },
   "editors": {

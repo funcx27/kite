@@ -18,10 +18,13 @@ import type {
   ApplicationStatusReport,
   ApplicationSyncResponse,
   CreateApplicationRequest,
+  SpaceQuotaInput,
+  SpaceQuotaListResponse,
+  SpaceQuotaUpsertResponse,
   UpdateApplicationConfigRequest,
   UpdateApplicationRequest,
 } from '@/application/types'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { apiClient, type ApiRequestOptions } from '@/lib/api-client'
 
@@ -328,3 +331,50 @@ export const previewApplicationRender = (req: ApplicationPreviewRequest) =>
     method: 'POST',
     body: JSON.stringify(req),
   })
+
+// ── Space quotas ──
+
+export const fetchSpaceQuotas = (name: string) =>
+  applicationRequest<SpaceQuotaListResponse>(
+    `/spaces/${encodeURIComponent(name)}/quotas`,
+    { method: 'GET' }
+  )
+
+export const useSpaceQuotas = (name: string | undefined) => {
+  return useQuery({
+    queryKey: ['applications', 'space-quotas', name],
+    queryFn: () => fetchSpaceQuotas(name as string),
+    enabled: !!name,
+    placeholderData: (prevData) => prevData,
+  })
+}
+
+// Idempotent per-cluster upsert: creates the labeled space namespace where
+// missing and (re)applies the kite-managed ResourceQuota. Partial failures
+// come back in the response body, not as a thrown error.
+export const upsertSpaceQuotas = (name: string, quotas: SpaceQuotaInput[]) =>
+  applicationRequest<SpaceQuotaUpsertResponse>(
+    `/spaces/${encodeURIComponent(name)}/quotas`,
+    { method: 'PUT', body: JSON.stringify({ quotas }) }
+  )
+
+export const useUpsertSpaceQuotasMutation = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      name,
+      quotas,
+    }: {
+      name: string
+      quotas: SpaceQuotaInput[]
+    }) => upsertSpaceQuotas(name, quotas),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ['applications', 'space-quotas'],
+      })
+      // A newly created space namespace only shows up in the picker after
+      // the namespace list cache is dropped.
+      void queryClient.invalidateQueries({ queryKey: ['namespaces'] })
+    },
+  })
+}

@@ -57,6 +57,12 @@ func (d *Deps) ResolveCluster(_ context.Context, name string) (client.Client, er
 	return cs.K8sClient, nil
 }
 
+// ClusterNames lists the clusters the manager currently knows about,
+// including ones whose client failed to load.
+func (d *Deps) ClusterNames() []string {
+	return d.cm.ClusterNames()
+}
+
 func (d *Deps) Authorize(c *gin.Context, resource, verb, cluster, namespace string) bool {
 	user := c.MustGet("user").(model.User)
 	return rbac.CanAccess(user, resource, verb, cluster, namespace)

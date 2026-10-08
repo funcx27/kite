@@ -31,6 +31,9 @@ type Deps interface {
 	// ResolveCluster returns the controller-runtime client of the named
 	// cluster, or an error if the cluster is unknown or offline.
 	ResolveCluster(ctx context.Context, name string) (client.Client, error)
+	// ClusterNames lists the names of the clusters the host currently knows
+	// about; cross-cluster views (space quotas) iterate them.
+	ClusterNames() []string
 	// Authorize reports whether the request may perform verb on resource in
 	// cluster/namespace, judged against the host RBAC roles carried in the
 	// gin context.

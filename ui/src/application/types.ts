@@ -480,3 +480,41 @@ export interface ApplicationPreviewResponse {
   manifests: ApplicationManifest[]
   yaml: string
 }
+
+// ── Space quotas (spaces_api.go) ──
+
+// One cluster's quota of the upsert body; cpu is core count ("4", "0.5"),
+// memory ends in Gi ("8Gi").
+export interface SpaceQuotaInput {
+  cluster: string
+  cpu: string
+  memory: string
+}
+
+export interface SpaceQuotaFailure {
+  cluster: string
+  error: string
+}
+
+export interface SpaceQuotaUpsertResponse {
+  succeeded: string[]
+  failed: SpaceQuotaFailure[]
+}
+
+// One cluster's view of a space: hard limits plus quota-observed usage as
+// quantity strings, or one of the degraded markers (unconfigured /
+// unauthorized / error).
+export interface SpaceQuotaStatus {
+  cluster: string
+  cpu?: string
+  memory?: string
+  usedCpu?: string
+  usedMemory?: string
+  unconfigured?: boolean
+  unauthorized?: boolean
+  error?: string
+}
+
+export interface SpaceQuotaListResponse {
+  quotas: SpaceQuotaStatus[]
+}

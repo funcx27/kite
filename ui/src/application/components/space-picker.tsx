@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useUpsertSpaceQuotasMutation } from '@/application/api'
+import { ClusterQuotaFields } from '@/application/components/space-quota-settings'
+import { quotaFieldValid, type QuotaFieldValue } from '@/application/lib'
 import { useSpaces } from '@/platform/space-context'
 import { ChevronDown, Layers, Plus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -28,8 +31,9 @@ import {
 const dns1123LabelPattern = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
 
 // Create-space dialog shared by the space picker and the application wizard's
-// "no space" gate. Creates the labeled namespace on every selected cluster;
-// per-cluster failures are reported as-is and successful clusters are kept.
+// "no space" gate. Creates the space and its per-cluster resource quota on
+// every selected cluster through the idempotent quotas upsert; per-cluster
+// failures are reported as-is and successful clusters are kept.
 export function CreateSpaceDialog({
   open,
   onOpenChange,
@@ -40,8 +44,9 @@ export function CreateSpaceDialog({
   defaultCluster?: string
 }) {
   const { t } = useTranslation()
-  const { spaces, createSpace } = useSpaces()
+  const { spaces } = useSpaces()
   const { clusters } = useCluster()
+  const upsertQuotas = useUpsertSpaceQuotasMutation()
   const availableClusters = useMemo(
     () => clusters.filter((candidate) => !candidate.error),
     [clusters]
@@ -49,6 +54,16 @@ export function CreateSpaceDialog({
   const [name, setName] = useState('')
   const [nameError, setNameError] = useState('')
   const [selectedClusters, setSelectedClusters] = useState<string[]>([])
+  // Name that already succeeded on at least one cluster in this dialog
+  // session. Retrying it after a partial failure must bypass the
+  // duplicate-name precheck: the invalidated namespace list already contains
+  // it while the upsert itself is idempotent.
+  const succeededNameRef = useRef<string | null>(null)
+  // Values of unchecked clusters are kept so a mistaken uncheck does not
+  // wipe what was typed.
+  const [quotaInputs, setQuotaInputs] = useState<
+    Record<string, QuotaFieldValue>
+  >({})
   const [isCreating, setIsCreating] = useState(false)
 
   // Reset the form each time the dialog opens and preselect the header
@@ -57,6 +72,8 @@ export function CreateSpaceDialog({
     if (!open) return
     setName('')
     setNameError('')
+    setQuotaInputs({})
+    succeededNameRef.current = null
     const current = getCurrentCluster()
     const fallback =
       defaultCluster ??
@@ -77,13 +94,17 @@ export function CreateSpaceDialog({
         : [...prev, cluster]
     )
 
+  const quotasValid = selectedClusters.every((cluster) =>
+    quotaFieldValid(quotaInputs[cluster])
+  )
+
   const handleCreate = async () => {
     const trimmed = name.trim()
     if (!dns1123LabelPattern.test(trimmed) || trimmed.length > 63) {
       setNameError(t('sidebar.spaces.invalidName'))
       return
     }
-    if (spaces.includes(trimmed)) {
+    if (spaces.includes(trimmed) && succeededNameRef.current !== trimmed) {
       setNameError(t('sidebar.spaces.nameExists'))
       return
     }
@@ -91,9 +112,17 @@ export function CreateSpaceDialog({
       setNameError(t('sidebar.spaces.clusterRequired'))
       return
     }
+    if (!quotasValid) return
     setIsCreating(true)
     try {
-      const result = await createSpace(trimmed, selectedClusters)
+      const result = await upsertQuotas.mutateAsync({
+        name: trimmed,
+        quotas: selectedClusters.map((cluster) => ({
+          cluster,
+          cpu: String(Number(quotaInputs[cluster].cpu)),
+          memory: `${Number(quotaInputs[cluster].memory)}Gi`,
+        })),
+      })
       if (result.failed.length === 0) {
         toast.success(
           t('sidebar.spaces.createSuccess', {
@@ -105,6 +134,9 @@ export function CreateSpaceDialog({
         setNameError('')
         onOpenChange(false)
       } else {
+        if (result.succeeded.length > 0) {
+          succeededNameRef.current = trimmed
+        }
         const detail = result.failed
           .map((f) => `${f.cluster}: ${translateError(f.error, t)}`)
           .join('; ')
@@ -131,7 +163,7 @@ export function CreateSpaceDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-sm">
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{t('sidebar.spaces.createTitle')}</DialogTitle>
           <DialogDescription>
@@ -178,15 +210,42 @@ export function CreateSpaceDialog({
             }}
             autoFocus
           />
+          {selectedClusters.length > 0 && (
+            <div className="space-y-2">
+              <Label>{t('sidebar.spaces.quotaTitle')}</Label>
+              {selectedClusters.map((cluster) => (
+                <div key={cluster} className="space-y-1.5">
+                  <span className="text-sm font-mono">{cluster}</span>
+                  <ClusterQuotaFields
+                    cluster={cluster}
+                    value={quotaInputs[cluster] ?? { cpu: '', memory: '' }}
+                    onChange={(next) =>
+                      setQuotaInputs((prev) => ({
+                        ...prev,
+                        [cluster]: next,
+                      }))
+                    }
+                  />
+                </div>
+              ))}
+            </div>
+          )}
         </div>
         {nameError && <p className="text-xs text-destructive">{nameError}</p>}
+        {!quotasValid && selectedClusters.length > 0 && (
+          <p className="text-xs text-muted-foreground">
+            {t('sidebar.spaces.quotaRequired')}
+          </p>
+        )}
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             {t('common.actions.cancel')}
           </Button>
           <Button
             onClick={() => void handleCreate()}
-            disabled={isCreating || selectedClusters.length === 0}
+            disabled={
+              isCreating || selectedClusters.length === 0 || !quotasValid
+            }
           >
             {t('common.actions.create')}
           </Button>

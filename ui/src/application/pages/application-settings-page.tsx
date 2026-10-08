@@ -1,3 +1,4 @@
+import { SpaceQuotaSettings } from '@/application/components/space-quota-settings'
 import { useSpaces } from '@/platform/space-context'
 import { BuildProvidersManagement } from '@/workflow/components/build-providers-management'
 import { BuildRuntimeSettings } from '@/workflow/components/build-runtime-settings'
@@ -10,9 +11,10 @@ import { usePageTitle } from '@/hooks/use-page-title'
 import { Button } from '@/components/ui/button'
 
 // Application-mode settings (design §11). The URL decides the view:
-// ?space=<name> shows that space's build settings, the bare path shows the
-// global sections. The header space picker writes ?space= on switch, so
-// picking a space while on this page lands in its settings view.
+// ?space=<name> shows that space's settings (resource quotas, build
+// settings), the bare path shows the global sections. The header space
+// picker writes ?space= on switch, so picking a space while on this page
+// lands in its settings view.
 export function ApplicationSettingsPage() {
   const { t } = useTranslation()
   const { currentSpace } = useSpaces()
@@ -49,7 +51,10 @@ export function ApplicationSettingsPage() {
         )}
       </div>
       {space !== null ? (
-        <SpaceBuildSettings space={space} />
+        <div className="space-y-6">
+          <SpaceQuotaSettings space={space} />
+          <SpaceBuildSettings space={space} />
+        </div>
       ) : (
         <div className="space-y-6">
           <CredentialsManagement />
