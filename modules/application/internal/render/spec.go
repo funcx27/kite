@@ -21,6 +21,10 @@ const (
 	PortTypeLoadBalancer = "loadbalancer"
 )
 
+// imagePullPolicyValues are the valid k8s container pull policies; the spec
+// stores the canonical CamelCase form.
+var imagePullPolicyValues = []string{"Always", "IfNotPresent", "Never"}
+
 // AppSpec is the structured wizard product stored as App.Spec (design §3).
 // It is the draft/birth snapshot of an app; deployed configs are full
 // manifests, and the form view is read back into this shape by ExtractFields.
@@ -41,6 +45,9 @@ type WorkloadSpec struct {
 	Env      []EnvVar     `json:"env,omitempty"`
 	Requests ResourceSpec `json:"requests,omitempty"`
 	Limits   ResourceSpec `json:"limits,omitempty"`
+	// ImagePullPolicy is optional; empty lets the kubelet default it
+	// (Always for :latest, IfNotPresent otherwise).
+	ImagePullPolicy string `json:"imagePullPolicy,omitempty"`
 }
 
 // EnvVar is one plain-value environment variable; valueFrom entries surface
@@ -94,6 +101,14 @@ func (s *AppSpec) Normalize(app string) {
 	// into the pod spec and fail pod creation with a cryptic invalid-image
 	// error only visible in ReplicaSet events.
 	s.Workload.Image = strings.TrimSpace(s.Workload.Image)
+	// Accept case variants ("always") so YAML-hand-authored specs converge on
+	// the CamelCase form the API server expects.
+	for _, canonical := range imagePullPolicyValues {
+		if strings.EqualFold(s.Workload.ImagePullPolicy, canonical) {
+			s.Workload.ImagePullPolicy = canonical
+			break
+		}
+	}
 	// Memory is canonicalized to Mi/Gi so stored specs and rendered pods
 	// never carry M/G/Ki variants.
 	s.Workload.Limits.Memory = canonicalMemoryQuantity(s.Workload.Limits.Memory)
@@ -151,6 +166,18 @@ func (s AppSpec) Validate() error {
 		}
 		if _, err := resource.ParseQuantity(v); err != nil {
 			return fmt.Errorf("workload %s limit %q is not a valid quantity", name, v)
+		}
+	}
+	if s.Workload.ImagePullPolicy != "" {
+		valid := false
+		for _, v := range imagePullPolicyValues {
+			if s.Workload.ImagePullPolicy == v {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return fmt.Errorf("imagePullPolicy %q must be Always, IfNotPresent or Never", s.Workload.ImagePullPolicy)
 		}
 	}
 	if s.Workload.Replicas < 0 {

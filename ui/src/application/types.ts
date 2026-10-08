@@ -20,6 +20,7 @@ export interface ApplicationWorkloadSpec {
   env?: ApplicationEnvVar[]
   requests?: ApplicationResourceSpec
   limits?: ApplicationResourceSpec
+  imagePullPolicy?: string
 }
 
 export interface ApplicationPortSpec {

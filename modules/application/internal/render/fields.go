@@ -28,6 +28,7 @@ func ExtractFields(app string, docs []unstructured.Unstructured) AppSpec {
 		}
 		if c := primaryContainer(&docs[w]); c != nil {
 			spec.Workload.Image, _, _ = unstructured.NestedString(c, "image")
+			spec.Workload.ImagePullPolicy, _, _ = unstructured.NestedString(c, "imagePullPolicy")
 			spec.Workload.Env = extractEnv(c)
 			spec.Workload.Requests = extractQuantity(c, "requests")
 			spec.Workload.Limits = extractQuantity(c, "limits")
@@ -480,12 +481,20 @@ func injectWorkload(app string, doc *unstructured.Unstructured, spec AppSpec) *u
 }
 
 // injectContainer rewrites the form-owned container fields on the container
-// map in place: image, env, resources and the config volume mounts (the
-// volumes themselves live on the pod spec). Container ports are deliberately
-// not touched: the port table only renders Services (numeric targetPort), so
-// container port declarations stay whatever the YAML author set.
+// map in place: image, pull policy, env, resources and the config volume
+// mounts (the volumes themselves live on the pod spec). Container ports are
+// deliberately not touched: the port table only renders Services (numeric
+// targetPort), so container port declarations stay whatever the YAML author
+// set.
 func injectContainer(app string, c, podSpec map[string]interface{}, spec AppSpec) {
 	c["image"] = spec.Workload.Image
+	if spec.Workload.ImagePullPolicy != "" {
+		c["imagePullPolicy"] = spec.Workload.ImagePullPolicy
+	} else {
+		// Form-owned field: an empty value must remove a previously set
+		// policy, not preserve it across form round trips.
+		delete(c, "imagePullPolicy")
+	}
 	originals := envByName(c)
 	var env []interface{}
 	for _, e := range spec.Workload.Env {

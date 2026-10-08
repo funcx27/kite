@@ -133,6 +133,9 @@ func buildWorkload(app string, spec AppSpec, namespace string) *unstructured.Uns
 		"name":  containerName,
 		"image": spec.Workload.Image,
 	}
+	if spec.Workload.ImagePullPolicy != "" {
+		container["imagePullPolicy"] = spec.Workload.ImagePullPolicy
+	}
 	if env := envList(spec.Workload.Env); len(env) > 0 {
 		container["env"] = env
 	}

@@ -74,6 +74,7 @@ interface WizardState {
   description: string
   workloadType: string
   image: string
+  imagePullPolicy: string
   replicas: number
   container: {
     name: string
@@ -104,6 +105,7 @@ function buildState(
     description: app?.description ?? '',
     workloadType: workload?.type || 'deployment',
     image: workload?.image || '',
+    imagePullPolicy: workload?.imagePullPolicy ?? '',
     replicas: workload?.replicas ?? 1,
     container: {
       name: 'app',
@@ -134,6 +136,7 @@ function buildSpec(state: WizardState): ApplicationSpec {
       env: state.container.env.filter((env) => env.name.trim() !== ''),
       requests: state.container.resources?.requests,
       limits: state.container.resources?.limits,
+      imagePullPolicy: state.imagePullPolicy || undefined,
     },
     mountPoints: state.mountPoints,
     configFiles: state.configFiles,
@@ -618,17 +621,28 @@ export function ApplicationWizard({
                     />
                   </div>
                   <ImageEditor
-                    container={{ name: 'app', image: state.image } as never}
+                    container={
+                      {
+                        name: 'app',
+                        image: state.image,
+                        imagePullPolicy: state.imagePullPolicy,
+                      } as never
+                    }
                     onUpdate={(updates) => {
+                      const next: Partial<WizardState> = {}
                       if (updates.image !== undefined) {
-                        patch({
+                        next.image = updates.image
+                        next.container = {
+                          ...state.container,
                           image: updates.image,
-                          container: {
-                            ...state.container,
-                            image: updates.image,
-                          },
-                        })
+                        }
                       }
+                      // ImageEditor always sets the key: undefined means the
+                      // user picked "Default" and the policy must clear.
+                      if ('imagePullPolicy' in updates) {
+                        next.imagePullPolicy = updates.imagePullPolicy ?? ''
+                      }
+                      patch(next)
                     }}
                   />
                 </div>
