@@ -94,13 +94,17 @@ package-binaries: ## Package each kite binary file separately
 
 frontend: static ## Build frontend only
 
-static: ui/src/**/*.tsx ui/src/**/*.ts ui/index.html ui/**/*.css ui/package.json ui/vite.config.ts
+# make's ** glob is not recursive, so ui/src/**/*.tsx missed deeper files and
+# stale binaries were served as "up to date"; collect sources with find.
+UI_SOURCES := $(shell find $(UI_DIR)/src -name '*.tsx' -o -name '*.ts' 2>/dev/null) $(UI_DIR)/index.html
+static: $(UI_SOURCES) $(UI_DIR)/package.json $(UI_DIR)/vite.config.ts
 	@echo "📦 Ensuring static files are built..."
 	cd $(UI_DIR) && pnpm run build
 
 backend: ${BINARY_NAME} ## Build backend only
 
-$(BINARY_NAME): main.go pkg/**/*.go go.mod static *.go **/*.go
+GO_SOURCES := $(shell find . -name '*.go' -not -path './ui/*' 2>/dev/null)
+$(BINARY_NAME): $(GO_SOURCES) go.mod static
 	@echo "🏗️ Building backend..."
 	CGO_ENABLED=0 go build -trimpath $(LDFLAGS) -o $(BINARY_NAME) .
 
