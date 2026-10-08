@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useUpsertSpaceQuotasMutation } from '@/application/api'
-import { ClusterQuotaFields } from '@/application/components/space-quota-settings'
+import {
+  fetchSpaceQuotas,
+  useUpsertSpaceQuotasMutation,
+} from '@/application/api'
+import {
+  ClusterQuotaFields,
+  ConfiguredQuota,
+} from '@/application/components/space-quota-settings'
 import { quotaFieldValid, type QuotaFieldValue } from '@/application/lib'
+import type { SpaceQuotaStatus } from '@/application/types'
 import { useSpaces } from '@/platform/space-context'
 import { ChevronDown, Layers, Plus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -65,6 +72,25 @@ export function CreateSpaceDialog({
     Record<string, QuotaFieldValue>
   >({})
   const [isCreating, setIsCreating] = useState(false)
+  // Per-cluster state of the typed name: a cluster where the space already
+  // carries a quota is rendered read-only (quota changes belong to the space
+  // settings), unconfigured ones keep the inputs for a retrofit. Bumped after
+  // each submit so a partial-failure retry sees the fresh state.
+  const [existingQuotas, setExistingQuotas] = useState<
+    Record<string, SpaceQuotaStatus>
+  >({})
+  const [existingTick, setExistingTick] = useState(0)
+
+  const configuredOn = (cluster: string) => {
+    const row = existingQuotas[cluster]
+    return (
+      !!row &&
+      !row.unconfigured &&
+      !row.unauthorized &&
+      !row.error &&
+      (!!row.cpu || !!row.memory)
+    )
+  }
 
   // Reset the form each time the dialog opens and preselect the header
   // cluster filter when it pins one, else the first healthy cluster.
@@ -73,6 +99,8 @@ export function CreateSpaceDialog({
     setName('')
     setNameError('')
     setQuotaInputs({})
+    setExistingQuotas({})
+    setExistingTick((tick) => tick + 1)
     succeededNameRef.current = null
     const current = getCurrentCluster()
     const fallback =
@@ -86,6 +114,40 @@ export function CreateSpaceDialog({
     // clobber the selection while the dialog is open.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
+
+  // Debounced lookup of the typed name's per-cluster state; an invalid or
+  // cleared name resets it.
+  useEffect(() => {
+    const trimmed = name.trim()
+    if (!open || trimmed.length < 2 || !dns1123LabelPattern.test(trimmed)) {
+      setExistingQuotas({})
+      return
+    }
+    let stale = false
+    const timer = setTimeout(() => {
+      fetchSpaceQuotas(trimmed)
+        .then((res) => {
+          if (stale) return
+          const by: Record<string, SpaceQuotaStatus> = {}
+          for (const quota of res.quotas) by[quota.cluster] = quota
+          setExistingQuotas(by)
+        })
+        .catch(() => {
+          if (!stale) setExistingQuotas({})
+        })
+    }, 400)
+    return () => {
+      stale = true
+      clearTimeout(timer)
+    }
+  }, [open, name, existingTick])
+
+  // A cluster that turns out already configured cannot be re-submitted here;
+  // drop it from the selection when its state loads.
+  useEffect(() => {
+    setSelectedClusters((prev) => prev.filter((c) => !configuredOn(c)))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [existingQuotas])
 
   const toggleCluster = (cluster: string) =>
     setSelectedClusters((prev) =>
@@ -123,6 +185,7 @@ export function CreateSpaceDialog({
           memory: `${Number(quotaInputs[cluster].memory)}Gi`,
         })),
       })
+      setExistingTick((tick) => tick + 1)
       if (result.failed.length === 0) {
         toast.success(
           t('sidebar.spaces.createSuccess', {
@@ -163,7 +226,7 @@ export function CreateSpaceDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{t('sidebar.spaces.createTitle')}</DialogTitle>
           <DialogDescription>
@@ -171,34 +234,6 @@ export function CreateSpaceDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
-          <div className="space-y-1.5">
-            <Label>{t('sidebar.spaces.targetClusters')}</Label>
-            {availableClusters.length === 0 ? (
-              <div className="rounded-md border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">
-                {t('sidebar.spaces.noHealthyCluster')}
-              </div>
-            ) : (
-              <div className="max-h-36 space-y-2 overflow-y-auto rounded-md border p-2.5">
-                {availableClusters.map((candidate) => (
-                  <label
-                    key={candidate.name}
-                    className="flex cursor-pointer items-center gap-2 text-sm"
-                  >
-                    <Checkbox
-                      checked={selectedClusters.includes(candidate.name)}
-                      onCheckedChange={() => toggleCluster(candidate.name)}
-                    />
-                    <span className="font-mono">{candidate.name}</span>
-                    {candidate.version && (
-                      <span className="text-xs text-muted-foreground">
-                        {candidate.version}
-                      </span>
-                    )}
-                  </label>
-                ))}
-              </div>
-            )}
-          </div>
           <Input
             value={name}
             onChange={(event) => setName(event.target.value)}
@@ -210,26 +245,72 @@ export function CreateSpaceDialog({
             }}
             autoFocus
           />
-          {selectedClusters.length > 0 && (
-            <div className="space-y-2">
-              <Label>{t('sidebar.spaces.quotaTitle')}</Label>
-              {selectedClusters.map((cluster) => (
-                <div key={cluster} className="space-y-1.5">
-                  <span className="text-sm font-mono">{cluster}</span>
-                  <ClusterQuotaFields
-                    cluster={cluster}
-                    value={quotaInputs[cluster] ?? { cpu: '', memory: '' }}
-                    onChange={(next) =>
-                      setQuotaInputs((prev) => ({
-                        ...prev,
-                        [cluster]: next,
-                      }))
-                    }
-                  />
-                </div>
-              ))}
-            </div>
-          )}
+          <div className="space-y-1.5">
+            <Label>{t('sidebar.spaces.targetClusters')}</Label>
+            {availableClusters.length === 0 ? (
+              <div className="rounded-md border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">
+                {t('sidebar.spaces.noHealthyCluster')}
+              </div>
+            ) : (
+              <div className="max-h-56 space-y-2 overflow-y-auto rounded-md border p-2.5">
+                {availableClusters.map((candidate) => {
+                  const configured = configuredOn(candidate.name)
+                  const selected = selectedClusters.includes(candidate.name)
+                  return (
+                    <div
+                      key={candidate.name}
+                      className="flex flex-wrap items-center gap-2"
+                    >
+                      <label
+                        className="flex min-w-32 flex-1 cursor-pointer items-center gap-2 text-sm"
+                        title={
+                          configured
+                            ? t('sidebar.spaces.quotaLocked')
+                            : undefined
+                        }
+                      >
+                        <Checkbox
+                          checked={selected}
+                          disabled={configured}
+                          onCheckedChange={() => toggleCluster(candidate.name)}
+                        />
+                        <span className="truncate font-mono">
+                          {candidate.name}
+                        </span>
+                        {candidate.version && (
+                          <span className="text-xs text-muted-foreground">
+                            {candidate.version}
+                          </span>
+                        )}
+                      </label>
+                      {configured ? (
+                        <ConfiguredQuota
+                          quota={existingQuotas[candidate.name]}
+                        />
+                      ) : (
+                        <ClusterQuotaFields
+                          cluster={candidate.name}
+                          disabled={!selected}
+                          value={
+                            quotaInputs[candidate.name] ?? {
+                              cpu: '',
+                              memory: '',
+                            }
+                          }
+                          onChange={(next) =>
+                            setQuotaInputs((prev) => ({
+                              ...prev,
+                              [candidate.name]: next,
+                            }))
+                          }
+                        />
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
         </div>
         {nameError && <p className="text-xs text-destructive">{nameError}</p>}
         {!quotasValid && selectedClusters.length > 0 && (
