@@ -128,7 +128,7 @@ function buildSpec(state: WizardState): ApplicationSpec {
   return {
     workload: {
       type: state.workloadType,
-      image: state.image,
+      image: state.image.trim(),
       replicas: state.replicas,
       env: state.container.env.filter((env) => env.name.trim() !== ''),
       requests: state.container.resources?.requests,

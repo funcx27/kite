@@ -200,7 +200,7 @@ func View(ctx context.Context, cli client.Client, app, namespace string, manifes
 	if err := v.viewNetwork(ctx, cli, namespace, manifests, authz); err != nil {
 		return nil, err
 	}
-	if err := v.viewEvents(ctx, cli, namespace, wl, authz); err != nil {
+	if err := v.viewEvents(ctx, cli, namespace, wl, live, selector, authz); err != nil {
 		return nil, err
 	}
 	return v, nil
@@ -303,11 +303,12 @@ func (v *RuntimeView) viewNetwork(ctx context.Context, cli client.Client, namesp
 	return nil
 }
 
-// viewEvents collects recent warning events of the workload and its pods.
-// The module's client is the host's informer cache, which only indexes
-// spec.nodeName (pkg/kube/client.go:196), so the involved-object filtering
-// the design asks for happens client-side instead of via a field selector.
-func (v *RuntimeView) viewEvents(ctx context.Context, cli client.Client, namespace string, wl *unstructured.Unstructured, authz Authz) error {
+// viewEvents collects recent warning events of the workload, its pods and the
+// ReplicaSets it owns. The module's client is the host's informer cache, which
+// only indexes spec.nodeName (pkg/kube/client.go:196), so the involved-object
+// filtering the design asks for happens client-side instead of via a field
+// selector.
+func (v *RuntimeView) viewEvents(ctx context.Context, cli client.Client, namespace string, wl, live *unstructured.Unstructured, selector map[string]string, authz Authz) error {
 	if !authz("events") {
 		v.Events.Unauthorized = true
 		v.Events.Items = nil
@@ -316,6 +317,16 @@ func (v *RuntimeView) viewEvents(ctx context.Context, cli client.Client, namespa
 	owned := map[string]bool{}
 	for _, p := range v.Pods.Items {
 		owned[p.Name] = true
+	}
+	// Deployment pod-create failures (an invalid image, quota exceeded) land
+	// as FailedCreate on the ReplicaSet, not on a pod or the workload —
+	// without its ReplicaSets a fully stuck rollout shows no events at all.
+	var rsNames map[string]bool
+	if authz("replicasets") {
+		var err error
+		if rsNames, err = replicaSetNames(ctx, cli, namespace, wl, live, selector); err != nil {
+			return err
+		}
 	}
 	events := &unstructured.UnstructuredList{}
 	events.SetAPIVersion("v1")
@@ -329,7 +340,7 @@ func (v *RuntimeView) viewEvents(ctx context.Context, cli client.Client, namespa
 	}
 	var recent []dated
 	for i := range events.Items {
-		ev, ok := warningEventOf(&events.Items[i], wl, owned)
+		ev, ok := warningEventOf(&events.Items[i], wl, owned, rsNames)
 		if ok {
 			at, _ := time.Parse(time.RFC3339, ev.LastTimestamp)
 			recent = append(recent, dated{info: ev, at: at})
@@ -343,6 +354,58 @@ func (v *RuntimeView) viewEvents(ctx context.Context, cli client.Client, namespa
 		v.Events.Items = append(v.Events.Items, d.info)
 	}
 	return nil
+}
+
+// replicaSetNames returns the names of the ReplicaSets the workload owns —
+// Deployment-only, listed by the pod selector and confirmed by controller
+// ownerReference.
+func replicaSetNames(ctx context.Context, cli client.Client, namespace string, wl, live *unstructured.Unstructured, selector map[string]string) (map[string]bool, error) {
+	if wl == nil || wl.GetKind() != "Deployment" || len(selector) == 0 {
+		return nil, nil
+	}
+	list := &unstructured.UnstructuredList{}
+	list.SetAPIVersion("apps/v1")
+	list.SetKind("ReplicaSetList")
+	if err := cli.List(ctx, list, client.InNamespace(namespace), client.MatchingLabels(selector)); err != nil {
+		return nil, fmt.Errorf("list replicasets: %w", err)
+	}
+	uid := ""
+	if live != nil {
+		uid = string(live.GetUID())
+	}
+	names := make(map[string]bool, len(list.Items))
+	for i := range list.Items {
+		if controlledBy(&list.Items[i], wl, uid) {
+			names[list.Items[i].GetName()] = true
+		}
+	}
+	return names, nil
+}
+
+// controlledBy reports whether obj's controller ownerReference points at wl,
+// by UID when the live workload is known and by kind/name otherwise.
+func controlledBy(obj, wl *unstructured.Unstructured, uid string) bool {
+	owners, _, _ := unstructured.NestedSlice(obj.Object, "metadata", "ownerReferences")
+	for _, o := range owners {
+		m, ok := store.AsMap(o)
+		if !ok {
+			continue
+		}
+		controller, _, _ := unstructured.NestedBool(m, "controller")
+		if !controller {
+			continue
+		}
+		if uid != "" {
+			if nestedString(m, "uid") == uid {
+				return true
+			}
+			continue
+		}
+		if nestedString(m, "kind") == wl.GetKind() && nestedString(m, "name") == wl.GetName() {
+			return true
+		}
+	}
+	return false
 }
 
 // fetchLiveDoc reads the live object of a document; a missing object returns
@@ -707,14 +770,17 @@ func backendPort(path map[string]interface{}) string {
 }
 
 // warningEventOf projects a corev1 Event the view cares about: Warning type
-// on the workload or one of its pods (design §10).
-func warningEventOf(ev *unstructured.Unstructured, wl *unstructured.Unstructured, podNames map[string]bool) (EventInfo, bool) {
+// on the workload, one of its pods or one of its ReplicaSets (design §10).
+func warningEventOf(ev *unstructured.Unstructured, wl *unstructured.Unstructured, podNames, rsNames map[string]bool) (EventInfo, bool) {
 	if nestedString(ev.Object, "type") != "Warning" {
 		return EventInfo{}, false
 	}
 	kind := nestedString(ev.Object, "involvedObject", "kind")
 	name := nestedString(ev.Object, "involvedObject", "name")
 	relevant := kind == "Pod" && podNames[name]
+	if !relevant && rsNames != nil {
+		relevant = kind == "ReplicaSet" && rsNames[name]
+	}
 	if !relevant && wl != nil {
 		relevant = kind == wl.GetKind() && name == wl.GetName()
 	}

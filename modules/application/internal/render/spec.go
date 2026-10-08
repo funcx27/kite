@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"k8s.io/apimachinery/pkg/api/resource"
 )
@@ -89,6 +90,10 @@ func (s *AppSpec) Normalize(app string) {
 		s.Workload.Type = WorkloadDeployment
 	}
 	s.Workload.Type = strings.ToLower(s.Workload.Type)
+	// A copy-pasted image with edge whitespace would otherwise flow verbatim
+	// into the pod spec and fail pod creation with a cryptic invalid-image
+	// error only visible in ReplicaSet events.
+	s.Workload.Image = strings.TrimSpace(s.Workload.Image)
 	// Memory is canonicalized to Mi/Gi so stored specs and rendered pods
 	// never carry M/G/Ki variants.
 	s.Workload.Limits.Memory = canonicalMemoryQuantity(s.Workload.Limits.Memory)
@@ -129,6 +134,11 @@ func (s AppSpec) Validate() error {
 	}
 	if strings.TrimSpace(s.Workload.Image) == "" {
 		return fmt.Errorf("image is required")
+	}
+	// Normalize trims the edges, so any whitespace left is inside the
+	// reference and no valid image carries that.
+	if strings.ContainsFunc(s.Workload.Image, unicode.IsSpace) {
+		return fmt.Errorf("image %q must not contain whitespace", s.Workload.Image)
 	}
 	// Limits are mandatory so a rendered pod is never BestEffort or
 	// unbounded; requests default to the limits in Normalize.
