@@ -256,22 +256,43 @@ export function CreateSpaceDialog({
                 {availableClusters.map((candidate) => {
                   const configured = configuredOn(candidate.name)
                   const selected = selectedClusters.includes(candidate.name)
+                  if (configured) {
+                    // The space already carries a quota here: not selectable,
+                    // no inputs — the readout and the created badge explain
+                    // why the row is inert.
+                    return (
+                      <div
+                        key={candidate.name}
+                        className="flex items-center gap-2"
+                        title={t('sidebar.spaces.quotaLocked')}
+                      >
+                        <div className="flex min-w-0 flex-1 items-center gap-2 text-sm">
+                          <span className="truncate font-mono">
+                            {candidate.name}
+                          </span>
+                          {candidate.version && (
+                            <span className="text-xs text-muted-foreground">
+                              {candidate.version}
+                            </span>
+                          )}
+                          <span className="whitespace-nowrap rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+                            {t('sidebar.spaces.alreadyCreated')}
+                          </span>
+                        </div>
+                        <ConfiguredQuota
+                          quota={existingQuotas[candidate.name]}
+                        />
+                      </div>
+                    )
+                  }
                   return (
                     <div
                       key={candidate.name}
-                      className="flex flex-wrap items-center gap-2"
+                      className="flex items-center gap-2"
                     >
-                      <label
-                        className="flex min-w-32 flex-1 cursor-pointer items-center gap-2 text-sm"
-                        title={
-                          configured
-                            ? t('sidebar.spaces.quotaLocked')
-                            : undefined
-                        }
-                      >
+                      <label className="flex min-w-32 flex-1 cursor-pointer items-center gap-2 text-sm">
                         <Checkbox
                           checked={selected}
-                          disabled={configured}
                           onCheckedChange={() => toggleCluster(candidate.name)}
                         />
                         <span className="truncate font-mono">
@@ -282,20 +303,10 @@ export function CreateSpaceDialog({
                             {candidate.version}
                           </span>
                         )}
-                        {configured && (
-                          <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
-                            {t('sidebar.spaces.alreadyCreated')}
-                          </span>
-                        )}
                       </label>
-                      {configured ? (
-                        <ConfiguredQuota
-                          quota={existingQuotas[candidate.name]}
-                        />
-                      ) : (
+                      {selected && (
                         <ClusterQuotaFields
                           cluster={candidate.name}
-                          disabled={!selected}
                           value={
                             quotaInputs[candidate.name] ?? {
                               cpu: '',

@@ -9,15 +9,20 @@ import {
   useState,
 } from 'react'
 import { SPACE_LABEL_SELECTOR } from '@/application/lib'
-import { Namespace } from 'kubernetes-types/core/v1'
+import { useQueries } from '@tanstack/react-query'
+import { NamespaceList } from 'kubernetes-types/core/v1'
 import { useSearchParams } from 'react-router-dom'
 
-import { useResources } from '@/lib/api/core'
+import { apiClient } from '@/lib/api-client'
+import { clusterHeader } from '@/lib/current-cluster'
+import { useCluster } from '@/hooks/use-cluster'
 
 const CURRENT_SPACE_STORAGE_KEY = 'current-space'
 
 interface SpaceContextType {
-  // Names of the namespaces labeled kite.application/space=true.
+  // Names of the namespaces labeled kite.application/space=true, aggregated
+  // across every healthy cluster: a space exists only on the clusters it was
+  // created on, so a single-cluster list would hide it everywhere else.
   spaces: string[]
   // null means "all spaces".
   currentSpace: string | null
@@ -50,21 +55,46 @@ export function SpaceProvider({ children }: { children: React.ReactNode }) {
   // not read the stale ?space= param back into state; it clears once the URL
   // reflects the write.
   const pendingUrlSpaceRef = useRef<string | null | undefined>(undefined)
-  const {
-    data: namespaces,
-    isLoading,
-    error,
-  } = useResources('namespaces', undefined, {
-    labelSelector: SPACE_LABEL_SELECTOR,
-    staleTime: 30 * 1000,
+  const { clusters } = useCluster()
+  const healthyClusters = useMemo(
+    () => clusters.filter((candidate) => !candidate.error).map((c) => c.name),
+    [clusters]
+  )
+  // One labeled-namespace list per healthy cluster, merged below; keys ride
+  // the 'namespaces' prefix so the quota upsert's invalidation refreshes the
+  // picker. A failing cluster just contributes no spaces.
+  const listResults = useQueries({
+    queries: healthyClusters.map((cluster) => ({
+      queryKey: ['namespaces', 'spaces', cluster],
+      queryFn: () =>
+        apiClient.get<NamespaceList>(
+          `/namespaces/_all?labelSelector=${encodeURIComponent(SPACE_LABEL_SELECTOR)}`,
+          { headers: clusterHeader(cluster) }
+        ),
+      staleTime: 30 * 1000,
+      placeholderData: (prev: NamespaceList | undefined) => prev,
+      retry: false,
+    })),
   })
 
   const spaces = useMemo(() => {
-    return (namespaces ?? [])
-      .map((ns: Namespace) => ns.metadata?.name || '')
-      .filter((name: string) => name !== '')
-      .sort()
-  }, [namespaces])
+    const names = new Set<string>()
+    for (const result of listResults) {
+      for (const ns of result.data?.items ?? []) {
+        if (ns.metadata?.name) names.add(ns.metadata.name)
+      }
+    }
+    return [...names].sort()
+    // listResults identity churns every render; the derived items array is
+    // what actually matters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listResults.map((r) => r.dataUpdatedAt).join()])
+  const isLoading = listResults.some((r) => r.isLoading)
+  const error =
+    listResults.length > 0 && listResults.every((r) => r.isError)
+      ? ((listResults[0].error as Error | null) ??
+        new Error('failed to list spaces'))
+      : null
 
   // Writes state and the ?space= query param (preserving other params such as
   // tab); replace avoids one history entry per switch.
