@@ -517,109 +517,82 @@ export function ApplicationWizard({
             <>
               {step === 1 && (
                 <div className="space-y-4">
-                  <div>
-                    <Label>{t('applications.wizard.appName')}</Label>
-                    {mode === 'create' ? (
-                      <div className="flex">
-                        <Select value={space} onValueChange={setSpace}>
-                          <SelectTrigger className="w-44 shrink-0 rounded-r-none border-r-0 font-mono">
-                            <SelectValue
-                              placeholder={t(
-                                'applications.wizard.spacePlaceholder'
-                              )}
-                            />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {spaces.map((candidate) => (
-                              <SelectItem
-                                key={candidate}
-                                value={candidate}
-                                className="font-mono"
-                              >
-                                {candidate}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <span className="flex h-9 items-center border-y bg-muted px-1 text-sm text-muted-foreground">
-                          /
-                        </span>
-                        <Input
-                          value={state.name}
-                          onChange={(event) =>
-                            patch({ name: event.target.value })
-                          }
-                          placeholder="my-app"
-                          className="rounded-l-none font-mono"
-                        />
-                      </div>
-                    ) : (
-                      <div className="flex h-9 items-center rounded-md border bg-muted px-3 font-mono text-sm text-muted-foreground">
-                        {effectiveNamespace} / {app?.name}
-                      </div>
-                    )}
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {t('applications.wizard.appNameHint')}
-                    </p>
-                  </div>
-                  <div>
-                    <Label>{t('applications.wizard.description')}</Label>
-                    <Input
-                      value={state.description}
-                      onChange={(event) =>
-                        patch({ description: event.target.value })
-                      }
-                      className="mt-1.5"
-                    />
-                  </div>
-                  <div>
-                    <Label>{t('applications.wizard.workloadType')}</Label>
-                    <Select
-                      value={state.workloadType}
-                      onValueChange={(value) => patch({ workloadType: value })}
-                      disabled={
-                        mode === 'cluster' &&
-                        !!config &&
-                        config.statusSummary !== 'undeployed'
-                      }
-                    >
-                      <SelectTrigger className="mt-1.5 w-56">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="deployment">Deployment</SelectItem>
-                        <SelectItem value="statefulset">StatefulSet</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    {mode === 'cluster' &&
-                      !!config &&
-                      config.statusSummary !== 'undeployed' && (
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {t('applications.wizard.workloadTypeLocked')}
-                        </p>
-                      )}
-                  </div>
-                  <div className="grid gap-4 md:grid-cols-[1fr_8rem]">
+                  <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_14rem_8rem]">
                     <div>
-                      <Label>{t('applications.wizard.image')}</Label>
-                      <div className="mt-1.5">
-                        <ImageEditor
-                          container={
-                            { name: 'app', image: state.image } as never
-                          }
-                          onUpdate={(updates) => {
-                            if (updates.image !== undefined) {
-                              patch({
-                                image: updates.image,
-                                container: {
-                                  ...state.container,
-                                  image: updates.image,
-                                },
-                              })
+                      <Label>{t('applications.wizard.appName')}</Label>
+                      {mode === 'create' ? (
+                        <div className="mt-1.5 flex">
+                          <Select value={space} onValueChange={setSpace}>
+                            <SelectTrigger className="w-44 shrink-0 rounded-r-none border-r-0 font-mono">
+                              <SelectValue
+                                placeholder={t(
+                                  'applications.wizard.spacePlaceholder'
+                                )}
+                              />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {spaces.map((candidate) => (
+                                <SelectItem
+                                  key={candidate}
+                                  value={candidate}
+                                  className="font-mono"
+                                >
+                                  {candidate}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <span className="flex h-9 items-center border-y bg-muted px-1 text-sm text-muted-foreground">
+                            /
+                          </span>
+                          <Input
+                            value={state.name}
+                            onChange={(event) =>
+                              patch({ name: event.target.value })
                             }
-                          }}
-                        />
-                      </div>
+                            placeholder="my-app"
+                            className="rounded-l-none font-mono"
+                          />
+                        </div>
+                      ) : (
+                        <div className="mt-1.5 flex h-9 items-center rounded-md border bg-muted px-3 font-mono text-sm text-muted-foreground">
+                          {effectiveNamespace} / {app?.name}
+                        </div>
+                      )}
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t('applications.wizard.appNameHint')}
+                      </p>
+                    </div>
+                    <div>
+                      <Label>{t('applications.wizard.workloadType')}</Label>
+                      <Select
+                        value={state.workloadType}
+                        onValueChange={(value) =>
+                          patch({ workloadType: value })
+                        }
+                        disabled={
+                          mode === 'cluster' &&
+                          !!config &&
+                          config.statusSummary !== 'undeployed'
+                        }
+                      >
+                        <SelectTrigger className="mt-1.5 w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="deployment">Deployment</SelectItem>
+                          <SelectItem value="statefulset">
+                            StatefulSet
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                      {mode === 'cluster' &&
+                        !!config &&
+                        config.statusSummary !== 'undeployed' && (
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {t('applications.wizard.workloadTypeLocked')}
+                          </p>
+                        )}
                     </div>
                     <div>
                       <Label>{t('applications.wizard.replicas')}</Label>
@@ -634,6 +607,30 @@ export function ApplicationWizard({
                       />
                     </div>
                   </div>
+                  <div>
+                    <Label>{t('applications.wizard.description')}</Label>
+                    <Input
+                      value={state.description}
+                      onChange={(event) =>
+                        patch({ description: event.target.value })
+                      }
+                      className="mt-1.5"
+                    />
+                  </div>
+                  <ImageEditor
+                    container={{ name: 'app', image: state.image } as never}
+                    onUpdate={(updates) => {
+                      if (updates.image !== undefined) {
+                        patch({
+                          image: updates.image,
+                          container: {
+                            ...state.container,
+                            image: updates.image,
+                          },
+                        })
+                      }
+                    }}
+                  />
                 </div>
               )}
 
