@@ -362,6 +362,7 @@
       "memory": "内存",
       "capacityHint": "总资源（可分配）：{{cpu}} core / {{memory}} GiB · {{nodes}} 个节点",
       "overCapacity": "配额超过该集群的可分配总量",
+      "overCapacityHint": "超过该集群可分配总量（{{cpu}} core / {{memory}} GiB）。多空间共享集群时允许超卖，但通常意味着填错了数值。",
       "unconfigured": "未配置",
       "unauthorized": "无权限读取配额",
       "empty": "该空间尚未在任何已知集群存在命名空间。",

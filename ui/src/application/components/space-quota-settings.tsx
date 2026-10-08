@@ -49,6 +49,10 @@ import {
 // whose unit suffix carries the cluster's allocatable total ("/ 10 core"),
 // so the allocation is judged against the capacity right where it is typed;
 // the bare unit shows when the nodes cannot be read (permission, offline).
+// Spinner buttons are stripped — they collide with the suffix and quota
+// values are typed, not stepped. A value overshooting the cluster total
+// gets an inline hint: oversubscription is allowed (clusters are shared
+// across spaces) but usually a typo.
 export function ClusterQuotaFields({
   cluster,
   value,
@@ -67,7 +71,15 @@ export function ClusterQuotaFields({
     ? `/ ${formatCores(data.cpuCores)} core`
     : 'core'
   const memSuffix = hasCapacity ? `/ ${formatGiB(data.memoryGiB)} GiB` : 'GiB'
-  const suffixField = (key: 'cpu' | 'memory', suffix: string) => (
+  const over = (raw: string, capacity: number) =>
+    raw !== '' && Number(raw) > capacity
+  const cpuOver = hasCapacity && over(value.cpu, data.cpuCores)
+  const memOver = hasCapacity && over(value.memory, data.memoryGiB)
+  const suffixField = (
+    key: 'cpu' | 'memory',
+    suffix: string,
+    isOver: boolean
+  ) => (
     <div className="min-w-0 flex-1">
       <div className="relative">
         <Input
@@ -75,34 +87,50 @@ export function ClusterQuotaFields({
           min={0}
           step="any"
           disabled={disabled}
-          className="px-2.5 pr-14"
+          className="px-2.5 pr-14 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
           value={value[key]}
           onChange={(event) =>
             onChange({ ...value, [key]: event.target.value })
           }
           placeholder="0"
         />
-        <span className="pointer-events-none absolute inset-y-0 right-2 flex items-center whitespace-nowrap text-xs text-muted-foreground">
+        <span
+          className={`pointer-events-none absolute inset-y-0 right-2 flex items-center whitespace-nowrap text-xs ${
+            isOver
+              ? 'text-amber-600 dark:text-amber-400'
+              : 'text-muted-foreground'
+          }`}
+        >
           {suffix}
         </span>
       </div>
     </div>
   )
   return (
-    <div
-      className="flex flex-1 gap-2"
-      title={
-        hasCapacity
-          ? t('applications.spaceQuota.capacityHint', {
-              cpu: formatCores(data.cpuCores),
-              memory: formatGiB(data.memoryGiB),
-              nodes: data.nodes,
-            })
-          : undefined
-      }
-    >
-      {suffixField('cpu', cpuSuffix)}
-      {suffixField('memory', memSuffix)}
+    <div className="min-w-0 flex-1 space-y-1">
+      <div
+        className="flex gap-2"
+        title={
+          hasCapacity
+            ? t('applications.spaceQuota.capacityHint', {
+                cpu: formatCores(data.cpuCores),
+                memory: formatGiB(data.memoryGiB),
+                nodes: data.nodes,
+              })
+            : undefined
+        }
+      >
+        {suffixField('cpu', cpuSuffix, cpuOver)}
+        {suffixField('memory', memSuffix, memOver)}
+      </div>
+      {(cpuOver || memOver) && (
+        <p className="text-xs text-amber-600 dark:text-amber-400">
+          {t('applications.spaceQuota.overCapacityHint', {
+            cpu: formatCores(data.cpuCores),
+            memory: formatGiB(data.memoryGiB),
+          })}
+        </p>
+      )}
     </div>
   )
 }
