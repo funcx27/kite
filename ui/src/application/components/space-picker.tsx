@@ -282,6 +282,11 @@ export function CreateSpaceDialog({
                             {candidate.version}
                           </span>
                         )}
+                        {configured && (
+                          <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+                            {t('sidebar.spaces.alreadyCreated')}
+                          </span>
+                        )}
                       </label>
                       {configured ? (
                         <ConfiguredQuota

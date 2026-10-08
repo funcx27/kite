@@ -211,26 +211,21 @@ function UsageCells({ quota }: { quota: SpaceQuotaStatus }) {
   )
 }
 
-// Read-only "quota / cluster total" pair for clusters whose space already
-// carries a quota (create-space dialog); the two spans sit where the edit
-// inputs would, so configured and editable rows align.
+// Read-only plain quota pair for clusters whose space already carries a
+// quota (create-space dialog) — no capacity denominator, the row cannot be
+// edited here; the two spans sit where the edit inputs would, so configured
+// and editable rows align.
 export function ConfiguredQuota({ quota }: { quota: SpaceQuotaStatus }) {
-  const { data } = useClusterCapacity(quota.cluster)
-  const denom = data && data.nodes > 0 ? data : undefined
   const cls = 'flex-1 text-right font-mono text-sm text-muted-foreground'
   const cores = cpuQuantityToCores(quota.cpu)
   const gib = memoryQuantityToGiB(quota.memory)
   return (
     <>
       <span className={cls}>
-        {cores === undefined
-          ? '—'
-          : `${formatCores(cores)}${denom ? `/${formatCores(denom.cpuCores)}` : ''} core`}
+        {cores === undefined ? '—' : `${formatCores(cores)} core`}
       </span>
       <span className={cls}>
-        {gib === undefined
-          ? '—'
-          : `${formatGiB(gib)}${denom ? `/${formatGiB(denom.memoryGiB)}` : ''} GiB`}
+        {gib === undefined ? '—' : `${formatGiB(gib)} GiB`}
       </span>
     </>
   )
