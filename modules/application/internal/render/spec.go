@@ -64,7 +64,7 @@ type PortSpec struct {
 	Type string `json:"type"` // clusterip (default) / nodeport / loadbalancer
 	Host string `json:"host,omitempty"`
 	Path string `json:"path,omitempty"`
-	Name string `json:"name,omitempty"` // empty → auto tcp-<port>
+	Name string `json:"name,omitempty"` // Service port name; empty → auto tcp-<port>
 }
 
 // ConfigFile is one file of the config wizard step (design §9): rendered into

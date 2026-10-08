@@ -480,15 +480,12 @@ func injectWorkload(app string, doc *unstructured.Unstructured, spec AppSpec) *u
 }
 
 // injectContainer rewrites the form-owned container fields on the container
-// map in place: image, ports, env, resources and the config volume mounts
-// (the volumes themselves live on the pod spec).
+// map in place: image, env, resources and the config volume mounts (the
+// volumes themselves live on the pod spec). Container ports are deliberately
+// not touched: the port table only renders Services (numeric targetPort), so
+// container port declarations stay whatever the YAML author set.
 func injectContainer(app string, c, podSpec map[string]interface{}, spec AppSpec) {
 	c["image"] = spec.Workload.Image
-	if ports := containerPorts(spec.Ports); len(ports) > 0 {
-		c["ports"] = ports
-	} else {
-		delete(c, "ports")
-	}
 	originals := envByName(c)
 	var env []interface{}
 	for _, e := range spec.Workload.Env {

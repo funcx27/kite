@@ -37,6 +37,10 @@ type deployRequest struct {
 	Spec        json.RawMessage `json:"spec,omitempty"`
 	Manifests   json.RawMessage `json:"manifests,omitempty"`
 	ExpectedRev *int            `json:"expectedRev,omitempty"`
+	// CopyFrom seeds create mode with another cluster's stored manifests
+	// (deep copy); it is only valid while the target config does not exist
+	// yet. Empty renders the base from the app's draft spec.
+	CopyFrom string `json:"copyFrom,omitempty"`
 	// manifestsSource labels caller-provided manifests for the revision
 	// record; the credential re-render rides the {manifests} funnel but must
 	// not be recorded as a user YAML edit. Not part of the wire format.
@@ -89,98 +93,340 @@ type deployDocPreview struct {
 // the API server with dry-run: All and touches neither cluster state beyond
 // reads nor the database. Pending changes ({spec}/{manifests}) and {image}
 // are persisted as a revision and applied by this same request — the save
-// never happens without the publish.
+// never happens without the publish. A missing config enters create mode: the
+// base set is rendered from the app draft spec or copied from another
+// cluster's config, the row and its rev1 are created (dry-run stages them in
+// memory only), then the regular publish pipeline runs.
 func (h *Handler) DeployConfig(c *gin.Context) {
-	app, cfg, ok := h.findAppConfig(c)
-	if !ok {
+	app := h.findAppOr404(c)
+	if app == nil {
 		return
 	}
 	id := h.requestIdentity(c)
-	ctx := c.Request.Context()
 	var req deployRequest
-	if err := bindOptionalJSON(c, &req); err != nil {
-		h.fail(c, http.StatusBadRequest, err, "")
+	if !h.bindDeployRequest(c, &req) {
 		return
+	}
+	cluster := c.Param("cfgCluster")
+	if !h.validateDeployCreateReq(c, app, cluster, req) {
+		return
+	}
+	ctx := c.Request.Context()
+	cli, err := h.deps.ResolveCluster(ctx, cluster)
+	if err != nil {
+		h.fail(c, http.StatusNotFound, nil, "cluster not found or offline: "+cluster)
+		return
+	}
+	cfg, created, ok := h.deployTargetConfig(c, app, id, cluster, &req)
+	if !ok {
+		return
+	}
+	// Create mode: the row and its rev1 were born in this request, so a
+	// client-sent expectedRev refers to some other config (a wizard round-trip
+	// carries the copy source's revision) — the optimistic gate cannot apply
+	// to the fresh row and must not 409 the pending persist.
+	if created {
+		req.ExpectedRev = nil
+	}
+
+	// Setting a pull credential on an existing config consumes that
+	// credential's secret material, so the reference is gated on
+	// credentials:get (host-wide) before anything — neither the credential_ref
+	// write below nor the publish pipeline may run for a user the credential
+	// center's RBAC denies. The write happens before the pending set is
+	// resolved so a change can re-render it with the managed imagePullSecrets
+	// reference (rerenderForCredential); create mode wrote it onto the new row.
+	if !created && !req.DryRun && req.CredentialRef != nil {
+		if !h.updateDeployCredential(c, id, app, cfg, &req) {
+			return
+		}
+	}
+
+	manifests, latestRev, ok := h.deployManifests(c, id, app, cfg, req)
+	if !ok {
+		return
+	}
+	h.publishPending(c, ctx, id, app, cfg, cli, manifests, req.DryRun, latestRev)
+}
+
+// bindDeployRequest parses the deploy body and enforces the spec/manifests
+// mutual exclusion; false means the response is already written.
+func (h *Handler) bindDeployRequest(c *gin.Context, req *deployRequest) bool {
+	if err := bindOptionalJSON(c, req); err != nil {
+		h.fail(c, http.StatusBadRequest, err, "")
+		return false
 	}
 	if req.Spec != nil && req.Manifests != nil {
 		h.fail(c, http.StatusBadRequest, nil, "provide either spec or manifests, not both")
-		return
+		return false
 	}
-	cli, err := h.deps.ResolveCluster(ctx, cfg.Cluster)
-	if err != nil {
-		h.fail(c, http.StatusNotFound, nil, "cluster not found or offline: "+cfg.Cluster)
-		return
-	}
+	return true
+}
 
-	// Setting a pull credential consumes that credential's secret material, so
-	// the reference is gated on credentials:get (host-wide) before anything —
-	// neither the credential_ref write below nor the publish pipeline may run
-	// for a user the credential center's RBAC denies. The write happens before
-	// the pending set is resolved so a change can re-render it with the
-	// managed imagePullSecrets reference (rerenderForCredential).
-	if !req.DryRun && req.CredentialRef != nil && *req.CredentialRef != "" &&
+// validateDeployCreateReq rejects a copyFrom deploy against a config that
+// already exists: copyFrom only seeds create mode.
+func (h *Handler) validateDeployCreateReq(c *gin.Context, app *store.App, cluster string, req deployRequest) bool {
+	if req.CopyFrom == "" {
+		return true
+	}
+	_, err := h.findConfig(app.ID, cluster)
+	switch {
+	case err == nil:
+		h.fail(c, http.StatusBadRequest, nil, "copyFrom is only valid when the config does not exist yet")
+		return false
+	case !errors.Is(err, gorm.ErrRecordNotFound):
+		h.fail(c, http.StatusInternalServerError, err, "")
+		return false
+	}
+	return true
+}
+
+// credentialRefValue returns the requested credential reference; nil means
+// absent and yields the empty ref (no managed pull secret).
+func (r *deployRequest) credentialRefValue() string {
+	if r.CredentialRef == nil {
+		return ""
+	}
+	return *r.CredentialRef
+}
+
+// deployTargetConfig returns the config the deploy applies to. A missing
+// config enters create mode: a real deploy authorizes the create verb and
+// persists the config row with its first revision up front — a concurrent
+// creation hitting the (AppID, Cluster) unique index surfaces as the 409
+// refresh-and-retry — while a dry-run stages the row in memory only.
+func (h *Handler) deployTargetConfig(c *gin.Context, app *store.App, id identity, cluster string, req *deployRequest) (*store.AppConfig, bool, bool) {
+	cfg, err := h.findConfig(app.ID, cluster)
+	switch {
+	case err == nil:
+		return cfg, false, true
+	case !errors.Is(err, gorm.ErrRecordNotFound):
+		h.fail(c, http.StatusInternalServerError, err, "")
+		return nil, false, false
+	}
+	if req.DryRun {
+		cfg, ok := h.stageCreateTarget(c, app, cluster, req)
+		return cfg, true, ok
+	}
+	if !h.authorize(c, "create", cluster, app.Namespace) {
+		return nil, false, false
+	}
+	// Creating the row consumes the referenced credential's secret material
+	// (the managed pull secret rides the publish), so gate like the update
+	// path before anything is written.
+	if credential := req.credentialRefValue(); credential != "" &&
 		!id.authorize(credentialsResource, "get", "", "") {
 		h.fail(c, http.StatusForbidden, nil,
-			fmt.Sprintf("user does not have permission to use credential %q", *req.CredentialRef))
-		return
+			fmt.Sprintf("user does not have permission to use credential %q", credential))
+		return nil, false, false
 	}
-	if !req.DryRun && req.CredentialRef != nil {
-		if err := h.store.DB().Model(&store.AppConfig{}).Where("id = ?", cfg.ID).
-			Update("credential_ref", *req.CredentialRef).Error; err != nil {
-			h.fail(c, http.StatusInternalServerError, err, "")
-			return
-		}
-		if *req.CredentialRef != cfg.CredentialRef {
-			if err := h.rerenderForCredential(app, cfg, *req.CredentialRef, &req); err != nil {
-				h.fail(c, http.StatusInternalServerError, err, "")
-				return
-			}
-		}
-		cfg.CredentialRef = *req.CredentialRef
+	cfg, ok := h.createDeployTarget(c, app, id, cluster, req)
+	if !ok {
+		return nil, false, false
 	}
+	return cfg, true, true
+}
 
+// createDeployTarget persists the create-mode config: the base set becomes the
+// row and its first revision, with the requested pull credential on the row
+// and the managed pull secret reference injected into the base manifests.
+// False means the response is already written.
+func (h *Handler) createDeployTarget(c *gin.Context, app *store.App, id identity, cluster string, req *deployRequest) (*store.AppConfig, bool) {
+	manifests, source, ok := h.encodeCreateBase(c, app, req)
+	if !ok {
+		return nil, false
+	}
+	cfg, err := h.createConfigRow(id, app, cluster, manifests, source, req.credentialRefValue())
+	if err != nil {
+		// A concurrent creation hitting the (AppID, Cluster) unique index is
+		// the 409 refresh-and-retry; anything else is a 500.
+		h.failPendingPersist(c, err)
+		return nil, false
+	}
+	return cfg, true
+}
+
+// stageCreateTarget builds the create-mode config in memory for a dry-run: no
+// row, no revision, nothing persisted — the base set only exists so the
+// pipeline can validate the publish.
+func (h *Handler) stageCreateTarget(c *gin.Context, app *store.App, cluster string, req *deployRequest) (*store.AppConfig, bool) {
+	manifests, _, ok := h.encodeCreateBase(c, app, req)
+	if !ok {
+		return nil, false
+	}
+	return &store.AppConfig{
+		AppID:         app.ID,
+		Cluster:       cluster,
+		Namespace:     app.Namespace,
+		Manifests:     store.SecretJSON(manifests),
+		CredentialRef: req.credentialRefValue(),
+	}, true
+}
+
+// encodeCreateBase builds and encodes the create-mode base set: a copyFrom
+// deep copy or the Render(App.Spec) draft, with the requested pull credential
+// reference injected; source is the revision source for the first snapshot.
+func (h *Handler) encodeCreateBase(c *gin.Context, app *store.App, req *deployRequest) ([]byte, string, bool) {
+	docs, err := h.baseConfigDocs(app, req.CopyFrom)
+	switch {
+	case err == nil:
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		h.fail(c, http.StatusNotFound, nil, "copy source config not found: "+req.CopyFrom)
+		return nil, "", false
+	case req.CopyFrom == "":
+		// Render failure: the draft spec is missing or invalid.
+		h.fail(c, http.StatusBadRequest, err, "")
+		return nil, "", false
+	default:
+		h.fail(c, http.StatusInternalServerError, err, "")
+		return nil, "", false
+	}
+	source := store.RevSourceRender
+	if req.CopyFrom != "" {
+		source = store.RevSourceCopy
+	}
+	render.InjectPullSecret(docs, pullSecretName(req.credentialRefValue()))
+	data, err := store.EncodeManifests(docs)
+	if err != nil {
+		h.fail(c, http.StatusInternalServerError, err, "")
+		return nil, "", false
+	}
+	return data, source, true
+}
+
+// baseConfigDocs builds a new config's initial manifest set: a deep copy of
+// the copyFrom cluster's stored manifests (secret bytes ride the stored value,
+// never the client), or the render of the app's draft spec. A missing copyFrom
+// config reports gorm.ErrRecordNotFound.
+func (h *Handler) baseConfigDocs(app *store.App, copyFrom string) ([]unstructured.Unstructured, error) {
+	if copyFrom == "" {
+		return renderAppSpec(app)
+	}
+	src, err := h.findConfig(app.ID, copyFrom)
+	if err != nil {
+		return nil, err
+	}
+	return store.DecodeManifests(src.Manifests)
+}
+
+// createConfigRow runs createConfigTx on its own transaction and records the
+// create audit — the entry the original config-creation endpoint wrote.
+func (h *Handler) createConfigRow(id identity, app *store.App, cluster string, manifests []byte, source, credentialRef string) (*store.AppConfig, error) {
+	var cfg store.AppConfig
+	err := h.store.DB().Transaction(func(tx *gorm.DB) error {
+		var err error
+		cfg, err = createConfigTx(tx, app, cluster, manifests, source, credentialRef, id.operatorID)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	h.recordAudit(id, store.HistoryEntry{
+		Cluster: cluster, ResourceType: authzResource, ResourceName: app.Name,
+		Namespace: cfg.Namespace, Operation: "create", YAML: redacted(manifests),
+	})
+	return &cfg, nil
+}
+
+// createConfigTx creates the per-cluster config row with its first revision
+// inside the caller's transaction (the shared tail of every config-creation
+// funnel); credentialRef is written onto the row.
+func createConfigTx(tx *gorm.DB, app *store.App, cluster string, manifests []byte, source, credentialRef string, operatorID uint) (store.AppConfig, error) {
+	cfg := store.AppConfig{
+		AppID:         app.ID,
+		Cluster:       cluster,
+		Namespace:     app.Namespace,
+		Manifests:     store.SecretJSON(manifests),
+		CredentialRef: credentialRef,
+	}
+	if err := tx.Create(&cfg).Error; err != nil {
+		return cfg, err
+	}
+	_, err := store.AppendRevisionTx(tx, cfg.ID, source, manifests, operatorID, 0)
+	return cfg, err
+}
+
+// updateDeployCredential applies a CredentialRef change to a persisted config
+// before the pending set is resolved; false means the response is already
+// written.
+func (h *Handler) updateDeployCredential(c *gin.Context, id identity, app *store.App, cfg *store.AppConfig, req *deployRequest) bool {
+	if *req.CredentialRef != "" && !id.authorize(credentialsResource, "get", "", "") {
+		h.fail(c, http.StatusForbidden, nil,
+			fmt.Sprintf("user does not have permission to use credential %q", *req.CredentialRef))
+		return false
+	}
+	if err := h.store.DB().Model(&store.AppConfig{}).Where("id = ?", cfg.ID).
+		Update("credential_ref", *req.CredentialRef).Error; err != nil {
+		h.fail(c, http.StatusInternalServerError, err, "")
+		return false
+	}
+	if *req.CredentialRef != cfg.CredentialRef {
+		if err := h.rerenderForCredential(app, cfg, *req.CredentialRef, req); err != nil {
+			h.fail(c, http.StatusInternalServerError, err, "")
+			return false
+		}
+	}
+	cfg.CredentialRef = *req.CredentialRef
+	return true
+}
+
+// deployManifests resolves the manifest set the deploy applies — the stored
+// set plus any pending {spec}/{manifests}/{image} edit — writing the 4xx
+// responses itself; false means the caller must stop.
+func (h *Handler) deployManifests(c *gin.Context, id identity, app *store.App, cfg *store.AppConfig, req deployRequest) ([]unstructured.Unstructured, int, bool) {
 	stored, err := store.DecodeManifests(cfg.Manifests)
 	if err != nil {
 		h.fail(c, http.StatusInternalServerError, err, "")
-		return
+		return nil, 0, false
 	}
 	if len(stored) == 0 {
 		h.fail(c, http.StatusBadRequest, nil, "config has no manifests to deploy")
-		return
+		return nil, 0, false
 	}
-
 	manifests, latestRev, ok := h.resolveDeployManifests(c, id, app, cfg, stored, req)
 	if !ok {
-		return
+		return nil, 0, false
 	}
 	// A dialog image edit on top of a pending set rides the same request and
 	// the same revision; the non-dry-run path applied it inside the persist.
 	if req.Image != "" && (req.Spec != nil || req.Manifests != nil) && req.DryRun {
 		if err := setImageOnPending(manifests, app.Name, req.Image); err != nil {
 			h.fail(c, http.StatusBadRequest, err, "")
-			return
+			return nil, 0, false
 		}
 	}
+	return manifests, latestRev, true
+}
 
-	resp, conflicts, err := h.runPublish(ctx, id, app, cfg, cli, manifests, req.DryRun)
-	var nf *namespaceForbiddenError
-	switch {
-	case errors.As(err, &nf):
-		h.fail(c, http.StatusForbidden, err, err.Error())
-		return
-	case err != nil:
-		h.fail(c, http.StatusInternalServerError, err, "")
-		return
-	}
-	if len(conflicts) > 0 {
-		c.JSON(http.StatusConflict, gin.H{
-			"error":     "cluster has manual changes conflicting with the pending publish, merge first",
-			"conflicts": conflicts,
-		})
+// publishPending runs the conflict-gated apply pipeline for the resolved
+// manifest set and writes the deploy response.
+func (h *Handler) publishPending(c *gin.Context, ctx context.Context, id identity, app *store.App, cfg *store.AppConfig, cli client.Client, manifests []unstructured.Unstructured, dryRun bool, latestRev int) {
+	resp, conflicts, err := h.runPublish(ctx, id, app, cfg, cli, manifests, dryRun)
+	if !h.publishFailure(c, err, conflicts) {
 		return
 	}
 	resp.LatestRev = latestRev
 	c.JSON(http.StatusOK, resp)
+}
+
+// publishFailure maps a runPublish failure to its HTTP error response; false
+// means the caller must stop.
+func (h *Handler) publishFailure(c *gin.Context, err error, conflicts []syncops.ConflictDetail) bool {
+	var nf *namespaceForbiddenError
+	switch {
+	case errors.As(err, &nf):
+		h.fail(c, http.StatusForbidden, err, err.Error())
+	case err != nil:
+		h.fail(c, http.StatusInternalServerError, err, "")
+	case len(conflicts) > 0:
+		c.JSON(http.StatusConflict, gin.H{
+			"error":     "cluster has manual changes conflicting with the pending publish, merge first",
+			"conflicts": conflicts,
+		})
+	default:
+		return true
+	}
+	return false
 }
 
 // failPendingPersist translates a persistPendingConfig failure; the bool
@@ -320,11 +566,7 @@ func (h *Handler) rerenderForCredential(app *store.App, cfg *store.AppConfig, cr
 	if err != nil {
 		return fmt.Errorf("decode stored manifests: %w", err)
 	}
-	if credentialRef != "" {
-		render.InjectPullSecret(docs, pullSecretName(credentialRef))
-	} else {
-		render.RemovePullSecret(docs, pullSecretName(cfg.CredentialRef))
-	}
+	render.InjectPullSecret(docs, pullSecretName(credentialRef))
 	data, err := store.EncodeManifests(docs)
 	if err != nil {
 		return fmt.Errorf("encode manifests: %w", err)
@@ -599,7 +841,8 @@ func (h *Handler) ensureNamespace(ctx context.Context, id identity, cli client.C
 }
 
 // pullSecretName derives the managed image pull secret's name from the
-// credential. Credential names are DNS-1123 labels of up to 63 chars, so
+// credential; an empty credential means no managed secret and returns "".
+// Credential names are DNS-1123 labels of up to 63 chars, so
 // "kite-pull-"+name only fits the 63-char label limit for names up to 53
 // chars; longer refs are truncated to a fragment and suffixed with a short
 // SHA-256 of the full ref — deterministic across publishes (the update path
@@ -610,6 +853,9 @@ func pullSecretName(credentialRef string) string {
 		maxLabel  = 63
 		hashChars = 8 // hex-encoded SHA-256 fragment
 	)
+	if credentialRef == "" {
+		return ""
+	}
 	if len(prefix)+len(credentialRef) <= maxLabel {
 		return prefix + credentialRef
 	}

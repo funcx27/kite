@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ApplicationApiError,
-  createApplicationConfig,
   deployApplicationConfig,
   useApplicationConfig,
   useApplicationStatus,
@@ -9,7 +8,6 @@ import {
 import { applicationStatusLabel } from '@/application/lib'
 import type {
   Application,
-  ApplicationConfig,
   ApplicationConflict,
   ApplicationDeployDocPreview,
   ApplicationDocDiff,
@@ -53,8 +51,9 @@ interface DeployDialogProps {
   cluster?: string
   /** First publish: the app has no cluster config yet */
   firstPublish?: boolean
-  /** Resolved after first-publish cluster selection */
-  onConfigCreated?: (config: ApplicationConfig) => void
+  /** Copy-create mode: deep-copy this cluster's config as the base of the
+   *  target's first publish (confirm request carries copyFrom). */
+  createCopyFrom?: string
   /** Opens the wizard for [修改配置] */
   onEditConfig?: () => void
   /** Opens the merge preview for the conflict state */
@@ -92,14 +91,16 @@ const pullCredentialNone = '__none__'
 // quick image edit, pending wizard edits, a server-side dry-run preview with
 // expandable field-level detail, and the conflict state that only offers the
 // three-way merge. Persisting a revision and applying it happen together on
-// [确认发布] — never before.
+// [确认发布] — never before. Create modes (first publish / copy-create) also
+// go through here: the target config does not exist until the confirm request
+// creates it and publishes in one chain.
 export function DeployDialog({
   app,
   open,
   onOpenChange,
   cluster,
   firstPublish = false,
-  onConfigCreated,
+  createCopyFrom,
   onEditConfig,
   onResolveConflict,
   pending,
@@ -111,12 +112,6 @@ export function DeployDialog({
   const [targetCluster, setTargetCluster] = useState<string | undefined>(
     cluster
   )
-  // Config created by a first-publish cluster selection; otherwise the
-  // config comes from the query below.
-  const [createdConfig, setCreatedConfig] = useState<
-    ApplicationConfig | undefined
-  >(undefined)
-  const [creating, setCreating] = useState(false)
   const [image, setImage] = useState('')
   const [deploying, setDeploying] = useState(false)
   const [pullCredential, setPullCredential] = useState(pullCredentialNone)
@@ -133,6 +128,12 @@ export function DeployDialog({
   // user has not picked one themselves.
   const pullCredentialTouchedRef = useRef(false)
 
+  // Create mode: the target cluster has no config row yet — the backend
+  // builds the base manifests (rendered from App.Spec, or deep-copied from
+  // copyFrom) and creates config + first publish in one request.
+  const copyMode = !!createCopyFrom
+  const isCreateMode = firstPublish || copyMode
+
   // Reset per open / target change. The image baseline is the pending
   // wizard spec or the cluster config's image (never the retired birth
   // draft) — an unprompted difference must not turn into a publish
@@ -140,7 +141,6 @@ export function DeployDialog({
   useEffect(() => {
     if (open) {
       setTargetCluster(cluster)
-      setCreatedConfig(undefined)
       setConflicts(null)
       setDiffDoc(null)
       setImage('')
@@ -165,15 +165,23 @@ export function DeployDialog({
   )
 
   const activeCluster = targetCluster ?? cluster
+  // No status report in create mode: the target config does not exist yet.
   const { data: statusReport } = useApplicationStatus(app.name, activeCluster, {
-    disable: !open || !activeCluster || (firstPublish && !targetCluster),
+    disable: !open || !activeCluster || isCreateMode,
   })
-  const configNeeded = open && !!activeCluster && !firstPublish
+  const configNeeded = open && !!activeCluster && !isCreateMode
   const { data: fetchedConfig } = useApplicationConfig(
     configNeeded ? app.name : undefined,
     configNeeded ? activeCluster : undefined
   )
-  const config = createdConfig ?? fetchedConfig
+  // Copy-create: the source cluster's config supplies the image/credential
+  // prefill and the summary; the target config does not exist until the
+  // publish lands.
+  const { data: copySourceConfig } = useApplicationConfig(
+    open && copyMode ? app.name : undefined,
+    open && copyMode ? createCopyFrom : undefined
+  )
+  const config = fetchedConfig ?? copySourceConfig
 
   // Seed the pull credential once the cluster config is known; a user pick
   // wins over the stored value for the lifetime of the dialog.
@@ -212,9 +220,16 @@ export function DeployDialog({
   // GET /clusters only returns RBAC-visible clusters; offline ones carry
   // `error`. It has no `connected` field — that exists on the admin
   // cluster-management list only, so filtering on it empties the dropdown.
+  // Create modes also skip clusters the app is already bound to (the copy
+  // source itself is bound, hence never a target).
   const availableClusters = useMemo(
-    () => clusters.filter((candidate) => !candidate.error),
-    [clusters]
+    () =>
+      clusters.filter(
+        (candidate) =>
+          !candidate.error &&
+          !app.configs.some((config) => config.cluster === candidate.name)
+      ),
+    [clusters, app.configs]
   )
 
   const { data: credentials } = useCredentials()
@@ -255,20 +270,18 @@ export function DeployDialog({
 
   // Server-side dry-run preview of the exact set [确认发布] would push: the
   // pending wizard edits and image ride the preview and are only injected in
-  // memory, so previews never write revisions (design §6).
+  // memory, so previews never write revisions (design §6). Create modes run
+  // it too once a target cluster is picked — the backend renders/copies the
+  // base manifests in memory.
   const runDryRun = useCallback(async () => {
-    if (!activeCluster || (firstPublish && !config)) {
-      // First publish before the cluster config exists: nothing to
-      // dry-run yet; the create-mode preview takes over after selection.
-      setDryRun({ ...idleDryRun, changeCount: -1 })
-      return
-    }
+    if (!activeCluster) return
     setDryRun((prev) => ({ ...prev, loading: true, error: null }))
     try {
       const result = await deployApplicationConfig(app.name, activeCluster, {
         dryRun: true,
         image: imageChanged ? image.trim() : undefined,
         credentialRef: pullCredentialRef,
+        copyFrom: createCopyFrom,
         ...pendingRequest,
       })
       const creates = result.results
@@ -310,8 +323,7 @@ export function DeployDialog({
   }, [
     activeCluster,
     app.name,
-    firstPublish,
-    config,
+    createCopyFrom,
     t,
     image,
     imageChanged,
@@ -331,7 +343,7 @@ export function DeployDialog({
   // publishing is the no-op apply that advances the consistency anchor.
   const mergedPending = statusReport?.status === 'merged'
   const hasChanges =
-    firstPublish ||
+    isCreateMode ||
     imageChanged ||
     mergedPending ||
     dryRun.changeCount > 0 ||
@@ -345,26 +357,6 @@ export function DeployDialog({
     !!activeCluster &&
     !deploying
 
-  const pickFirstPublishCluster = async (nextCluster: string) => {
-    setTargetCluster(nextCluster)
-    setCreating(true)
-    try {
-      const created = await createApplicationConfig(app.name, {
-        cluster: nextCluster,
-      })
-      setCreatedConfig(created)
-      onConfigCreated?.(created)
-      toast.success(
-        t('applications.deploy.configCreated', { cluster: nextCluster })
-      )
-    } catch (err) {
-      toast.error(translateError(err, t))
-      setTargetCluster(undefined)
-    } finally {
-      setCreating(false)
-    }
-  }
-
   const handleDeploy = async () => {
     if (!activeCluster) return
     setDeploying(true)
@@ -372,6 +364,7 @@ export function DeployDialog({
       const result = await deployApplicationConfig(app.name, activeCluster, {
         image: imageChanged ? image.trim() : undefined,
         credentialRef: pullCredentialRef,
+        copyFrom: copyMode ? createCopyFrom : undefined,
         ...pendingRequest,
       })
       if (result.success) {
@@ -438,13 +431,17 @@ export function DeployDialog({
         <DialogContent className="sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>
-              {firstPublish && !targetCluster
+              {firstPublish
                 ? t('applications.deploy.firstPublishTitle', { name: app.name })
-                : t('applications.deploy.title', {
-                    namespace: config?.namespace ?? app.namespace,
-                    name: app.name,
-                    cluster: activeCluster ?? '',
-                  })}
+                : copyMode
+                  ? t('applications.deploy.copyCreateTitle', {
+                      source: createCopyFrom,
+                    })
+                  : t('applications.deploy.title', {
+                      namespace: config?.namespace ?? app.namespace,
+                      name: app.name,
+                      cluster: activeCluster ?? '',
+                    })}
             </DialogTitle>
             <DialogDescription className="sr-only">
               {t('applications.deploy.title')}
@@ -499,15 +496,12 @@ export function DeployDialog({
             </div>
           ) : (
             <div className="space-y-4">
-              {firstPublish && !targetCluster && (
+              {isCreateMode && (
                 <div>
                   <Label>{t('applications.deploy.targetCluster')}</Label>
                   <Select
                     value={targetCluster ?? ''}
-                    onValueChange={(value) =>
-                      void pickFirstPublishCluster(value)
-                    }
-                    disabled={creating}
+                    onValueChange={setTargetCluster}
                   >
                     <SelectTrigger className="mt-1.5">
                       <SelectValue
@@ -523,7 +517,11 @@ export function DeployDialog({
                     </SelectContent>
                   </Select>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    {t('applications.deploy.targetClusterHint')}
+                    {copyMode
+                      ? t('applications.deploy.copyCreateHint', {
+                          source: createCopyFrom,
+                        })
+                      : t('applications.deploy.targetClusterHint')}
                   </p>
                 </div>
               )}
@@ -534,9 +532,7 @@ export function DeployDialog({
                   value={image}
                   onChange={(event) => setImage(event.target.value)}
                   className="mt-1.5 font-mono text-sm"
-                  disabled={
-                    !activeCluster || creating || (!firstPublish && !config)
-                  }
+                  disabled={!activeCluster || (!isCreateMode && !config)}
                 />
                 <p className="mt-1 text-xs text-muted-foreground">
                   {t('applications.deploy.imageHint')}
@@ -548,7 +544,7 @@ export function DeployDialog({
                 <Select
                   value={pullCredential}
                   onValueChange={changePullCredential}
-                  disabled={!activeCluster || creating}
+                  disabled={!activeCluster}
                 >
                   <SelectTrigger className="mt-1.5 w-64">
                     <SelectValue
@@ -584,7 +580,7 @@ export function DeployDialog({
                   <span className="text-xs text-muted-foreground">
                     {summary}
                   </span>
-                  {activeCluster && config && (
+                  {!isCreateMode && activeCluster && config && (
                     <ApplicationStatusChip
                       status={statusReport?.status ?? config.statusSummary}
                     />
@@ -619,7 +615,7 @@ export function DeployDialog({
                     </span>
                   ) : dryRun.error ? (
                     <span className="text-red-400">{dryRun.error}</span>
-                  ) : firstPublish && !config ? (
+                  ) : isCreateMode && !targetCluster ? (
                     <span className="text-zinc-500">
                       {t('applications.deploy.createModeHint')}
                     </span>
@@ -712,7 +708,7 @@ export function DeployDialog({
                   <div className="mt-2 flex items-center gap-1.5 text-xs text-green-600">
                     <span>✔</span>
                     <span>
-                      {firstPublish
+                      {isCreateMode
                         ? t('applications.deploy.dryRunOkCreate')
                         : t('applications.deploy.dryRunOk')}
                     </span>
@@ -725,7 +721,7 @@ export function DeployDialog({
                 <span>{t('applications.deploy.anchorHint')}</span>
               </div>
 
-              {config?.lastDeployedAt && (
+              {!isCreateMode && config?.lastDeployedAt && (
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   {t('applications.deploy.lastDeployed', {
                     time: formatDate(config.lastDeployedAt),
@@ -755,9 +751,11 @@ export function DeployDialog({
                 disabled={!canConfirm}
                 onClick={() => void handleDeploy()}
               >
-                {firstPublish
-                  ? t('applications.deploy.confirmFirstPublish')
-                  : t('applications.deploy.confirmPublish')}
+                {copyMode
+                  ? t('applications.deploy.confirmCopyPublish')
+                  : firstPublish
+                    ? t('applications.deploy.confirmFirstPublish')
+                    : t('applications.deploy.confirmPublish')}
               </Button>
             )}
           </DialogFooter>

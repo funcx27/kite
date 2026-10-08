@@ -7,7 +7,6 @@ import type {
   ApplicationMergePreview,
   ApplicationMergeRequest,
   ApplicationMergeResponse,
-  ApplicationOfflineRequest,
   ApplicationOfflineResponse,
   ApplicationPreviewRequest,
   ApplicationPreviewResponse,
@@ -18,7 +17,6 @@ import type {
   ApplicationRuntimeView,
   ApplicationStatusReport,
   ApplicationSyncResponse,
-  CreateApplicationConfigRequest,
   CreateApplicationRequest,
   UpdateApplicationConfigRequest,
   UpdateApplicationRequest,
@@ -131,17 +129,6 @@ export const useApplicationConfig = (
   })
 }
 
-// Binds a cluster: {cluster} renders the draft spec (first publish), or
-// {cluster, copyFrom} deep-copies an existing cluster's manifests.
-export const createApplicationConfig = (
-  name: string,
-  req: CreateApplicationConfigRequest
-) =>
-  applicationRequest<ApplicationConfig>(
-    `/${encodeURIComponent(name)}/configs`,
-    { method: 'POST', body: JSON.stringify(req) }
-  )
-
 // Optimistic-locked save: expectedRev must match the config's latest
 // revision; carries either {spec} (injected onto the manifests) or
 // {manifests} (full replacement).
@@ -158,7 +145,9 @@ export const updateApplicationConfig = (
 // ── Deploy / sync / offline ──
 
 // {dryRun: true} runs the full pipeline against the API server with
-// dry-run: All without touching cluster state or the database.
+// dry-run: All without touching cluster state or the database. When the
+// target config does not exist yet, {copyFrom} deep-copies a source cluster's
+// manifests as the base; without it the base is rendered from App.Spec.
 export const deployApplicationConfig = (
   name: string,
   cluster: string,
@@ -175,16 +164,13 @@ export const syncApplicationConfig = (name: string, cluster: string) =>
     { method: 'POST' }
   )
 
-// deleteConfig=false (default) keeps the config with a cleared anchor;
-// true removes the config and its revision chain irreversibly.
-export const offlineApplicationConfig = (
-  name: string,
-  cluster: string,
-  req: ApplicationOfflineRequest = {}
-) =>
+// Offline always deletes the cluster objects AND the config row with its
+// revision chain (irreversible); a partial cluster-side failure keeps the
+// config for retry (HTTP 409).
+export const offlineApplicationConfig = (name: string, cluster: string) =>
   applicationRequest<ApplicationOfflineResponse>(
     `/${encodeURIComponent(name)}/configs/${encodeURIComponent(cluster)}/offline`,
-    { method: 'POST', body: JSON.stringify(req) }
+    { method: 'POST' }
   )
 
 // ── Conflict merge ──

@@ -1,9 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import {
-  createApplicationConfig,
-  fetchApplicationConfig,
-  useApplication,
-} from '@/application/api'
+import { fetchApplicationConfig, useApplication } from '@/application/api'
 import {
   ApplicationWizard,
   type ApplicationWizardMode,
@@ -19,7 +15,6 @@ import {
 } from '@/application/components/status-badge'
 import type { Application, ApplicationPendingChange } from '@/application/types'
 import { useWorkflows } from '@/workflow/api'
-import { useQueryClient } from '@tanstack/react-query'
 import * as yaml from 'js-yaml'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate, useParams } from 'react-router-dom'
@@ -36,21 +31,22 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 type DialogName =
-  'deploy' | 'merge' | 'offline' | 'history' | 'copy' | 'lastApplied' | 'wizard'
+  | 'deploy'
+  | 'deploy-copy'
+  | 'merge'
+  | 'offline'
+  | 'history'
+  | 'lastApplied'
+  | 'wizard'
 
 // Application detail page (design §11): cluster-tab layout. The deploy
-// dialog is the only modify+publish entry; merge is reachable only from the
-// conflict states; history rollback persists and publishes in one confirm.
+// dialog is the only modify+publish entry — existing configs, the first
+// publish of an undeployed app, and copy-to-another-cluster (createCopyFrom)
+// all go through it; merge is reachable only from the conflict states;
+// history rollback persists and publishes in one confirm.
 export function ApplicationDetailPage() {
   const { t } = useTranslation()
   const { name, cluster: clusterParam } = useParams<{
@@ -58,27 +54,20 @@ export function ApplicationDetailPage() {
     cluster: string
   }>()
   const navigate = useNavigate()
-  const queryClient = useQueryClient()
-  const { clusters, currentCluster } = useCluster()
+  const { currentCluster } = useCluster()
   const { data: app, isLoading, error } = useApplication(name)
   usePageTitle(app ? `${app.namespace} / ${app.name}` : t('nav.applications'))
 
   const [openDialog, setOpenDialog] = useState<DialogName | null>(null)
   const [wizardMode, setWizardMode] = useState<ApplicationWizardMode>('cluster')
-  const [copyTarget, setCopyTarget] = useState('')
+  // Copy-create flow: the cluster whose config is deep-copied (the tab the
+  // menu was opened from); null unless the copy deploy dialog is open.
+  const [copySource, setCopySource] = useState<string | null>(null)
   const [lastAppliedYaml, setLastAppliedYaml] = useState('')
   // Wizard edits waiting for [确认发布]: carried into the deploy dialog and
   // only persisted together with the publish; cancelling discards them.
   const [pendingChange, setPendingChange] =
     useState<ApplicationPendingChange | null>(null)
-  // Sticky once the first-publish flow starts: creating the cluster config
-  // flips the app to "deployed" mid-flow, which must not close the dialog.
-  const [firstPublishStarted, setFirstPublishStarted] = useState(false)
-
-  const startFirstPublish = () => {
-    setFirstPublishStarted(true)
-    setOpenDialog('deploy')
-  }
 
   const configs = useMemo(() => app?.configs ?? [], [app])
   // The active cluster is a URL path segment (app → cluster → pod hierarchy),
@@ -103,16 +92,6 @@ export function ApplicationDetailPage() {
       : navigate(`/applications/${name}`, { replace: true })
 
   const undeployed = configs.length === 0
-  const availableCopyTargets = useMemo(
-    () =>
-      clusters.filter(
-        (candidate) =>
-          !candidate.error &&
-          candidate.name !== current?.cluster &&
-          !configs.some((config) => config.cluster === candidate.name)
-      ),
-    [clusters, configs, current?.cluster]
-  )
 
   const openWizardForEdit = () => {
     setWizardMode('cluster')
@@ -125,27 +104,6 @@ export function ApplicationDetailPage() {
       const detail = await fetchApplicationConfig(app.name, current.cluster)
       setLastAppliedYaml(yaml.dump(detail.lastApplied ?? []))
       setOpenDialog('lastApplied')
-    } catch (err) {
-      toast.error(translateError(err, t))
-    }
-  }
-
-  const copyConfig = async () => {
-    if (!app || !current || !copyTarget) return
-    try {
-      await createApplicationConfig(app.name, {
-        cluster: copyTarget,
-        copyFrom: current.cluster,
-      })
-      await queryClient.invalidateQueries({ queryKey: ['applications'] })
-      toast.success(
-        t('applications.detail.copySuccess', {
-          from: current.cluster,
-          to: copyTarget,
-        })
-      )
-      setOpenDialog(null)
-      setCopyTarget('')
     } catch (err) {
       toast.error(translateError(err, t))
     }
@@ -195,7 +153,14 @@ export function ApplicationDetailPage() {
           <div className="text-xs text-muted-foreground/70">
             {t('applications.detail.undeployedHint')}
           </div>
-          <Button size="sm" className="mt-2" onClick={startFirstPublish}>
+          <Button
+            size="sm"
+            className="mt-2"
+            onClick={() => {
+              setCopySource(null)
+              setOpenDialog('deploy')
+            }}
+          >
             {t('applications.detail.firstPublish')}
           </Button>
         </div>
@@ -223,11 +188,17 @@ export function ApplicationDetailPage() {
               app={app}
               config={current}
               active={true}
-              onDeploy={() => setOpenDialog('deploy')}
+              onDeploy={() => {
+                setCopySource(null)
+                setOpenDialog('deploy')
+              }}
               onOffline={() => setOpenDialog('offline')}
               onMerge={() => setOpenDialog('merge')}
               onHistory={() => setOpenDialog('history')}
-              onCopyConfig={() => setOpenDialog('copy')}
+              onCopyConfig={() => {
+                setCopySource(current.cluster)
+                setOpenDialog('deploy-copy')
+              }}
               onViewLastApplied={() => void viewLastApplied()}
             />
           )}
@@ -244,7 +215,7 @@ export function ApplicationDetailPage() {
           <DeployDialog
             app={app}
             cluster={current.cluster}
-            open={openDialog === 'deploy' && !firstPublishStarted}
+            open={openDialog === 'deploy'}
             pending={pendingChange ?? undefined}
             onOpenChange={(nextOpen) => {
               if (!nextOpen) {
@@ -272,6 +243,7 @@ export function ApplicationDetailPage() {
               if (!nextOpen) setOpenDialog(null)
             }}
             onOfflined={(result) => {
+              setCopySource(null)
               if (result.configDeleted) {
                 setActiveTab('')
               }
@@ -288,23 +260,40 @@ export function ApplicationDetailPage() {
         </>
       )}
 
+      {/* First publish of a zero-config app (recovery: failed first publish
+          or everything offlined): stays open until the publish succeeds —
+          `undeployed` only flips once the confirm request has landed. */}
       <DeployDialog
         app={app}
         firstPublish={true}
-        open={firstPublishStarted && openDialog === 'deploy'}
+        open={undeployed && openDialog === 'deploy'}
         onOpenChange={(nextOpen) => {
-          if (!nextOpen) {
-            setOpenDialog(null)
-            setFirstPublishStarted(false)
-          }
+          if (!nextOpen) setOpenDialog(null)
         }}
         onEditConfig={() => {
+          setCopySource(null)
           setWizardMode('draft')
           setOpenDialog('wizard')
         }}
-        onConfigCreated={() => {
-          void queryClient.invalidateQueries({ queryKey: ['applications'] })
+      />
+
+      {/* Copy-create: publish to an unbound cluster, deep-copying the source
+          tab's config as the base (menu entry 复制配置到其他集群). copySource
+          survives the [修改配置] wizard round-trip and is cleared by every
+          other deploy entry point. */}
+      <DeployDialog
+        app={app}
+        createCopyFrom={copySource ?? undefined}
+        open={openDialog === 'deploy-copy'}
+        pending={pendingChange ?? undefined}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) {
+            setOpenDialog(null)
+            setPendingChange(null)
+          }
         }}
+        onEditConfig={openWizardForEdit}
+        onResolveConflict={() => setOpenDialog('merge')}
       />
 
       <ApplicationWizard
@@ -317,54 +306,11 @@ export function ApplicationDetailPage() {
         cluster={wizardMode === 'cluster' ? current?.cluster : undefined}
         onGoPublish={(pending) => {
           setPendingChange(pending)
-          setOpenDialog('deploy')
+          // A wizard opened from the copy dialog edits the source cluster's
+          // config; its edits go back to the copy flow's confirm request.
+          setOpenDialog(copySource ? 'deploy-copy' : 'deploy')
         }}
       />
-
-      <Dialog
-        open={openDialog === 'copy'}
-        onOpenChange={(nextOpen) => {
-          if (!nextOpen) setOpenDialog(null)
-        }}
-      >
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>{t('applications.detail.copyToCluster')}</DialogTitle>
-            <DialogDescription className="sr-only">
-              {t('applications.detail.copyToCluster')}
-            </DialogDescription>
-          </DialogHeader>
-          <Select value={copyTarget} onValueChange={setCopyTarget}>
-            <SelectTrigger>
-              <SelectValue placeholder={t('applications.deploy.pickCluster')} />
-            </SelectTrigger>
-            <SelectContent>
-              {availableCopyTargets.map((candidate) => (
-                <SelectItem key={candidate.name} value={candidate.name}>
-                  {candidate.name} · {candidate.version ?? ''}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <p className="text-xs text-muted-foreground">
-            {t('applications.detail.copyHint')}
-          </p>
-          <div className="flex justify-end gap-2">
-            <Button
-              variant="outline"
-              onClick={() => {
-                setOpenDialog(null)
-                setCopyTarget('')
-              }}
-            >
-              {t('common.actions.cancel')}
-            </Button>
-            <Button disabled={!copyTarget} onClick={() => void copyConfig()}>
-              {t('common.actions.confirm')}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
 
       <Dialog
         open={openDialog === 'lastApplied'}

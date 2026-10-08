@@ -332,11 +332,11 @@ export function ApplicationListPage() {
           wizardMode === 'draft' ? (firstPublishTarget ?? undefined) : undefined
         }
         onSaved={(app) => {
+          // Creation now finishes with the first publish (wizard step 5
+          // picks the target cluster); the draft edit goes to the detail
+          // page for the first publish too.
           void refetch()
-          // 创建后回到列表（状态未部署）；编辑草稿后进入详情页发布。
-          if (wizardMode === 'draft') {
-            navigate(`/applications/${app.name}`)
-          }
+          navigate(`/applications/${app.name}`)
         }}
       />
 
@@ -352,7 +352,6 @@ export function ApplicationListPage() {
             setWizardMode('draft')
             setWizardOpen(true)
           }}
-          onConfigCreated={() => void refetch()}
         />
       )}
 

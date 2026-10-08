@@ -16,10 +16,11 @@ const ManagedPullSecretPrefix = "kite-pull-"
 // pull credential publishes pods that can actually fetch private images
 // without hand-editing manifests. Entries for previously managed secrets
 // (the prefix or the exact name) are replaced; foreign entries the user
-// added themselves are preserved. An empty secretName is a no-op: clearing
-// happens by re-render, which drops the reference wholesale.
+// added themselves are preserved. An empty secretName clears every managed
+// entry: no credential means no reference.
 func InjectPullSecret(docs []unstructured.Unstructured, secretName string) {
 	if secretName == "" {
+		RemovePullSecret(docs, "")
 		return
 	}
 	for i := range docs {

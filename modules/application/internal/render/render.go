@@ -96,9 +96,9 @@ func workloadKind(t string) string {
 	return "Deployment"
 }
 
-// portName returns the explicit or auto-generated port name tcp-<port>
-// (design §8). A hyphen, not an underscore: container port names and Service
-// port names are both DNS-1123 style labels and the API server rejects '_'.
+// portName returns the explicit or auto-generated Service port name
+// tcp-<port> (design §8). A hyphen, not an underscore: Service port names
+// are DNS-1123 style labels and the API server rejects '_'.
 func portName(p PortSpec) string {
 	if p.Name != "" {
 		return p.Name
@@ -133,9 +133,6 @@ func buildWorkload(app string, spec AppSpec, namespace string) *unstructured.Uns
 		"name":  containerName,
 		"image": spec.Workload.Image,
 	}
-	if ports := containerPorts(spec.Ports); len(ports) > 0 {
-		container["ports"] = ports
-	}
 	if env := envList(spec.Workload.Env); len(env) > 0 {
 		container["env"] = env
 	}
@@ -167,25 +164,6 @@ func buildWorkload(app string, spec AppSpec, namespace string) *unstructured.Uns
 	stampLabels(obj, app)
 	obj.Object["spec"] = specMap
 	return obj
-}
-
-// containerPorts renders the container port list, deduplicated by port
-// number: several Service rows may expose the same container port.
-func containerPorts(ports []PortSpec) []interface{} {
-	seen := make(map[int64]bool, len(ports))
-	var out []interface{}
-	for _, p := range ports {
-		if seen[int64(p.Port)] {
-			continue
-		}
-		seen[int64(p.Port)] = true
-		out = append(out, map[string]interface{}{
-			"name":          portName(p),
-			"containerPort": int64(p.Port),
-			"protocol":      "TCP",
-		})
-	}
-	return out
 }
 
 func envList(env []EnvVar) []interface{} {

@@ -83,6 +83,10 @@ export interface Application {
   createdAt: string
   updatedAt: string
   configs: ApplicationConfigSummary[]
+  /** Present when the creation request carried a cluster: the chain
+   *  create-app + create-config + first publish ran; same shape as the
+   *  deploy endpoint's response. */
+  deploy?: ApplicationDeployResult
 }
 
 export interface ApplicationListResponse {
@@ -95,6 +99,9 @@ export interface CreateApplicationRequest {
   namespace?: string
   description?: string
   spec?: ApplicationSpec
+  /** When set, the app is created, its cluster config rendered from the
+   *  spec, and the first publish executed in one chain. */
+  cluster?: string
 }
 
 export interface UpdateApplicationRequest {
@@ -121,11 +128,6 @@ export interface ApplicationConfig {
   lastDeployedAt: string | null
   lastSyncedAt: string | null
   latestRev: number
-}
-
-export interface CreateApplicationConfigRequest {
-  cluster: string
-  copyFrom?: string
 }
 
 export interface UpdateApplicationConfigRequest {
@@ -155,6 +157,9 @@ export interface ApplicationDeployRequest {
   /** Sets (empty string clears) the config's pull credential; omitted leaves
    *  the stored value untouched. */
   credentialRef?: string
+  /** Create mode only (target config does not exist yet): deep-copy this
+   *  cluster's manifests as the base instead of rendering App.Spec. */
+  copyFrom?: string
 }
 
 export interface ApplicationDeployDocResult {
@@ -196,6 +201,10 @@ export interface ApplicationDeployResponse {
   preview?: ApplicationDeployDocPreview[]
   latestRev?: number
 }
+
+// The deploy payload embedded in the create-application response when the
+// request carried a cluster (structurally identical to ApplicationDeployResponse).
+export type ApplicationDeployResult = ApplicationDeployResponse
 
 // 409 body of a deploy rejected by the conflict gate (deploy_api.go).
 export interface ApplicationConflict {
@@ -270,10 +279,6 @@ export interface ApplicationSyncResponse {
   latestRev: number
 }
 
-export interface ApplicationOfflineRequest {
-  deleteConfig?: boolean
-}
-
 export interface ApplicationOfflineFailure {
   doc: string
   error: string
@@ -286,6 +291,7 @@ export interface ApplicationOfflineResponse {
   failed?: ApplicationOfflineFailure[]
   /** Set when the cluster no longer exists: nothing was deleted in-cluster. */
   clusterGone?: boolean
+  /** Always true: offline deletes the cluster objects and the config row. */
   configDeleted: boolean
   appUndeployed: boolean
 }

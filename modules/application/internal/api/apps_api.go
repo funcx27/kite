@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/funcx27/kite/modules/application/internal/render"
 	"github.com/funcx27/kite/modules/application/internal/store"
@@ -40,6 +42,18 @@ type createAppRequest struct {
 	Namespace   string          `json:"namespace"`
 	Description string          `json:"description"`
 	Spec        json.RawMessage `json:"spec"`
+	// Cluster binds the app to a cluster at creation time and first-publishes
+	// the rendered draft to it (create + config + rev1 in one transaction);
+	// empty keeps the draft-only behavior.
+	Cluster string `json:"cluster,omitempty"`
+}
+
+// createAppResponse is the create response when the request carries a target
+// cluster: the app view plus the first publish's outcome, the deploy field
+// matching the deploy endpoint's response shape.
+type createAppResponse struct {
+	appResponse
+	Deploy *deployResponse `json:"deploy,omitempty"`
 }
 
 type updateAppRequest struct {
@@ -90,30 +104,50 @@ func (h *Handler) ListApps(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"applications": visible, "total": len(visible)})
 }
 
-func (h *Handler) CreateApp(c *gin.Context) {
-	var req createAppRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+// validateCreateAppReq parses the create body and enforces the DNS-1123 and
+// JSON rules; false means the response is already written.
+func (h *Handler) validateCreateAppReq(c *gin.Context, req *createAppRequest) bool {
+	if err := c.ShouldBindJSON(req); err != nil {
 		h.fail(c, http.StatusBadRequest, err, "")
-		return
+		return false
 	}
 	if !render.ValidateDNS1123Label(req.Name, 63) {
 		h.fail(c, http.StatusBadRequest, nil, "name must be a DNS-1123 label of at most 63 characters")
-		return
+		return false
 	}
 	if req.Namespace == "" {
 		h.fail(c, http.StatusBadRequest, nil, "namespace is required")
-		return
+		return false
 	}
 	if !render.ValidateDNS1123Label(req.Namespace, 63) {
 		h.fail(c, http.StatusBadRequest, nil, "namespace must be a DNS-1123 label")
-		return
+		return false
 	}
 	if req.Spec != nil && !json.Valid(req.Spec) {
 		h.fail(c, http.StatusBadRequest, nil, "spec must be valid JSON")
+		return false
+	}
+	return true
+}
+
+func (h *Handler) CreateApp(c *gin.Context) {
+	var req createAppRequest
+	if !h.validateCreateAppReq(c, &req) {
 		return
 	}
-	cluster := c.GetString(clusterNameContextKey)
-	if !h.authorize(c, "create", cluster, req.Namespace) {
+	// With a target cluster nothing may be written unless that cluster is
+	// reachable and the create verb passes there — the request also publishes.
+	var cli client.Client
+	authCluster := c.GetString(clusterNameContextKey)
+	if req.Cluster != "" {
+		authCluster = req.Cluster
+		var err error
+		if cli, err = h.deps.ResolveCluster(c.Request.Context(), req.Cluster); err != nil {
+			h.fail(c, http.StatusNotFound, nil, "cluster not found or offline: "+req.Cluster)
+			return
+		}
+	}
+	if !h.authorize(c, "create", authCluster, req.Namespace) {
 		return
 	}
 	db := h.store.DB()
@@ -127,15 +161,74 @@ func (h *Handler) CreateApp(c *gin.Context) {
 		return
 	}
 	app := store.App{Name: req.Name, Namespace: req.Namespace, Description: req.Description, Spec: store.JSONField(req.Spec)}
-	if err := db.Create(&app).Error; err != nil {
+	id := h.requestIdentity(c)
+	if req.Cluster == "" {
+		if err := db.Create(&app).Error; err != nil {
+			h.fail(c, http.StatusInternalServerError, err, "")
+			return
+		}
+		h.recordAudit(id, store.HistoryEntry{
+			Cluster: authCluster, ResourceType: authzResource, ResourceName: app.Name,
+			Namespace: app.Namespace, Operation: "create", YAML: redacted(app.Spec),
+		})
+		c.JSON(http.StatusCreated, toAppResponse(&app))
+		return
+	}
+	h.createAndDeployApp(c, id, &app, req.Cluster, cli)
+}
+
+// createAndDeployApp runs the create-with-first-publish chain: the rendered
+// draft spec becomes the app row, its config and rev1 in one transaction,
+// then the regular publish pipeline pushes the manifest set. Per-document
+// failures do not fail the request — the app exists and the config keeps its
+// error state; the deploy outcome rides the response's deploy field.
+func (h *Handler) createAndDeployApp(c *gin.Context, id identity, app *store.App, cluster string, cli client.Client) {
+	docs, err := renderAppSpec(app)
+	if err != nil {
+		h.fail(c, http.StatusBadRequest, err, "")
+		return
+	}
+	manifests, err := store.EncodeManifests(docs)
+	if err != nil {
 		h.fail(c, http.StatusInternalServerError, err, "")
 		return
 	}
-	h.recordAudit(h.requestIdentity(c), store.HistoryEntry{
-		Cluster: cluster, ResourceType: authzResource, ResourceName: app.Name,
+	var cfg store.AppConfig
+	txErr := h.store.DB().Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(app).Error; err != nil {
+			return err
+		}
+		var err error
+		cfg, err = createConfigTx(tx, app, cluster, manifests, store.RevSourceRender, "", id.operatorID)
+		return err
+	})
+	if isConcurrentWriteError(txErr) {
+		h.fail(c, http.StatusConflict, nil, "application already exists")
+		return
+	}
+	if txErr != nil {
+		h.fail(c, http.StatusInternalServerError, txErr, "")
+		return
+	}
+	h.auditAppCreated(id, app, &cfg, manifests)
+	resp, conflicts, err := h.runPublish(c.Request.Context(), id, app, &cfg, cli, docs, false)
+	if !h.publishFailure(c, err, conflicts) {
+		return
+	}
+	c.JSON(http.StatusCreated, createAppResponse{appResponse: toAppResponse(app), Deploy: &resp})
+}
+
+// auditAppCreated records the app-create and config-create history entries of
+// the create-with-first-publish chain.
+func (h *Handler) auditAppCreated(id identity, app *store.App, cfg *store.AppConfig, manifests []byte) {
+	h.recordAudit(id, store.HistoryEntry{
+		Cluster: cfg.Cluster, ResourceType: authzResource, ResourceName: app.Name,
 		Namespace: app.Namespace, Operation: "create", YAML: redacted(app.Spec),
 	})
-	c.JSON(http.StatusCreated, toAppResponse(&app))
+	h.recordAudit(id, store.HistoryEntry{
+		Cluster: cfg.Cluster, ResourceType: authzResource, ResourceName: app.Name,
+		Namespace: cfg.Namespace, Operation: "create", YAML: redacted(manifests),
+	})
 }
 
 func (h *Handler) GetApp(c *gin.Context) {

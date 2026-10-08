@@ -57,10 +57,14 @@ type DeployOutcome struct {
 // out-of-band identity (workflow design §5.2): resolve the cluster client,
 // persist the image into the manifests as a Source=deploy-image revision,
 // then the conflict-gated, per-document-authorized apply with anchor
-// read-back. dryRun validates against the API server only. Permissions are
-// checked with deps.AuthorizeUser under operatorID; the caller's context
-// cancellation aborts in-flight applies. onLog receives the publish header,
-// one line per applied document and any conflict details; nil disables it.
+// read-back. A missing config is created from Render(App.Spec) first — row
+// and rev1, gated on applications:create like the HTTP create funnels — and
+// published like any other. dryRun validates against the API server only: the
+// create-mode row is staged in memory, nothing is persisted (design §7).
+// Permissions are checked with deps.AuthorizeUser under
+// operatorID; the caller's context cancellation aborts in-flight applies.
+// onLog receives the publish header, one line per applied document and any
+// conflict details; nil disables it.
 func DeployWithImage(ctx context.Context, deps Deps, st *store.Store, appName, cluster, image string, operatorID uint, dryRun bool, onLog func(string)) (*DeployOutcome, error) {
 	if onLog == nil {
 		onLog = func(string) {}
@@ -83,16 +87,13 @@ func DeployWithImage(ctx context.Context, deps Deps, st *store.Store, appName, c
 		}
 		return nil, fmt.Errorf("load application %s: %w", appName, err)
 	}
-	cfg, err := h.findConfig(app.ID, cluster)
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("config not found for cluster %s", cluster)
-		}
-		return nil, fmt.Errorf("load config of application %s on cluster %s: %w", appName, cluster, err)
-	}
 	cli, err := deps.ResolveCluster(ctx, cluster)
 	if err != nil {
 		return nil, fmt.Errorf("cluster not found or offline: %s", cluster)
+	}
+	cfg, err := h.facadeTargetConfig(id, app, cluster, dryRun)
+	if err != nil {
+		return nil, err
 	}
 	if image != "" {
 		logf("publishing %s on %s (image %s)", appName, cluster, image)
@@ -143,6 +144,47 @@ func DeployWithImage(ctx context.Context, deps Deps, st *store.Store, appName, c
 		return nil, &ConflictError{Details: conflicts}
 	}
 	return &DeployOutcome{Revision: latestRev, Preview: toDocPreviews(resp.Preview)}, nil
+}
+
+// facadeTargetConfig returns the config a facade publish applies to, creating
+// it from the app's draft spec when the cluster has none yet (row + rev1).
+// Landing a config row is a create whatever funnel does it, so the create
+// path carries the same applications:create gate as the HTTP create funnels;
+// everything else stays with runPublish's per-document checks. With dryRun
+// the row is only staged in memory — a dry-run never persists (design §7).
+func (h *Handler) facadeTargetConfig(id identity, app *store.App, cluster string, dryRun bool) (*store.AppConfig, error) {
+	cfg, err := h.findConfig(app.ID, cluster)
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		if err != nil {
+			return nil, fmt.Errorf("load config of application %s on cluster %s: %w", app.Name, cluster, err)
+		}
+		return cfg, nil
+	}
+	if !id.authorize(authzResource, "create", cluster, app.Namespace) {
+		return nil, fmt.Errorf("user does not have permission to create %s in namespace %s on cluster %s",
+			authzResource, app.Namespace, cluster)
+	}
+	docs, err := renderAppSpec(app)
+	if err != nil {
+		return nil, fmt.Errorf("render draft spec of application %s: %w", app.Name, err)
+	}
+	manifests, err := store.EncodeManifests(docs)
+	if err != nil {
+		return nil, fmt.Errorf("encode rendered manifests: %w", err)
+	}
+	if dryRun {
+		return &store.AppConfig{
+			AppID:     app.ID,
+			Cluster:   cluster,
+			Namespace: app.Namespace,
+			Manifests: store.SecretJSON(manifests),
+		}, nil
+	}
+	cfg, err = h.createConfigRow(id, app, cluster, manifests, store.RevSourceRender, "")
+	if err != nil {
+		return nil, fmt.Errorf("create config of application %s on cluster %s: %w", app.Name, cluster, err)
+	}
+	return cfg, nil
 }
 
 // toDocPreviews re-types the HTTP preview entries for the facade result.

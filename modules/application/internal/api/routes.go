@@ -69,7 +69,6 @@ func RegisterRoutes(api *gin.RouterGroup, deps Deps, st *store.Store) {
 	g.GET("/:name", h.GetApp)
 	g.PUT("/:name", h.UpdateApp)
 	g.DELETE("/:name", h.DeleteApp)
-	g.POST("/:name/configs", h.CreateConfig)
 	// The config-cluster param is deliberately not named "cluster": the host
 	// ClusterMiddleware resolves any :cluster param and 404s when that cluster
 	// is gone from the platform, but a config slot may outlive its cluster —

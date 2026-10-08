@@ -73,92 +73,10 @@ func toConfigResponse(cfg *store.AppConfig, latestRev int) configResponse {
 	}
 }
 
-type createConfigRequest struct {
-	Cluster  string `json:"cluster" binding:"required"`
-	CopyFrom string `json:"copyFrom"`
-}
-
 type updateConfigRequest struct {
 	Spec        json.RawMessage `json:"spec"`
 	Manifests   json.RawMessage `json:"manifests"`
 	ExpectedRev *int            `json:"expectedRev"`
-}
-
-// CreateConfig binds a cluster to the app (clusters are fixed afterwards).
-// Without copyFrom the config is rendered from the app's draft spec
-// (Render(App.Spec), design §7 first-publish) with the Source=render
-// snapshot; with copyFrom the source cluster's manifests are deep-copied
-// (Source=copy). Both write the config and its snapshot atomically.
-func (h *Handler) CreateConfig(c *gin.Context) {
-	app := h.findAppOr404(c)
-	if app == nil {
-		return
-	}
-	var req createConfigRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		h.fail(c, http.StatusBadRequest, err, "")
-		return
-	}
-	if _, err := h.deps.ResolveCluster(c.Request.Context(), req.Cluster); err != nil {
-		h.fail(c, http.StatusNotFound, nil, "cluster not found or offline: "+req.Cluster)
-		return
-	}
-	if !h.authorize(c, "create", req.Cluster, app.Namespace) {
-		return
-	}
-	db := h.store.DB()
-	if _, err := h.findConfig(app.ID, req.Cluster); err == nil {
-		h.fail(c, http.StatusConflict, nil, "config already exists for cluster "+req.Cluster)
-		return
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		h.fail(c, http.StatusInternalServerError, err, "")
-		return
-	}
-	var manifests []byte
-	if req.CopyFrom != "" {
-		src, err := h.findConfig(app.ID, req.CopyFrom)
-		if err != nil {
-			h.fail(c, http.StatusNotFound, nil, "copy source config not found: "+req.CopyFrom)
-			return
-		}
-		manifests = append(manifests, src.Manifests...)
-	} else {
-		docs, err := renderAppSpec(app)
-		if err != nil {
-			h.fail(c, http.StatusBadRequest, err, "")
-			return
-		}
-		if manifests, err = store.EncodeManifests(docs); err != nil {
-			h.fail(c, http.StatusInternalServerError, err, "")
-			return
-		}
-	}
-	source := store.RevSourceCopy
-	if req.CopyFrom == "" {
-		source = store.RevSourceRender
-	}
-	cfg := store.AppConfig{AppID: app.ID, Cluster: req.Cluster, Namespace: app.Namespace, Manifests: store.SecretJSON(manifests)}
-	rev := 0
-	txErr := db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(&cfg).Error; err != nil {
-			return err
-		}
-		r, err := store.AppendRevisionTx(tx, cfg.ID, source, manifests, h.deps.OperatorID(c), 0)
-		if err != nil {
-			return err
-		}
-		rev = r
-		return nil
-	})
-	if txErr != nil {
-		h.fail(c, http.StatusInternalServerError, txErr, "")
-		return
-	}
-	h.recordAudit(h.requestIdentity(c), store.HistoryEntry{
-		Cluster: req.Cluster, ResourceType: authzResource, ResourceName: app.Name,
-		Namespace: cfg.Namespace, Operation: "create", YAML: redacted(manifests),
-	})
-	c.JSON(http.StatusCreated, toConfigResponse(&cfg, rev))
 }
 
 // renderAppSpec renders the app's stored draft spec into manifests.

@@ -22,6 +22,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { translateError } from '@/lib/utils'
+import { useCluster } from '@/hooks/use-cluster'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -142,10 +143,12 @@ function buildSpec(state: WizardState): ApplicationSpec {
   }
 }
 
-// Creation / editing wizard (design §11): six steps, creation only saves the
-// definition (undeployed); cluster mode never saves on its own — [去发布]
-// hands the edited {spec}/{manifests} plus expectedRev to the deploy dialog,
-// where 确认发布 persists the revision and applies it in one request.
+// Creation / editing wizard (design §11): six steps. Creation finishes with a
+// target-cluster pick and one chain — create app + render config + first
+// publish; the draft mode only saves the definition; cluster mode never saves
+// on its own — [去发布] hands the edited {spec}/{manifests} plus expectedRev
+// to the deploy dialog, where 确认发布 persists the revision and applies it
+// in one request.
 export function ApplicationWizard({
   open,
   onOpenChange,
@@ -158,11 +161,14 @@ export function ApplicationWizard({
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const { spaces, currentSpace, isLoading: spacesLoading } = useSpaces()
+  const { clusters } = useCluster()
   // Create mode targets a space picked from the existing list — creation is
   // blocked outright when no space exists (a space is a labeled namespace,
   // there is no 'default' fallback).
   const [space, setSpace] = useState('')
   const [createSpaceOpen, setCreateSpaceOpen] = useState(false)
+  // Create mode's publish target: required, so finishing always deploys.
+  const [targetCluster, setTargetCluster] = useState('')
   const effectiveNamespace = mode === 'create' ? space : (app?.namespace ?? '')
   const noSpaces = mode === 'create' && !spacesLoading && spaces.length === 0
 
@@ -195,10 +201,20 @@ export function ApplicationWizard({
     setYamlContent('')
     setPreviewYaml('')
     setError('')
-    if (mode === 'create') setSpace(currentSpace ?? '')
+    if (mode === 'create') {
+      setSpace(currentSpace ?? '')
+      setTargetCluster('')
+    }
     setState(buildState(mode, app, config))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, mode, app?.name, config?.latestRev, cluster])
+
+  // GET /clusters only returns RBAC-visible clusters; offline ones carry
+  // `error` (same filter as the deploy dialog's dropdown).
+  const availableClusters = useMemo(
+    () => clusters.filter((candidate) => !candidate.error),
+    [clusters]
+  )
 
   const patch = (updates: Partial<WizardState>) =>
     setState((prev) => ({ ...prev, ...updates }))
@@ -264,6 +280,9 @@ export function ApplicationWizard({
       if (!dns1123LabelPattern.test(state.name) || state.name.length > 63) {
         return t('applications.wizard.invalidName')
       }
+      if (!targetCluster) {
+        return t('applications.wizard.clusterRequired')
+      }
     }
     if (!state.image.trim()) {
       return t('applications.wizard.imageRequired')
@@ -302,11 +321,18 @@ export function ApplicationWizard({
         }
       }
     }
+    if (step === 5 && mode === 'create' && !targetCluster) {
+      return t('applications.wizard.clusterRequired')
+    }
     return ''
   })()
 
   const finishLabel =
-    mode === 'cluster' ? undefined : t('applications.wizard.createApp')
+    mode === 'cluster'
+      ? undefined
+      : mode === 'draft'
+        ? t('applications.wizard.createApp')
+        : t('applications.wizard.createPublish')
 
   // Cluster mode hands the edits to the deploy dialog without saving; a
   // cancelled publish discards them, so no revision is created behind the
@@ -359,11 +385,31 @@ export function ApplicationWizard({
           namespace: effectiveNamespace,
           description: state.description,
           spec,
+          cluster: targetCluster,
         })
         await queryClient.invalidateQueries({ queryKey: ['applications'] })
-        toast.success(
-          t('applications.wizard.appCreated', { name: created.name })
-        )
+        // Same result handling as the deploy dialog: partial document
+        // failures still count as a created app, so warn instead of error.
+        const deploy = created.deploy
+        if (deploy && !deploy.success) {
+          toast.warning(
+            t('applications.deploy.partialFailure', {
+              failed: deploy.results.filter((docResult) => !docResult.success)
+                .length,
+            })
+          )
+        } else if (deploy) {
+          toast.success(
+            t('applications.wizard.appCreatedPublished', {
+              name: created.name,
+              cluster: targetCluster,
+            })
+          )
+        } else {
+          toast.success(
+            t('applications.wizard.appCreated', { name: created.name })
+          )
+        }
         onOpenChange(false)
         onSaved?.(created)
       }
@@ -642,24 +688,55 @@ export function ApplicationWizard({
 
               {step === 5 && (
                 <div className="space-y-4">
-                  <Label>
-                    {t('applications.wizard.targetClusterReadOnly')}
-                  </Label>
-                  {mode === 'cluster' && cluster ? (
-                    <div className="flex items-center gap-3 rounded-lg border bg-muted/40 px-4 py-3">
-                      <span className="text-sm font-medium">{cluster}</span>
-                      <Badge variant="outline" className="font-mono">
-                        {effectiveNamespace}
-                      </Badge>
+                  {mode === 'create' ? (
+                    <div>
+                      <Label>{t('applications.wizard.targetCluster')}</Label>
+                      <Select
+                        value={targetCluster}
+                        onValueChange={setTargetCluster}
+                      >
+                        <SelectTrigger className="mt-1.5 w-72">
+                          <SelectValue
+                            placeholder={t('applications.deploy.pickCluster')}
+                          />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {availableClusters.map((candidate) => (
+                            <SelectItem
+                              key={candidate.name}
+                              value={candidate.name}
+                            >
+                              {candidate.name} · {candidate.version ?? ''}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t('applications.wizard.targetClusterHint')}
+                      </p>
                     </div>
                   ) : (
-                    <div className="rounded-lg border border-dashed px-4 py-6 text-center">
-                      <div className="text-sm text-muted-foreground">
-                        {t('applications.wizard.noClusterBound')}
-                      </div>
-                      <div className="mt-1 text-xs text-muted-foreground/70">
-                        {t('applications.wizard.noClusterBoundHint')}
-                      </div>
+                    <div>
+                      <Label>
+                        {t('applications.wizard.targetClusterReadOnly')}
+                      </Label>
+                      {mode === 'cluster' && cluster ? (
+                        <div className="flex items-center gap-3 rounded-lg border bg-muted/40 px-4 py-3">
+                          <span className="text-sm font-medium">{cluster}</span>
+                          <Badge variant="outline" className="font-mono">
+                            {effectiveNamespace}
+                          </Badge>
+                        </div>
+                      ) : (
+                        <div className="rounded-lg border border-dashed px-4 py-6 text-center">
+                          <div className="text-sm text-muted-foreground">
+                            {t('applications.wizard.draftNoCluster')}
+                          </div>
+                          <div className="mt-1 text-xs text-muted-foreground/70">
+                            {t('applications.wizard.draftNoClusterHint')}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                   <div>

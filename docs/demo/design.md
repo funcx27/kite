@@ -11,7 +11,7 @@
 | 配置粒度 | 逻辑「应用」仅是分组；**每个目标集群一份独立完整配置**，支持一键复制到其他集群 |
 | 同步语义 | 双向、显式触发：发布=push（DB→集群），拉取=pull（集群→DB，无损收编）。无 controller、无后台 reconcile、无自动修复 |
 | 冲突门禁 | 检测到集群侧手动修改（Live ≠ 锚点）时**禁止发布**：deploy 预检拒绝并返回冲突明细，唯一出路先**合并处理**（三方合并，见 §4）。原则：发布永不覆盖集群中的手动修改（避免生产事故）——集群侧修改要么被合并采纳、要么在合并预览中显式回退（知情覆盖），绝不静默丢失 |
-| 生命周期 | 集群级 = **下线**（双选项：**仅下线**（默认）——删集群资源、配置与版本链保留、重发布恢复原配置；**下线并删除配置**——连配置与版本链一并清理，不可恢复；无「仅删配置不删资源」诉求，不做）；应用级 = **删除**（仅应用列表入口，存在已部署（未下线）的集群配置时禁止） |
+| 生命周期 | 集群级 = **下线**（唯一动作、不可恢复：删集群对象 + 删该集群配置行与版本链；无「仅下线保留配置」「仅删配置不删资源」形态）；应用级 = **删除**（仅应用列表入口，存在已部署（未下线）的集群配置时禁止） |
 | 配置表示 | **完整多文档 manifests** 存 DB（不是仅结构化 spec）。表单只是 manifests 上已知字段的视图；YAML 模式可编辑整份 manifests（高级扩展口） |
 | 漂移检测 | 仅在查看时按需检测（详情页打开/手动刷新），列表页展示聚合状态 |
 | 身份标记 | label 三件套（见 §5），不用 ownerReferences |
@@ -122,7 +122,7 @@ ConfigRevision 链（prod）      ConfigRevision 链（staging）
 
 - 集群内的对象不在 DB 中：Manifests 各文档与集群对象按 `(kind, ns, name)` 对齐，并以 `kite.application/name` label 认领（§5）。
 - **版本链各集群独立**：不存在跨集群的「应用版本」；复制到其他集群 = 深拷贝 Manifests 开新链（Rev 重新从 1 计，Source=copy）。
-- 级联：删除 App → 全部 AppConfig 及版本链（含下线保留的配置）；**下线不删任何行**——仅清空 LastApplied、StatusSummary=undeployed，配置与版本链原地保留。
+- 级联：删除 App → 全部 AppConfig 及版本链；**下线 = 删集群对象 + 删该集群 AppConfig 与版本链**（不可恢复；部分集群文档删除失败 → 409，配置行保留供重试）。
 - 草稿（App.Spec）不在任何版本链上；所有改库动作（含首次发布渲染）在对应链上追加一条快照。
 
 要点：
@@ -132,8 +132,8 @@ ConfigRevision 链（prod）      ConfigRevision 链（staging）
 - **空间切换入口（唯一）**：应用列表页头、与「搜索应用」同一行（搜索框左侧），侧边栏收起时仍可见可调。弹层为空间较多设计——搜索框按子串过滤 + **定高滚动列表**（当前空间高亮并自动滚动到可见处）+「全部空间」固定项 +「＋ 新建」入口，创建命名空间时自动打标记。当前空间决定列表默认范围，**创建向导直接使用当前空间**（不提供空间选择控件）；可切「全部空间」查看聚合。前端实现为 SpaceProvider（与 ClusterProvider 同级），侧边栏不再重复提供入口以免双入口。不新增租户层级；未来若需跨 namespace 的逻辑分组，可再引入「项目」层。
 - **空间常显与标识规则**：创建向导头部始终展示当前空间徽标（全部步骤可见）；应用名称统一以 `空间/应用名` 复合形式展示（空间段只读，不可编辑），列表与详情同规则——目的：用户始终明确知道操作发生在哪个空间。
 - **应用模式无「添加集群」操作**：向导目标集群即**用户有权限的集群集合**（RBAC 过滤，有什么权限显示什么）；为已有应用追加绑定集群属专业模式的管理操作，应用模式不出现该入口。
-- **AppSpec 流转（创建不绑定集群的存储答案）**：创建应用 = 仅写 App 一行（含 Spec 草稿），**不建任何 AppConfig**（它是 (AppID, Cluster) 维度，无集群即无行）→ 列表「未部署」。首次发布 `POST /configs {cluster}` 由 `Render(App.Spec)` 生成该集群配置（Manifests=渲染产物，Namespace 默认 App.Namespace）。此后 **App.Spec 退役为出生定义快照**：日常编辑都在对应集群 Manifests 上（Extract/Inject），追加集群走复制现有 Manifests（不用陈旧草稿）；从未发布期间（无任何 AppConfig）的「编辑」= 向导回填 App.Spec。草稿编辑不进 ConfigRevision 版本链（版本挂 AppConfig，有发布语义才开始计版本）。**下线保留配置**（LastApplied 清空、状态 undeployed）：重新发布直接用保留的 Manifests（下线前最后配置，非初始草稿），走 create 模式；下线态编辑 = 编辑该保留配置。
-- 复制到其他集群 = 深拷贝 `Manifests`，`LastApplied` 清空（视为未部署/未对齐）。
+- **AppSpec 流转（创建即选集群的存储答案）**：创建向导第 5 步为**真实目标集群选择**（RBAC + 在线状态过滤），提交 `POST /applications` 携带 `cluster`：先校验（ResolveCluster + create 鉴权，失败不写任何行）→ 事务建 App + AppConfig + rev1（`Source=render`，`Render(App.Spec)` 渲染，Namespace 默认 App.Namespace）→ 走既有发布管线（部分文档失败不整体失败）——**创建 + 建配置 + 首次发布一条链**，新应用不再停在「未部署」。此后 **App.Spec 退役为出生定义快照**：日常编辑都在对应集群 Manifests 上（Extract/Inject），追加集群走发布携带 `copyFrom` 复制现有 Manifests（不用陈旧草稿）；草稿编辑不进 ConfigRevision 版本链（版本挂 AppConfig，有发布语义才开始计版本）。**零配置「未部署」仅剩回归场景**：创建链路发布失败、或下线清空配置行后重新部署；此时发布走发布弹窗 firstPublish 模式（选定集群 → deploy create 模式，可带 `copyFrom`），App.Spec 仍是渲染源；不带 `cluster` 的创建仅建 App 草稿，保留给回归场景。
+- 复制到其他集群 = 发布携带 `copyFrom` 深拷贝源集群 `Manifests` 建行并直达发布（无「先建未部署配置」形态，见 §6 复制配置）。
 - 集群挂掉不影响配置读取（数据在 kite DB），恢复后可直接发布。
 - **库侧版本管理（ConfigRevision）**：库侧配置每次落库——向导「保存配置」、发布弹窗改镜像、收编、冲突合并、复制、回滚——写一条整份快照；**发布动作本身不新增版本**（推送的就是已保存的那份）。保留策略：每配置固定保留最近 **50 条**（模块常量 `MaxConfigRevisions`，插入后一条 `DELETE WHERE rev <= maxRev-50`，无后台任务；真不够再议配置项，不提前抽象）。约 0.25–0.75MB/集群配置封顶。版本链只管回滚与版本对比；细粒度操作审计（谁、何时、结果）仍由 kite `ResourceHistory` 审计流水承担，二者互补。
 
@@ -185,27 +185,26 @@ labels:
 | 发布（deploy） | **冲突预检**：对每个集群侧漂移字段 p（live≠锚点），要求 `manifests[p]==live[p]`（合并已采纳）或 `p ∈ OverriddenPaths`（合并预览显式回退 = 知情覆盖），否则拒绝（409 + 冲突明细，UI 引导合并）；发布读回锚定后清空 OverriddenPaths。**前置 ensure namespace**：`AppConfig.Namespace` 幂等存在（缺失则创建并自动打空间标记；无权限则明确报错）。通过后逐文档：RESTMapper 判 scope → `rbac.CanAccess`(create/update) → Get→Create/Update（带 resourceVersion）→ 写 ResourceHistory → 读回锚定。逐文档聚合结果，部分失败不整体失败。请求体可选 `image` 字段（**改镜像即发布**）：后端先把镜像写入 Manifests 并持久化，再整体 apply，库/集群保持一致 |
 | 合并（merge） | 冲突处理动作：`GET merge-preview`（三方合并计算，无写入）→ 用户裁决碰撞/回退 → `POST merge`（携带选择与回退清单）→ 写 Manifests + Source=merge 版本 + 回写 OverriddenPaths → 前端自动进入发布弹窗（见 §4） |
 | 拉取（sync） | 整份收编（导入已有应用 / 仅集群侧差异的对齐）：读取对象 = Manifests/LastApplied 身份 ∪ 按 `kite.application/name` label 命中的受管 kinds（Deployment/StatefulSet/Service/Ingress）→ Normalize → 覆盖双快照 |
-| 复制配置 | 深拷贝源集群 `Manifests` → 新集群配置；`LastApplied` 清空；可随后改 host 等字段再发布 |
-| 下线（offline） | 集群级生命周期操作：按**渲染输出 + ExtraYAML 清单**删除集群对象（对称、可预测，不做 label 全域扫除）。**双选项（弹窗 radio，默认仅下线）**：① 仅下线——保留该集群 AppConfig 与版本链（LastApplied 清空、StatusSummary=undeployed），重新发布直接用保留的 Manifests 走 create 模式（恢复下线前配置，非初始草稿）；② 下线并删除配置——同时删除该集群 AppConfig 与版本链（不可恢复）；若应用因此无任何集群配置 → 回到未部署形态，再次部署走首次发布（Render 出生定义，弹窗需明示）。不做「仅删配置不删资源」（无诉求） |
-| 删除应用 | 仅应用列表入口；**存在未下线（已部署）的集群配置时拒绝**（409，提示先在各集群下线）；全部下线或从未部署时允许，级联清理保留的下线配置与版本，无集群资源需处理 |
+| 复制配置 | 不再有「先建未部署配置」的独立动作：复制 = 发布弹窗选定目标集群并携带 `copyFrom`，深拷贝源集群 `Manifests` 为新集群配置（事务建行 + rev1）后**直达发布**，经既有冲突预检 / create 门禁与读回锚定 |
+| 下线（offline） | 集群级生命周期操作（**唯一动作，不可恢复**）：按**渲染输出 + ExtraYAML 清单**删除集群对象（对称、可预测，不做 label 全域扫除），并**删除该集群 AppConfig 与版本链**。部分集群文档删除失败 → 409（配置行保留供重试）；集群已消失 → 直接删行；响应 `configDeleted` 恒为 true。应用因此无任何集群配置 → 零配置「未部署」形态（仅回归场景，见 §3 AppSpec 流转），再次部署走发布弹窗 firstPublish 模式。不做「仅下线保留配置」「仅删配置不删资源」 |
+| 删除应用 | 仅应用列表入口；**存在已部署（未下线）的集群配置时拒绝**（409，提示先在各集群下线）；配置已全部下线清除、或创建发布失败从未建成配置时允许，级联清理残留 AppConfig 与版本链，无集群资源需处理 |
 | 版本记录 | 上述任一改库动作落库时同步写一条 `ConfigRevision` 整份快照（发布不新增版本；Source 含 merge，见 §3）；保留最近 50 条 |
 
 **发布安全（create 语义 + 服务端 dry-run）**：
 
 - **首次发布 = create，绝不覆盖**：AppConfig 无锚点（新建/下线后重新发布）时逐文档走 **Create**；目标对象已存在且身份 label（`kite.application/name`）不属于本应用 → **拒绝发布**（明确报错"集群中已存在同名对象且非本应用管理"，绝不静默接管/覆盖）。后续发布中文档被删后重建的路径同规则。收编（sync / 导入）是唯一显式接管无 label 对象的路径。
 - **服务端 dry-run**：deploy 支持 `{dryRun: true}`——冲突预检 + 三向 diff + 对全部文档执行 API Server `dry-run: All`（抓 admission webhook 拒绝、ResourceQuota 超限、schema 校验、PodSecurity 等 DB 侧预览抓不到的问题），不落库不 apply；发布弹窗打开时自动调用渲染安全预览，dry-run 失败禁用确认。
-- 选型注记：创建不绑定集群（App.Spec 草稿）vs 创建即绑定——前者创建不依赖集群权限、未部署语义干净（无 AppConfig 行 = 无配置才可删）；后者的"保存时即可集群侧校验"优势由首次发布 dry-run 补齐。维持不绑定。
+- 选型注记：创建不绑定集群（App.Spec 草稿）vs 创建即绑定——定稿**创建即选集群并发布**（向导末步选定目标集群，创建 + 建配置 + 首次发布一条链；原「保存时即可集群侧校验」即链内发布的预检 / dry-run）；零配置「未部署」态仅存于失败重试与下线清空后的恢复路径。
 
 ## 7. API 设计（模块内自查权限）
 
 | 路由 | 语义 |
 |---|---|
-| `GET/PUT/DELETE /applications`、`GET/PUT/DELETE /applications/:name` | 逻辑应用 CRUD；创建/更新携 `{description, spec}`（草稿，见 §3 AppSpec 流转）；DELETE 应用仅当全部集群配置已下线（或无配置）时允许（存在已部署配置则 409，提示先下线），删除级联清理保留下来的下线配置与版本链 |
-| `POST /applications/:name/configs` | 新增集群配置：`{cluster}`（默认 `Render(App.Spec)` 渲染、namespace 缺省 App.Namespace——**首次发布/重新发布走此路径**）或 `{cluster, copyFrom}`（复制现有集群）；发布弹窗在应用无集群配置时提供目标集群选择（RBAC + 在线状态过滤），选定即创建配置并发布，此后集群固定 |
+| `GET/PUT/DELETE /applications`、`GET/PUT/DELETE /applications/:name` | 逻辑应用 CRUD；创建携 `{name, namespace?, description?, spec?, cluster?}`——带 `cluster` 时先校验（ResolveCluster + create 鉴权，失败不写任何行），事务建 App + AppConfig + rev1（`Source=render`）后走既有发布管线（部分文档失败不整体失败），响应 = 应用响应 + `deploy` 字段（与 deploy 端点响应同构），**创建 + 建配置 + 首次发布一条链**；不带 `cluster` 仅建 App 草稿（回归场景，见 §3 AppSpec 流转）。更新携 `{description, spec}`；DELETE 应用仅当无已部署配置时允许（存在已部署配置则 409，提示先下线），删除级联清理残留配置与版本链 |
 | `GET/PUT /applications/:name/configs/:cluster` | GET：manifests + Extract 的 spec + 漂移摘要；PUT：`{spec}`（Inject）或 `{manifests}`（整份替换），携带 `expectedRev`（最新版本号）做乐观锁，不匹配返回 409「配置已被他人修改」。无 DELETE——配置删除统一并入下线端点，不提供「仅删配置」路径 |
-| `POST .../configs/:cluster/offline` | 下线：删集群对象；body `{deleteConfig?: false}`——false（默认，仅下线）保留配置与版本链（锚点清空、状态 undeployed）；true（下线并删除配置）连配置与版本链一并删除（不可恢复） |
+| `POST .../configs/:cluster/offline` | 下线（唯一动作，无请求参数）：删集群对象 + 删该集群配置行与版本链（不可恢复）；部分集群文档删除失败 → 409（配置行保留供重试）；集群已消失 → 直接删行；响应结构不变（`configDeleted` 恒为 true） |
 | `GET .../configs/:cluster/merge-preview` · `POST .../configs/:cluster/merge` | 冲突合并：预览返回自动采纳项 + 碰撞字段（无写入）；确认携带碰撞选择与回退清单，写 Manifests + Source=merge 版本（见 §4/§6） |
-| `POST .../deploy` · `POST .../sync` | 发布（冲突预检 + create 归属校验 + 可选 `{dryRun: true}`，见 §6 发布安全；`image?` 快捷改镜像）/ 整份收编 |
+| `POST .../deploy` · `POST .../sync` | 发布（冲突预检 + create 归属校验 + 可选 `{dryRun: true}`，见 §6 发布安全；`image?` 快捷改镜像；**配置不存在时进入 create 模式建行发布**：base = `copyFrom?` 源集群配置深拷贝（源不存在 → 404；配置已存在又带 `copyFrom` → 400）否则 `Render(App.Spec)`，dryRun 全内存不落库，并发创建撞 (AppID,Cluster) 唯一索引复用既有 409 语义）/ 整份收编 |
 | `GET .../configs/:cluster/revisions` · `GET .../revisions/:rev` | 历史版本：列表（Rev/Source/操作人/时间，含脱敏标记）与单版整份 manifests（Secret 值脱敏）；任意两版对比由前端取两份计算 |
 | `POST .../configs/:cluster/rollback` | `{rev}`：该版 `Manifests` 写回当前配置（新增一条 Source=rollback 的版本），变为待发布态——仍须走发布弹窗与冲突门禁后才推送 |
 | `GET .../status` | 按需漂移报告（两组差异 + 建议动作），计算后回写 `StatusSummary`/`StatusCheckedAt`（列表聚合读持久化值，可批量刷新） |
@@ -216,14 +215,15 @@ labels:
 
 **部署路径身份化（M2b）**：发布管线内部（persistImage/persistPendingConfig → 冲突门 → ensure namespace → 逐文档 apply → 读回锚定）一律收身份参数 `identity{operatorID, authorize}`，不再触碰 `*gin.Context`——HTTP handler 从请求上下文适配（`Deps.Authorize` + `Deps.OperatorID`），程序化调用方按用户 id 适配（`Deps.AuthorizeUser`，以 id 现查 RBAC，未知用户拒绝）。审计条目同样以身份归属操作者；HTTP 响应形状（409 冲突明细、错误文案）不变。
 
-**导出部署门面（M2b，供 workflow 进程内调用，见 workflow-design §5.2）**：`application.DeployWithImage(ctx, deps, appName, cluster, image, operatorID, dryRun) (*DeployOutcome, error)`——完整复用上述发布语义（镜像写 Manifests + Source=deploy-image 版本 → 冲突预检 → ensure namespace → 逐文档身份授权 apply → 读回锚定 → 变更 preview）。冲突命中返回 `*ConflictError{Details}`（每条含 kind/namespace/name/paths）；集群不存在、应用或配置缺失返回明确错误；dryRun 仅服务端校验不落库。模块不 import workflow 与宿主，deps 即模块 `Deps`。
+**导出部署门面（M2b，供 workflow 进程内调用，见 workflow-design §5.2）**：`application.DeployWithImage(ctx, deps, appName, cluster, image, operatorID, dryRun) (*DeployOutcome, error)`——完整复用上述发布语义（镜像写 Manifests + Source=deploy-image 版本 → 冲突预检 → ensure namespace → 逐文档身份授权 apply → 读回锚定 → 变更 preview）。冲突命中返回 `*ConflictError{Details}`（每条含 kind/namespace/name/paths）；集群不存在、应用缺失返回明确错误；**目标配置不存在时自动以 `Render(App.Spec)` 建行并发布**（同 deploy create 模式，不再报 config not found）；dryRun 仅服务端校验不落库。模块不 import workflow 与宿主，deps 即模块 `Deps`。
 
 ## 8. 网络模型（简化：一张端口列表）
 
 **向导「网络访问」步骤只有一张端口列表**（不区分 Service/Ingress 两块）。每行 = 一个端口：
 
 - **端口 + 类型（默认 ClusterIP，可选 NodePort / LoadBalancer）+ 域名（可选）+ 路径（默认 /）**；
-- 不要求协议（固定 TCP；UDP 等特殊需求走 YAML 模式）；**端口名称自动生成**（如 `tcp-80`，中划线：容器端口名与 Service 端口名均为 DNS-1123 风格标签，下划线会被 API Server 拒绝），用户无需填写；
+- 不要求协议（固定 TCP；UDP 等特殊需求走 YAML 模式）；**Service 端口名称自动生成**（如 `tcp-80`，中划线：Service 端口名是 DNS-1123 风格标签，下划线会被 API Server 拒绝），用户无需填写；
+- **端口行只生成 Service（`targetPort` 为数字端口），不向容器写 `ports`**——容器端口声明对 Service 转发非必需，向导不动 pod（YAML 模式下用户自写的容器 `ports` 原样保留）；
 - **域名留空 = 仅集群内访问**；对外访问由行内「＋ 对外域名」按钮显式开启，展开后才出现域名/路径输入（**填写 = 同时生成一条 Ingress 规则**，`域名/路径 → 该端口`），默认行保持收敛；
 - Render 按端口类型分组生成 Service：ClusterIP 端口合并为一个 Service；每个 NodePort / LoadBalancer 端口生成独立对应类型的 Service（类型是 Service 级属性，由端口级选择推导）。
 
@@ -237,7 +237,7 @@ type PortSpec struct {
     Type string // clusterip（默认）/ nodeport / loadbalancer
     Host string // 空 = 仅 Service；非空 = 同时生成 Ingress 规则
     Path string // 默认 "/"
-    Name string // 可选；空则按 tcp-<port> 自动生成
+    Name string // Service 端口名，可选；空则按 tcp-<port> 自动生成
 }
 // Service/Ingress 文档由 Render 按 Ports 推导，不再单独建模
 ```
@@ -290,14 +290,14 @@ type WorkloadSpec struct {
 - Pod 交互：名称可点击打开 **Pod 监控弹窗**（CPU/内存曲线，时间范围切换；弹窗内直达 终端/日志/重启）；行内操作提供 重启/终端/日志。
 - 空间呈现：向导不提供空间选择控件，第 1 步与目标集群步骤均**只读展示当前空间**（如需更换先在侧边栏切换）；详情页标题旁展示所属空间。
 - 页头右侧为**全局集群切换器**（kite 全局上下文：决定资源详情跳转、终端/日志等集群级操作的目标集群）。应用列表本身跨集群聚合，不受全局集群影响——集群维度的过滤在列表「集群状态」列头。
-- **创建流程**：创建应用 = 单个向导一次完成，**只保存定义（未部署，不选集群）**；首次发布在详情页对指定集群进行，与「追加集群配置」是同一机制（`POST /configs`）。App / AppConfig 的拆分是**存储结构**而非操作步骤；向导中「目标集群」步骤为**只读展示**：编辑模式显示发布入口所在的集群，创建模式显示「未绑定集群（未部署）」。
-- 详情页：**集群 Tab 布局**；选中集群纵向排开：概览条（Ready/同步状态/时间 + **发布/重启/下线/⋯**）→ Pod 表 → 网络卡（复制按钮）→ 配置一致性卡（两组差异分栏 + 冲突处理动作）→ Warning 事件。**合并/拉取不设常驻按钮**——作为冲突处理动作由一致性卡与发布弹窗冲突态提供。**下线弹窗为双选项**（radio 卡片，默认「仅下线」高亮）：仅下线——删集群资源、配置与历史版本保留，Tab 切换为「已下线」空态，「重新发布」在原 Tab 直接进行、使用保留的原配置走 create 模式；下线并删除配置——确认按钮转危险样式，连配置与版本链一并清理（弹窗明示不可恢复；若应用因此无集群配置，再次部署走首次发布/初始定义）。详情页无删除入口，**删除应用仅在应用列表且存在已部署配置时禁止**（提示先下线）。
-- **未部署应用的首次发布**：无集群配置的应用（创建向导保存后），发布入口提供目标集群选择（RBAC + 在线状态过滤），选定即 `Render(App.Spec)` 创建该集群配置并走发布弹窗「首次发布」形态（预览展示将创建的资源而非差异）；列表「部署」按钮同入口。从未发布期间的「编辑」= 向导以创建形态回填 App.Spec 草稿（不涉集群）。**仅下线后的重新发布不走此入口**——集群已绑定，在原集群 Tab 直接 [重新发布]，使用保留的原配置（create 模式）；「下线并删除配置」后应用回到无配置形态，再次部署走此入口（初始定义）。
-- 向导：六步（基本信息 → 运行配置 → 配置文件（见 §9）→ 网络访问（端口列表：端口 + 类型 + 可选域名，名称自动生成，见 §8）→ **目标集群（只读展示，不可修改）** → 预览与高级），复用 `EnvironmentEditor/ResourceEditor/ImageEditor`；编辑态同组件，Form 模式提交 `{spec}`，YAML 模式提交 `{manifests}`。末步「预览与高级」**即高级模式**：渲染预览 ⇄ YAML 模式切换，可编辑整份 manifests（表单未覆盖字段原样保留），不设独立的高级编辑弹窗。
+- **创建流程**：创建应用 = 单个向导一次完成，末步**真实选定目标集群**（RBAC + 在线状态过滤），提交 `POST /applications` 携带 `cluster`——**创建 + 建配置 + 首次发布一条链**，新应用不再停在「未部署」。App / AppConfig 的拆分是**存储结构**而非操作步骤；编辑模式中「目标集群」步骤为**只读展示**（编辑只改定义草稿，不在此增删集群）。
+- 详情页：**集群 Tab 布局**；选中集群纵向排开：概览条（Ready/同步状态/时间 + **发布/重启/下线/⋯**）→ Pod 表 → 网络卡（复制按钮）→ 配置一致性卡（两组差异分栏 + 冲突处理动作）→ Warning 事件。**合并/拉取不设常驻按钮**——作为冲突处理动作由一致性卡与发布弹窗冲突态提供。**下线弹窗为唯一危险动作**：删集群对象 + 删该集群配置与版本链，确认按钮危险样式、弹窗明示不可恢复；部分集群文档删除失败提示可重试（配置行保留）。成功后该集群 Tab 切换为「已下线」空态；应用因此无任何集群配置时回到零配置「未部署」形态，再次部署走发布弹窗 firstPublish 模式（见下条）。详情页无删除入口，**删除应用仅在应用列表且存在已部署配置时禁止**（提示先下线）。
+- **未部署应用的恢复发布（仅回归场景）**：零配置「未部署」仅存于创建链路发布失败与下线清空后——发布入口提供目标集群选择（RBAC + 在线状态过滤），走发布弹窗「首次发布」（firstPublish）形态（预览展示将创建的资源而非差异）：选定集群经 deploy create 模式以 `Render(App.Spec)` 建行发布，亦可携带 `copyFrom` 复制其他集群现有配置直达发布；列表「部署」按钮同入口。从未发布期间的「编辑」= 向导以创建形态回填 App.Spec 草稿（不涉集群）。
+- 向导：六步（基本信息 → 运行配置 → 配置文件（见 §9）→ 网络访问（端口列表：端口 + 类型 + 可选域名，名称自动生成，见 §8）→ **目标集群（创建模式为真实选择：RBAC + 在线状态过滤；编辑模式只读展示）** → 预览与高级），复用 `EnvironmentEditor/ResourceEditor/ImageEditor`；编辑态同组件，Form 模式提交 `{spec}`，YAML 模式提交 `{manifests}`。末步「预览与高级」**即高级模式**：渲染预览 ⇄ YAML 模式切换，可编辑整份 manifests（表单未覆盖字段原样保留），不设独立的高级编辑弹窗。
 - 详情页 Pod 行内操作：**终端 / 日志**（复用 kite 既有 WebSocket 端点 `/api/v1/terminal/:ns/:pod/ws`、`/logs/:ns/:pod/ws` 及 FloatingTerminal/日志组件，模块不新建端点；多集群经 `x-cluster-name` 寻址）。
 - **发布弹窗 = 修改 + 发布的唯一入口**（详情页不设「编辑」按钮）：内置**镜像快捷修改**（改镜像即发布，见 §6）与**[修改配置]**（打开向导，末步 YAML 模式即高级模式）两个修改面；变更预览动态跟随当前 Tab 的集群与同步状态，无变更时禁用确认。预览含**服务端 dry-run 校验**结果（admission/quota/schema，见 §6 发布安全），失败禁用确认；**首次发布为 create 模式**（仅创建，目标对象已存在且非本应用管理时拒绝并报错）。
 - **冲突禁止发布 → 处理冲突（三方合并）**：发布弹窗打开时若检测到集群侧手动修改（Live ≠ 锚点），切换为冲突态——展示冲突明细、禁用确认，唯一动作「处理冲突（合并）」打开**合并预览弹窗**：自动采纳项（集群侧/库侧来源标记，每项可单独回退=知情覆盖）+ 碰撞字段（基线/库值/集群值三列，二选一，未选完禁用确认）；「确认合并并发布」写库（Source=merge 版本）后自动回到发布弹窗正常态发布。紧急修镜像流程中库侧改动全程不丢。仅集群侧差异（无库侧改动）时同一入口退化为整份收编预览。
-- **向导不再直接发布**：向导是纯编辑器，末步按钮随模式——编辑模式 **[保存配置] / [去发布]**（后者暂存修改并返回发布弹窗，经变更预览确认后才推送），创建模式 **[创建应用]**（保存定义后回到列表，应用状态「未部署」）；发布动作只存在于发布弹窗，保证冲突门禁不可绕过。
+- **向导与发布的边界**：编辑模式向导是纯编辑器，末步按钮 **[保存配置] / [去发布]**（后者暂存修改并返回发布弹窗，经变更预览确认后才推送）；创建模式 **[创建应用]** 即提交创建链路（创建 + 建配置 + 首次发布一条链；链上发布失败则应用以「未部署」形态存在，经发布弹窗 firstPublish 模式恢复）。发布走与发布弹窗同一条管线，冲突门禁不可绕过。
 - 发布/拉取确认后状态即时流转：漂移 chip → 已同步、一致性卡切换为同步态、上次发布/拉取时间更新、Tab 状态点变色（对应「读回锚定/重置锚点」语义）。
 - **历史版本**：详情页 ⋯ 菜单「历史版本」打开该集群配置的版本列表面板（Rev / 来源 / 操作人 / 时间，含脱敏标记），支持任选两版对比；「回滚到此版」仅将该版 `Manifests` 写回为待发布状态（新增一条 Source=rollback 的版本），经发布弹窗变更预览与冲突门禁确认后才推送——回滚不直接触碰集群。
 - 接入：`routes.tsx` 静态路由（`applications`、`applications/:name`，置于 `:resource` 通配之前）；侧边栏 `sidebar.groups.application` 分组，`SIDEBAR_CONFIG_VERSION` 需递增；`en.json/zh.json` 同步。

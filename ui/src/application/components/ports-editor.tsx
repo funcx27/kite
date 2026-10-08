@@ -22,9 +22,10 @@ interface PortsEditorProps {
 const PORT_TYPES = ['clusterip', 'nodeport', 'loadbalancer'] as const
 
 // Wizard step 4 (design §8): one row per port — port + Service type + optional
-// external host/path. Port names are auto-generated server side (tcp_<port>).
-// A filled host renders an Ingress rule; IngressClass shows only when any
-// row has a host.
+// external host/path. Service port names are auto-generated server side
+// (tcp-<port>); container ports are not declared, the Service routes to the
+// numeric port. A filled host renders an Ingress rule; IngressClass shows only
+// when any row has a host.
 export function PortsEditor({
   ports,
   ingressClass,

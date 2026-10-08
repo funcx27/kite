@@ -365,9 +365,9 @@
       <div id="prod-offlined" class="hidden">
         <div class="card flex flex-col items-center gap-2 px-6 py-16 text-center">
           <span class="chip chip-zinc"><span class="dot bg-zinc-400"></span>已下线</span>
-          <div class="off-line2 text-sm text-zinc-500">集群资源已删除</div>
-          <div class="off-line3 text-xs text-zinc-400">配置与历史版本已保留，重新发布仍使用原有配置</div>
-          <button class="btn btn-primary mt-2" onclick="republish()">重新发布</button>
+          <div class="off-line2 text-sm text-zinc-500">集群资源已删除，该集群配置与历史版本已删除（不可恢复）</div>
+          <div class="off-line3 text-xs text-zinc-400">再次部署走首次发布（初始定义）；若应用已无任何集群配置，列表显示「未部署」</div>
+          <button class="btn btn-primary mt-2" onclick="republish()">重新部署（首次发布）</button>
         </div>
       </div>
     </div>
@@ -506,9 +506,9 @@
       <div id="staging-offlined" class="hidden">
         <div class="card flex flex-col items-center gap-2 px-6 py-16 text-center">
           <span class="chip chip-zinc"><span class="dot bg-zinc-400"></span>已下线</span>
-          <div class="off-line2 text-sm text-zinc-500">集群资源已删除</div>
-          <div class="off-line3 text-xs text-zinc-400">配置与历史版本已保留，重新发布仍使用原有配置</div>
-          <button class="btn btn-primary mt-2" onclick="republish()">重新发布</button>
+          <div class="off-line2 text-sm text-zinc-500">集群资源已删除，该集群配置与历史版本已删除（不可恢复）</div>
+          <div class="off-line3 text-xs text-zinc-400">再次部署走首次发布（初始定义）；若应用已无任何集群配置，列表显示「未部署」</div>
+          <button class="btn btn-primary mt-2" onclick="republish()">重新部署（首次发布）</button>
         </div>
       </div>
     </div>
@@ -527,7 +527,7 @@
         <span id="wizard-step-label" class="text-xs text-zinc-400">第 1 / 6 步</span>
       </div>
 
-      <!-- 步进条（目标集群步骤为只读展示：编辑由发布入口决定集群；创建后未部署，首次发布时绑定） -->
+      <!-- 步进条（创建模式第 5 步为真实目标集群选择，确认即创建 + 建配置 + 首次发布；编辑模式只读展示，由发布入口决定集群） -->
       <div class="flex items-center gap-2 overflow-x-auto border-b border-zinc-100 px-6 py-4 text-xs">
         <button class="flex items-center gap-2" onclick="gotoStep(1)"><span id="sd-1" class="step-dot step-dot-active">1</span><span class="font-medium text-zinc-900">基本信息</span></button>
         <span class="h-px w-6 bg-zinc-200"></span>
@@ -555,7 +555,7 @@
               </div>
               <p class="mt-1 text-xs text-zinc-400">空间由侧边栏当前空间决定，不可编辑；应用名仅小写字母/数字/中划线，创建后不可修改</p>
             </div>
-            <div class="flex items-end"><p class="mb-[2.4rem] text-xs text-zinc-400">创建后应用将归属该空间（暂未部署，首次发布在详情页进行）；列表与详情均以 空间/应用名 标识</p></div>
+            <div class="flex items-end"><p class="mb-[2.4rem] text-xs text-zinc-400">创建后将归属该空间，并一次完成 创建应用 + 创建目标集群配置 + 首次发布；列表与详情均以 空间/应用名 标识</p></div>
           </div>
           <div class="mt-4"><label class="label">描述</label><input class="input" value="核心 API 服务" /></div>
           <div class="mt-4">
@@ -629,7 +629,7 @@
         <div class="step-panel hidden" data-step="4">
           <div class="rounded-lg border border-zinc-200 p-4">
             <div class="text-sm font-medium">端口</div>
-            <p class="mt-1 text-xs text-zinc-400">端口可自定义，名称自动生成（如 tcp_80）无需填写；点击「＋ 对外域名」配置对外访问（生成 Ingress 规则），不配置 = 仅集群内（Service 暴露）</p>
+            <p class="mt-1 text-xs text-zinc-400">端口可自定义，Service 端口名自动生成（如 tcp-80）无需填写；点击「＋ 对外域名」配置对外访问（生成 Ingress 规则），不配置 = 仅集群内（Service 暴露）</p>
             <div class="mt-3 space-y-2">
               <div class="flex items-center gap-2">
                 <span class="w-[7rem] shrink-0 text-xs text-zinc-400">端口</span>
@@ -646,9 +646,9 @@
             </div>
           </div>
         </div>
-        <!-- 步骤5 目标集群（只读展示，不可修改） -->
+        <!-- 步骤5 目标集群（创建模式为真实选择：RBAC + 在线状态过滤；编辑模式只读展示） -->
         <div class="step-panel hidden" data-step="5">
-          <label class="label">目标集群（只读）</label>
+          <label class="label">目标集群</label>
           <div id="wl-edit" class="hidden">
             <div class="flex items-center gap-3 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3">
               <span id="wl-cluster-name" class="text-sm font-medium"></span>
@@ -658,10 +658,12 @@
             <p class="mt-2 text-xs text-zinc-400">编辑模式下目标集群由发布入口（详情页集群 Tab）决定，不可在此修改；如需其他集群，可复制配置后在对应集群的发布弹窗修改</p>
           </div>
           <div id="wl-create">
-            <div class="rounded-lg border border-dashed border-zinc-300 px-4 py-6 text-center">
-              <div class="text-sm text-zinc-500">创建后应用暂未绑定集群（未部署）</div>
-              <div class="mt-1 text-xs text-zinc-400">首次发布在详情页进行：对指定集群发布时才会创建该集群的配置；每个集群一份独立配置</div>
-            </div>
+            <select id="wl-create-cluster" class="input">
+              <option value="prod-cluster">prod-cluster · 在线 · v1.30.1</option>
+              <option value="staging-cluster">staging-cluster · 在线 · v1.29.6</option>
+              <option disabled>edge-cluster · 离线</option>
+            </select>
+            <p class="mt-2 text-xs text-zinc-400">仅列出有权限且在线的集群（RBAC + 在线状态过滤）；确认创建即一条链完成 创建应用 + 创建该集群配置 + 首次发布，此后集群固定，每个集群一份独立配置</p>
           </div>
           <div class="mt-4"><label class="label">空间</label><div class="flex h-9 items-center"><span id="wizard-uniform-space" class="chip chip-zinc">default</span></div><p class="mt-1 text-xs text-zinc-400">各集群配置统一使用当前空间；如需更换请先在侧边栏切换</p></div>
         </div>
@@ -698,9 +700,6 @@
       <span class="yk">containers:</span>
         - <span class="yk">name:</span> <span class="ys">app</span>
           <span class="yk">image:</span> <span class="ys">nginx:1.25</span>
-          <span class="yk">ports:</span>
-            - <span class="yk">name:</span> <span class="ys">tcp_80</span>
-              <span class="yk">containerPort:</span> <span class="ys">80</span>
           <span class="yk">env:</span>
             - <span class="yk">name:</span> <span class="ys">LOG_LEVEL</span>
               <span class="yk">value:</span> <span class="ys">info</span>
@@ -769,8 +768,8 @@
     </div>
     <div class="card flex items-center justify-between px-5 py-4">
       <div>
-        <div class="text-sm font-medium">下线（双选项）</div>
-        <div class="text-xs text-zinc-400">仅下线（保留配置，重发布恢复原配置）/ 下线并删除配置（不可恢复）</div>
+        <div class="text-sm font-medium">下线（删资源 + 删配置）</div>
+        <div class="text-xs text-zinc-400">删除集群对象与该集群配置及历史版本（不可恢复）；部分资源删除失败时配置保留，可重试</div>
       </div>
       <button class="btn" onclick="openOfflineModal()">打开</button>
     </div>
@@ -880,36 +879,23 @@
   </div>
 </div>
 
-<!-- ══════════ 弹窗：下线确认（集群级生命周期：删资源 + 删该集群配置，应用保留） ══════════ -->
+<!-- ══════════ 弹窗：下线确认（集群级生命周期：删集群对象 + 删该集群配置与版本链，不可恢复） ══════════ -->
 <div id="modal-offline" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/40 p-4">
   <div class="card w-full max-w-md">
     <div class="border-b border-zinc-200 px-5 py-3.5 text-base font-semibold">下线 <span id="offline-cluster"></span> 上的 my-app？</div>
     <div class="px-5 py-4">
-      <p class="text-sm text-zinc-600">将删除该集群中的 Deployment / Service / Ingress 等资源。请选择处理方式：</p>
-      <div class="mt-3 space-y-2">
-        <label id="offline-opt-keep" class="flex cursor-pointer items-start gap-3 rounded-lg border border-zinc-900 bg-zinc-50 px-3 py-3">
-          <input type="radio" name="offline-mode" value="keep" checked class="mt-0.5 h-4 w-4 accent-zinc-900" onchange="renderOfflineOpts()" />
-          <div>
-            <div class="text-sm font-medium">仅下线<span class="ml-1.5 text-xs font-normal text-zinc-400">默认</span></div>
-            <div class="mt-0.5 text-xs text-zinc-400">配置与历史版本保留，重新发布仍使用下线前的该集群配置（无需重配）</div>
-          </div>
-        </label>
-        <label id="offline-opt-purge" class="flex cursor-pointer items-start gap-3 rounded-lg border border-zinc-200 px-3 py-3">
-          <input type="radio" name="offline-mode" value="purge" class="mt-0.5 h-4 w-4 accent-red-600" onchange="renderOfflineOpts()" />
-          <div>
-            <div class="text-sm font-medium text-red-600">下线并删除配置</div>
-            <div class="mt-0.5 text-xs text-zinc-400">同时删除该集群配置与历史版本（不可恢复）；若应用因此无集群配置，再次部署走首次发布（初始定义）</div>
-          </div>
-        </label>
+      <div class="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50/40 px-3 py-2.5 text-xs text-red-700">
+        <span>⚠</span>
+        <span>将删除该集群中的 Deployment / Service / Ingress 等资源，并<strong>删除该集群配置与历史版本（不可恢复）</strong>；部分资源删除失败时配置行保留，可重试。</span>
       </div>
       <div class="mt-3 flex items-start gap-2 rounded-lg bg-zinc-50 px-3 py-2.5 text-xs text-zinc-500">
         <span>ℹ</span>
-        <span>删除应用请在应用列表操作，且需先下线所有集群。</span>
+        <span>下线后再次部署走首次发布（初始定义）；若应用因此无任何集群配置，列表显示「未部署」。删除应用请在应用列表操作，且需先下线所有集群。</span>
       </div>
     </div>
     <div class="flex justify-end gap-2 border-t border-zinc-200 px-5 py-3.5">
       <button class="btn" onclick="closeModal('modal-offline')">取消</button>
-      <button id="offline-confirm" class="btn btn-primary" onclick="offlineApp()">确认下线</button>
+      <button id="offline-confirm" class="btn btn-destructive" onclick="offlineApp()">确认下线并删除配置</button>
     </div>
   </div>
 </div>
@@ -1337,15 +1323,13 @@ function renderDeployPreview() {
   var preview = document.getElementById('deploy-preview')
   var empty = document.getElementById('deploy-empty')
   var confirmBtn = document.getElementById('deploy-confirm')
-  if (deployCtx.fresh) { // 首次发布（Render 草稿）/ 下线后重新发布（保留配置）：均为 create 模式，仅创建不覆盖
+  if (deployCtx.fresh) { // 首次发布（Render 草稿）/ 下线清空后重新部署（初始定义）：配置不存在，deploy 进入 create 模式，仅创建不覆盖
     preview.classList.remove('hidden')
     empty.classList.add('hidden')
     confirmBtn.disabled = false
     var freshTitle = deployCtx.firstPublish
       ? '首次发布 · 将创建 Deployment / Service / Ingress 等全部资源'
-      : repubPurged
-        ? '重新部署（配置已删 · 初始定义）· 将创建全部资源'
-        : '重新发布 · 使用下线前保留的配置，将创建全部资源'
+      : '重新部署（配置已删 · 初始定义）· 将创建全部资源'
     preview.innerHTML = '<span class="yc"># ' + freshTitle + '</span>\n<span class="yk">spec:</span>\n  <span class="yk">replicas:</span> <span class="ys">2</span>\n  <span class="yk">template:</span>\n    <span class="yk">spec:</span>\n      <span class="yk">containers:</span>\n        - <span class="yk">name:</span> <span class="ys">app</span>\n          <span class="yk">image:</span> <span class="ys">' + esc(document.getElementById('deploy-image').value.trim()) + '</span>'
     document.getElementById('deploy-spec-modified').classList.add('hidden')
     setDryRun(true, 'create 模式：仅创建、绝不覆盖已有对象 · 服务端 dry-run 校验通过')
@@ -1393,7 +1377,7 @@ function editViaWizard() {
   gotoStep(1)
   toast('演示：向导编辑 ' + cluster + ' 配置，完成后「去发布」返回发布弹窗')
 }
-// 向导双模式：edit（发布入口进入，目标集群只读）| create（创建定义，暂不绑定集群）
+// 向导双模式：edit（发布入口进入，目标集群只读）| create（末步选定目标集群，确认即创建 + 建配置 + 首次发布一条链）
 var wizardMode = 'create', wizardCluster = ''
 var clusterMeta = { 'prod-cluster': 'v1.30.1', 'staging-cluster': 'v1.29.6 · kcross' }
 function setWizardMode(mode, cluster) {
@@ -1408,7 +1392,7 @@ function setWizardMode(mode, cluster) {
   document.getElementById('wizard-go').textContent = mode === 'edit' ? '去发布' : '创建应用'
   document.getElementById('wiz-last-hint').textContent = mode === 'edit'
     ? '「保存配置」仅更新库侧期望配置，可稍后在发布弹窗发布；「去发布」返回发布弹窗——变更经预览确认后才推送，存在冲突时会先要求拉取收编'
-    : '创建后应用保存为定义（未部署）；首次发布在详情页进行，经发布弹窗确认后推送到指定集群'
+    : '确认创建即一条链完成：创建应用 + 创建目标集群配置 + 首次发布；若链上发布失败，应用以「未部署」形态保留，可在详情页经发布弹窗重试'
 }
 function wizardGoFinish() {
   if (wizardMode === 'edit') {
@@ -1418,7 +1402,7 @@ function wizardGoFinish() {
     openDeployModal()
     return
   }
-  toast('演示：应用已创建（未部署）——在详情页对指定集群发布后生效')
+  toast('演示：已创建应用并在 ' + (document.getElementById('wl-create-cluster') || {}).value + ' 完成首次发布（创建 + 建配置 + 首次发布一条链）')
   switchViewByName('view-list')
 }
 function toggleWizYaml(on) {
@@ -1531,38 +1515,23 @@ function openFirstPublish() {
   openModal('modal-deploy')
 }
 
-// ── 下线（集群级生命周期）：双选项——仅下线（保留配置）/ 下线并删除配置 ──
+// ── 下线（集群级生命周期）：删集群对象 + 删该集群配置与版本链（不可恢复；部分失败配置行保留可重试） ──
 function openOfflineModal() {
   document.getElementById('offline-cluster').textContent = currentTab === 'staging' ? 'staging-cluster' : 'prod-cluster'
-  document.querySelector('input[name="offline-mode"][value="keep"]').checked = true
-  renderOfflineOpts()
   openModal('modal-offline')
 }
-function renderOfflineOpts() {
-  var purge = (document.querySelector('input[name="offline-mode"]:checked') || {}).value === 'purge'
-  document.getElementById('offline-opt-keep').className = 'flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-3' + (purge ? ' border-zinc-200' : ' border-zinc-900 bg-zinc-50')
-  document.getElementById('offline-opt-purge').className = 'flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-3' + (purge ? ' border-red-300 bg-red-50/40' : ' border-zinc-200')
-  var btn = document.getElementById('offline-confirm')
-  btn.className = 'btn ' + (purge ? 'btn-destructive' : 'btn-primary')
-  btn.textContent = purge ? '确认下线并删除配置' : '确认下线'
-}
-var repubPurged = false // 上一次下线是否删除了配置（决定重新发布用保留配置还是初始定义）
 function offlineApp() {
-  var purge = (document.querySelector('input[name="offline-mode"]:checked') || {}).value === 'purge'
-  repubPurged = purge
   closeModal('modal-offline')
   document.getElementById(currentTab + '-body').classList.add('hidden')
   var empty = document.getElementById(currentTab + '-offlined')
   empty.classList.remove('hidden')
-  empty.querySelector('.off-line2').textContent = purge ? '集群资源已删除，该集群配置与历史版本已删除（不可恢复）' : '集群资源已删除'
-  empty.querySelector('.off-line3').textContent = purge ? '再次部署走首次发布（初始定义）' : '配置与历史版本已保留，重新发布仍使用原有配置'
-  empty.querySelector('button').textContent = purge ? '重新部署（首次发布）' : '重新发布'
+  empty.querySelector('.off-line2').textContent = '集群资源已删除，该集群配置与历史版本已删除（不可恢复）'
+  empty.querySelector('.off-line3').textContent = '再次部署走首次发布（初始定义）；若应用已无任何集群配置，列表显示「未部署」'
+  empty.querySelector('button').textContent = '重新部署（首次发布）'
   var dot = document.getElementById(currentTab === 'staging' ? 'stg-tab-dot' : 'prod-tab-dot')
   dot.classList.remove(currentTab === 'staging' ? 'bg-amber-500' : 'bg-green-500')
   dot.classList.add('bg-zinc-400')
-  toast(purge
-    ? '演示：已下线并删除该集群配置与历史版本（不可恢复）'
-    : '演示：已下线——集群资源已删除，配置与历史版本已保留')
+  toast('演示：已下线——集群资源与该集群配置、历史版本已删除（不可恢复）')
 }
 function republish() {
   var tab = currentTab
@@ -1571,7 +1540,7 @@ function republish() {
   var dot = document.getElementById(tab === 'staging' ? 'stg-tab-dot' : 'prod-tab-dot')
   dot.classList.remove('bg-zinc-400')
   dot.classList.add(tab === 'staging' ? 'bg-amber-500' : 'bg-green-500')
-  if (tab === 'staging') stgState = 'synced' // 下线清空锚点：重发布无漂移/冲突
+  if (tab === 'staging') stgState = 'synced' // 下线已删配置：重新部署走首次发布（初始定义），无漂移/冲突
   openDeployModal(true)
 }
 

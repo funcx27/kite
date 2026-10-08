@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react'
-import { offlineApplicationConfig } from '@/application/api'
+import {
+  ApplicationApiError,
+  offlineApplicationConfig,
+} from '@/application/api'
 import type {
   Application,
   ApplicationOfflineResponse,
@@ -28,9 +31,9 @@ interface OfflineDialogProps {
   onOfflined: (result: ApplicationOfflineResponse) => void
 }
 
-// Cluster-level offline (design §6/§11): radio cards — keep (default) keeps
-// the config and its revisions; purge also deletes them irreversibly and
-// turns the confirm button destructive.
+// Cluster-level offline (design §6/§11): one destructive action — the cluster
+// objects and the config row with its revision chain are deleted together and
+// cannot be restored; deploying again starts from the app's definition.
 export function OfflineDialog({
   app,
   cluster,
@@ -40,40 +43,37 @@ export function OfflineDialog({
 }: OfflineDialogProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
-  const [deleteConfig, setDeleteConfig] = useState(false)
   const [offlining, setOfflining] = useState(false)
   const [error, setError] = useState('')
 
   useEffect(() => {
-    if (open) {
-      setDeleteConfig(false)
-      setError('')
-    }
+    if (open) setError('')
   }, [open])
 
   const handleOffline = async () => {
     setOfflining(true)
     setError('')
     try {
-      const result = await offlineApplicationConfig(app.name, cluster, {
-        deleteConfig,
-      })
+      // A 200 always means everything was deleted (the backend answers 409
+      // and keeps the config when any cluster deletion failed), so the
+      // success result needs no partial-failure branch here.
+      const result = await offlineApplicationConfig(app.name, cluster)
       await queryClient.invalidateQueries({ queryKey: ['applications'] })
-      if (result.success) {
-        toast.success(
-          result.clusterGone
-            ? t('applications.offline.clusterGone', { cluster })
-            : deleteConfig
-              ? t('applications.offline.purged', { cluster })
-              : t('applications.offline.kept', { cluster })
-        )
-        onOpenChange(false)
-        onOfflined(result)
-      } else {
-        toast.warning(t('applications.offline.partialFailure'))
-      }
+      toast.success(
+        result.clusterGone
+          ? t('applications.offline.clusterGone', { cluster })
+          : t('applications.offline.purged', { cluster })
+      )
+      onOpenChange(false)
+      onOfflined(result)
     } catch (err) {
-      setError(translateError(err, t))
+      // The one 409 the offline endpoint returns is the partial cluster
+      // deletion (config kept for retry); other errors pass through.
+      setError(
+        err instanceof ApplicationApiError && err.status === 409
+          ? t('applications.offline.partialFailure')
+          : translateError(err, t)
+      )
     } finally {
       setOfflining(false)
     }
@@ -95,58 +95,6 @@ export function OfflineDialog({
           {t('applications.offline.description')}
         </p>
 
-        <div className="space-y-2">
-          <label
-            className={
-              !deleteConfig
-                ? 'flex cursor-pointer items-start gap-3 rounded-lg border border-primary bg-muted/50 px-3 py-3'
-                : 'flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-3'
-            }
-          >
-            <input
-              type="radio"
-              name="offline-mode"
-              checked={!deleteConfig}
-              onChange={() => setDeleteConfig(false)}
-              className="mt-0.5 accent-primary"
-            />
-            <span>
-              <span className="text-sm font-medium">
-                {t('applications.offline.keepTitle')}
-                <span className="ml-1.5 text-xs font-normal text-muted-foreground">
-                  {t('common.fields.default', 'Default')}
-                </span>
-              </span>
-              <span className="mt-0.5 block text-xs text-muted-foreground">
-                {t('applications.offline.keepDescription')}
-              </span>
-            </span>
-          </label>
-          <label
-            className={
-              deleteConfig
-                ? 'flex cursor-pointer items-start gap-3 rounded-lg border border-destructive/50 bg-destructive/5 px-3 py-3'
-                : 'flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-3'
-            }
-          >
-            <input
-              type="radio"
-              name="offline-mode"
-              checked={deleteConfig}
-              onChange={() => setDeleteConfig(true)}
-              className="mt-0.5 accent-destructive"
-            />
-            <span>
-              <span className="text-sm font-medium text-destructive">
-                {t('applications.offline.purgeTitle')}
-              </span>
-              <span className="mt-0.5 block text-xs text-muted-foreground">
-                {t('applications.offline.purgeDescription')}
-              </span>
-            </span>
-          </label>
-        </div>
-
         <div className="flex items-start gap-2 rounded-lg bg-muted/50 px-3 py-2.5 text-xs text-muted-foreground">
           <span>ℹ</span>
           <span>{t('applications.offline.deleteAppHint')}</span>
@@ -159,13 +107,11 @@ export function OfflineDialog({
             {t('common.actions.cancel')}
           </Button>
           <Button
-            variant={deleteConfig ? 'destructive' : 'default'}
+            variant="destructive"
             disabled={offlining}
             onClick={() => void handleOffline()}
           >
-            {deleteConfig
-              ? t('applications.offline.confirmPurge')
-              : t('applications.offline.confirmKeep')}
+            {t('applications.offline.confirm')}
           </Button>
         </DialogFooter>
       </DialogContent>
