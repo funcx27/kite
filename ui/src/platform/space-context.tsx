@@ -5,6 +5,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react'
 import { SPACE_LABEL, SPACE_LABEL_SELECTOR } from '@/application/lib'
@@ -64,6 +65,11 @@ export function SpaceProvider({ children }: { children: React.ReactNode }) {
   const [currentSpace, setCurrentSpaceState] = useState<string | null>(() =>
     readInitialSpace(searchParams)
   )
+  // The space most recently written by setCurrentSpace whose router
+  // navigation may still be in flight. While set, the URL-mirror effect must
+  // not read the stale ?space= param back into state; it clears once the URL
+  // reflects the write.
+  const pendingUrlSpaceRef = useRef<string | null | undefined>(undefined)
   const {
     data: namespaces,
     isLoading,
@@ -84,6 +90,7 @@ export function SpaceProvider({ children }: { children: React.ReactNode }) {
   // tab); replace avoids one history entry per switch.
   const setCurrentSpace = useCallback(
     (space: string | null) => {
+      pendingUrlSpaceRef.current = space
       setCurrentSpaceState(space)
       setSearchParams(
         (prev) => {
@@ -124,9 +131,17 @@ export function SpaceProvider({ children }: { children: React.ReactNode }) {
 
   // Mirror manual URL edits and external navigation into state. An absent or
   // empty param is not a signal, otherwise it would clobber the remembered
-  // space on mount.
+  // space on mount. An in-flight own write is skipped until the URL catches
+  // up, otherwise the stale param would revert the selection mid-navigation
+  // (state commits before the router does).
   useEffect(() => {
     const spaceParam = searchParams.get('space')
+    if (pendingUrlSpaceRef.current !== undefined) {
+      if (spaceParam === pendingUrlSpaceRef.current) {
+        pendingUrlSpaceRef.current = undefined
+      }
+      return
+    }
     if (!spaceParam || spaceParam === currentSpace) {
       return
     }
