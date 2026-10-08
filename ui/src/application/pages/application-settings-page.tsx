@@ -10,18 +10,20 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { Button } from '@/components/ui/button'
 
-// Application-mode settings (design §11). The URL decides the view:
+// Application-mode settings (design §11). The view follows the space: a
 // ?space=<name> shows that space's settings (resource quotas, build
-// settings), the bare path shows the global sections. The header space
-// picker writes ?space= on switch, so picking a space while on this page
-// lands in its settings view.
+// settings); the bare path follows the header picker's active space, so
+// entering settings with a space selected lands in its view. An empty
+// ?space= is the explicit "global" choice — the view-global button links
+// there, because a bare link would be defaulted back to the active space.
 export function ApplicationSettingsPage() {
   const { t } = useTranslation()
   const { currentSpace } = useSpaces()
   const [searchParams] = useSearchParams()
   usePageTitle(t('nav.settings'))
 
-  const space = searchParams.get('space') || null
+  const rawSpace = searchParams.get('space')
+  const space = rawSpace === null ? currentSpace : rawSpace || null
 
   return (
     <div className="space-y-6">
@@ -34,7 +36,7 @@ export function ApplicationSettingsPage() {
         </div>
         {space !== null ? (
           <Button variant="ghost" size="sm" asChild>
-            <Link to="/application-settings">
+            <Link to="/application-settings?space=">
               {t('applicationSettings.viewGlobal')}
             </Link>
           </Button>
