@@ -378,3 +378,25 @@ export const useUpsertSpaceQuotasMutation = () => {
     },
   })
 }
+
+// Unlinking strips the space marker from the namespace on the given clusters;
+// the namespace and its objects stay.
+export const dissociateSpace = (name: string, clusters: string[]) =>
+  applicationRequest<SpaceQuotaUpsertResponse>(
+    `/spaces/${encodeURIComponent(name)}`,
+    { method: 'DELETE', body: JSON.stringify({ clusters }) }
+  )
+
+export const useDissociateSpaceMutation = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ name, clusters }: { name: string; clusters: string[] }) =>
+      dissociateSpace(name, clusters),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ['applications', 'space-quotas'],
+      })
+      void queryClient.invalidateQueries({ queryKey: ['namespaces'] })
+    },
+  })
+}

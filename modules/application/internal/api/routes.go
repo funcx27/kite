@@ -74,6 +74,9 @@ func RegisterRoutes(api *gin.RouterGroup, deps Deps, st *store.Store) {
 	g.DELETE("/:name", h.DeleteApp)
 	g.PUT("/spaces/:name/quotas", h.UpsertSpaceQuotas)
 	g.GET("/spaces/:name/quotas", h.GetSpaceQuotas)
+	// Dissociating removes only the space marker; the namespace itself is
+	// never deleted here.
+	g.DELETE("/spaces/:name", h.DissociateSpace)
 	// The config-cluster param is deliberately not named "cluster": the host
 	// ClusterMiddleware resolves any :cluster param and 404s when that cluster
 	// is gone from the platform, but a config slot may outlive its cluster —

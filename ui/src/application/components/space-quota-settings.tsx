@@ -5,7 +5,11 @@
 // dialog. The upsert is idempotent per cluster, so a failed save keeps the
 // dialog open with the entered values for retry.
 import { useEffect, useState } from 'react'
-import { useSpaceQuotas, useUpsertSpaceQuotasMutation } from '@/application/api'
+import {
+  useDissociateSpaceMutation,
+  useSpaceQuotas,
+  useUpsertSpaceQuotasMutation,
+} from '@/application/api'
 import { quotaFieldValid, type QuotaFieldValue } from '@/application/lib'
 import type { SpaceQuotaStatus } from '@/application/types'
 import {
@@ -15,6 +19,7 @@ import {
   memoryQuantityToGiB,
   useClusterCapacity,
 } from '@/application/use-cluster-capacity'
+import { Pencil, SlidersHorizontal, Unlink } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -145,29 +150,29 @@ export function ClusterQuotaFields({
 
 // CPU and memory cells of the settings table: one "used/allocated" ratio
 // per unit ("0/1 core"); a quota overshooting the cluster's allocatable
-// total tints amber with a tooltip. Status rows span both columns.
+// total tints amber with a tooltip. Status rows repeat the status in both
+// columns so neither reads as empty.
 function UsageCells({ quota }: { quota: SpaceQuotaStatus }) {
   const { t } = useTranslation()
   const { data } = useClusterCapacity(quota.cluster)
-  if (quota.unauthorized) {
+  const status = quota.unauthorized
+    ? t('applications.spaceQuota.unauthorized')
+    : quota.error ||
+      (quota.unconfigured ? t('applications.spaceQuota.unconfigured') : null)
+  if (status) {
     return (
-      <TableCell colSpan={2} className="text-muted-foreground">
-        {t('applications.spaceQuota.unauthorized')}
-      </TableCell>
-    )
-  }
-  if (quota.error) {
-    return (
-      <TableCell colSpan={2} className="text-destructive">
-        {quota.error}
-      </TableCell>
-    )
-  }
-  if (quota.unconfigured) {
-    return (
-      <TableCell colSpan={2} className="text-muted-foreground">
-        {t('applications.spaceQuota.unconfigured')}
-      </TableCell>
+      <>
+        <TableCell
+          className={quota.error ? 'text-destructive' : 'text-muted-foreground'}
+        >
+          {status}
+        </TableCell>
+        <TableCell
+          className={quota.error ? 'text-destructive' : 'text-muted-foreground'}
+        >
+          {status}
+        </TableCell>
+      </>
     )
   }
   const capacity = data && data.nodes > 0 ? data : undefined
@@ -235,7 +240,9 @@ export function SpaceQuotaSettings({ space }: { space: string }) {
   const { t } = useTranslation()
   const { data, isLoading } = useSpaceQuotas(space)
   const upsertMutation = useUpsertSpaceQuotasMutation()
+  const dissociateMutation = useDissociateSpaceMutation()
   const [editing, setEditing] = useState<SpaceQuotaStatus | null>(null)
+  const [unlinking, setUnlinking] = useState<SpaceQuotaStatus | null>(null)
   const [editValue, setEditValue] = useState<QuotaFieldValue>({
     cpu: '',
     memory: '',
@@ -287,6 +294,34 @@ export function SpaceQuotaSettings({ space }: { space: string }) {
     }
   }
 
+  const unlink = async () => {
+    if (!unlinking) return
+    try {
+      const result = await dissociateMutation.mutateAsync({
+        name: space,
+        clusters: [unlinking.cluster],
+      })
+      const failed = result.failed.find(
+        (entry) => entry.cluster === unlinking.cluster
+      )
+      if (failed) {
+        toast.error(
+          t('applications.spaceQuota.unlinkFailed', {
+            cluster: unlinking.cluster,
+            error: failed.error,
+          })
+        )
+        return
+      }
+      toast.success(
+        t('applications.spaceQuota.unlinked', { cluster: unlinking.cluster })
+      )
+      setUnlinking(null)
+    } catch (error) {
+      toast.error(translateError(error, t))
+    }
+  }
+
   const quotas = data?.quotas ?? []
 
   return (
@@ -329,22 +364,37 @@ export function SpaceQuotaSettings({ space }: { space: string }) {
                     <TableCell className="text-right">
                       {quota.unconfigured ? (
                         <Button
-                          size="sm"
-                          variant="outline"
+                          size="icon"
+                          variant="ghost"
+                          className="h-7 w-7"
+                          title={t('applications.spaceQuota.setQuota')}
                           onClick={() => setEditing(quota)}
                         >
-                          {t('applications.spaceQuota.setQuota')}
+                          <SlidersHorizontal className="h-4 w-4" />
                         </Button>
                       ) : (
                         !quota.unauthorized &&
                         !quota.error && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => setEditing(quota)}
-                          >
-                            {t('common.actions.edit')}
-                          </Button>
+                          <span className="inline-flex gap-1">
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-7 w-7"
+                              title={t('common.actions.edit')}
+                              onClick={() => setEditing(quota)}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                              title={t('applications.spaceQuota.unlink')}
+                              onClick={() => setUnlinking(quota)}
+                            >
+                              <Unlink className="h-4 w-4" />
+                            </Button>
+                          </span>
                         )
                       )}
                     </TableCell>
@@ -396,6 +446,41 @@ export function SpaceQuotaSettings({ space }: { space: string }) {
               onClick={() => void save()}
             >
               {t('common.actions.save')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={unlinking !== null}
+        onOpenChange={(open) => {
+          if (!open) setUnlinking(null)
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {t('applications.spaceQuota.unlinkTitle', {
+                cluster: unlinking?.cluster ?? '',
+              })}
+            </DialogTitle>
+            <DialogDescription>
+              {t('applications.spaceQuota.unlinkHint', {
+                cluster: unlinking?.cluster ?? '',
+                space,
+              })}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setUnlinking(null)}>
+              {t('common.actions.cancel')}
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={dissociateMutation.isPending}
+              onClick={() => void unlink()}
+            >
+              {t('applications.spaceQuota.unlink')}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -140,8 +140,8 @@ func (h *Handler) ensureSpaceQuota(ctx context.Context, id identity, cluster, sp
 }
 
 // ensureSpaceNamespace guarantees the space namespace exists with the space
-// marker. A namespace created outside kite without the marker is refused,
-// never adopted.
+// marker. A namespace created outside kite is adopted by adding the marker
+// (managing an existing namespace is label-only; nothing else changes).
 func (h *Handler) ensureSpaceNamespace(ctx context.Context, id identity, cli client.Client, cluster, space string) error {
 	existing := syncops.BlankDoc(&unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "v1", "kind": "Namespace",
@@ -150,9 +150,24 @@ func (h *Handler) ensureSpaceNamespace(ctx context.Context, id identity, cli cli
 	err := cli.Get(ctx, client.ObjectKey{Name: space}, existing)
 	switch {
 	case err == nil:
-		if existing.GetLabels()[store.LabelKiteSpace] != "true" {
-			return fmt.Errorf("namespace %s exists but is not a kite space", space)
+		if existing.GetLabels()[store.LabelKiteSpace] == "true" {
+			return nil
 		}
+		if !id.authorize(namespaceResource, "update", cluster, "") {
+			return fmt.Errorf("user does not have permission to update namespace %s on cluster %s", space, cluster)
+		}
+		labels := existing.GetLabels()
+		if labels == nil {
+			labels = map[string]string{}
+		}
+		labels[store.LabelKiteSpace] = "true"
+		existing.SetLabels(labels)
+		if err := cli.Update(ctx, existing); err != nil {
+			return fmt.Errorf("adopt namespace %s: %w", space, err)
+		}
+		h.recordAudit(id, store.HistoryEntry{
+			Cluster: cluster, ResourceType: namespaceResource, ResourceName: space, Operation: "update",
+		})
 		return nil
 	case !apierrors.IsNotFound(err):
 		return fmt.Errorf("get namespace %s: %w", space, err)
@@ -305,4 +320,83 @@ func (h *Handler) clusterSpaceQuota(ctx context.Context, id identity, cluster, s
 	row.UsedCPU, _, _ = unstructured.NestedString(quota.Object, "spec", "used", "cpu")
 	row.UsedMemory, _, _ = unstructured.NestedString(quota.Object, "spec", "used", "memory")
 	return row, true
+}
+
+type dissociateSpaceRequest struct {
+	// Clusters to unlink; empty means every cluster where the namespace
+	// currently carries the space marker.
+	Clusters []string `json:"clusters,omitempty"`
+}
+
+// DissociateSpace removes the space marker from the namespace — the namespace
+// and everything in it stay; the managed quota object is left in place and
+// simply stops being surfaced as a space quota. Requests with a body list the
+// clusters to unlink, bare requests unlink every cluster carrying the marker.
+func (h *Handler) DissociateSpace(c *gin.Context) {
+	space := c.Param("name")
+	if !render.ValidateDNS1123Label(space, 63) {
+		h.fail(c, http.StatusBadRequest, nil, "space name must be a DNS-1123 label of at most 63 characters")
+		return
+	}
+	var req dissociateSpaceRequest
+	if c.Request.ContentLength != 0 {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			h.fail(c, http.StatusBadRequest, err, "")
+			return
+		}
+	}
+	clusters := req.Clusters
+	if len(clusters) == 0 {
+		clusters = h.deps.ClusterNames()
+	}
+	id := h.requestIdentity(c)
+	ctx := c.Request.Context()
+	resp := upsertSpaceQuotasResponse{
+		Succeeded: make([]string, 0, len(clusters)),
+		Failed:    make([]spaceQuotaFailure, 0),
+	}
+	for _, cluster := range clusters {
+		if err := h.dissociateSpaceOn(ctx, id, cluster, space); err != nil {
+			resp.Failed = append(resp.Failed, spaceQuotaFailure{Cluster: cluster, Error: err.Error()})
+			continue
+		}
+		resp.Succeeded = append(resp.Succeeded, cluster)
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+// dissociateSpaceOn strips the marker from one cluster's namespace; a missing
+// or already-unlabeled namespace is a silent no-op so a partial-failure retry
+// converges.
+func (h *Handler) dissociateSpaceOn(ctx context.Context, id identity, cluster, space string) error {
+	cli, err := h.deps.ResolveCluster(ctx, cluster)
+	if err != nil {
+		return fmt.Errorf("resolve cluster: %w", err)
+	}
+	ns := syncops.BlankDoc(&unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "v1", "kind": "Namespace",
+	}})
+	ns.SetName(space)
+	if err := cli.Get(ctx, client.ObjectKey{Name: space}, ns); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("get namespace %s: %w", space, err)
+	}
+	if ns.GetLabels()[store.LabelKiteSpace] != "true" {
+		return nil
+	}
+	if !id.authorize(namespaceResource, "update", cluster, "") {
+		return fmt.Errorf("user does not have permission to update namespace %s on cluster %s", space, cluster)
+	}
+	labels := ns.GetLabels()
+	delete(labels, store.LabelKiteSpace)
+	ns.SetLabels(labels)
+	if err := cli.Update(ctx, ns); err != nil {
+		return fmt.Errorf("update namespace %s: %w", space, err)
+	}
+	h.recordAudit(id, store.HistoryEntry{
+		Cluster: cluster, ResourceType: namespaceResource, ResourceName: space, Operation: "update",
+	})
+	return nil
 }
