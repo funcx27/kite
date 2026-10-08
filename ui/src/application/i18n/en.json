@@ -358,8 +358,6 @@
       "title": "Resource Quotas · {{name}}",
       "description": "Per-cluster quota of this space, enforced by the kite-managed ResourceQuota in the space's namespace (cpu / memory and limits.cpu / limits.memory share the same value).",
       "cluster": "Cluster",
-      "quota": "Quota",
-      "used": "Used",
       "cpu": "CPU",
       "memory": "Memory",
       "capacityHint": "Total resources (allocatable): {{cpu}} core / {{memory}} GiB · {{nodes}} nodes",

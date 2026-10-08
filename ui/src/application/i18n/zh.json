@@ -358,8 +358,6 @@
       "title": "资源配额 · {{name}}",
       "description": "空间在各集群的配额，由该空间命名空间内 kite 管理的 ResourceQuota 生效（cpu / memory 与 limits.cpu / limits.memory 同值）。",
       "cluster": "集群",
-      "quota": "配额",
-      "used": "已用",
       "cpu": "CPU",
       "memory": "内存",
       "capacityHint": "总资源（可分配）：{{cpu}} core / {{memory}} GiB · {{nodes}} 个节点",
