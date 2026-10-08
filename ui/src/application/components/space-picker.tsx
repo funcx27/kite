@@ -270,11 +270,6 @@ export function CreateSpaceDialog({
                           <span className="truncate font-mono">
                             {candidate.name}
                           </span>
-                          {candidate.version && (
-                            <span className="text-xs text-muted-foreground">
-                              {candidate.version}
-                            </span>
-                          )}
                           <span className="whitespace-nowrap rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
                             {t('sidebar.spaces.alreadyCreated')}
                           </span>

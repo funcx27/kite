@@ -218,10 +218,10 @@ function UsageCells({ quota }: { quota: SpaceQuotaStatus }) {
 
 // Read-only plain quota pair for clusters whose space already carries a
 // quota (create-space dialog) — no capacity denominator, the row cannot be
-// edited here; the two spans sit where the edit inputs would, so configured
-// and editable rows align.
+// edited here; fixed-width right-aligned columns leave the row's free space
+// to the cluster name.
 export function ConfiguredQuota({ quota }: { quota: SpaceQuotaStatus }) {
-  const cls = 'flex-1 text-right font-mono text-sm text-muted-foreground'
+  const cls = 'w-20 text-right font-mono text-sm text-muted-foreground'
   const cores = cpuQuantityToCores(quota.cpu)
   const gib = memoryQuantityToGiB(quota.memory)
   return (
