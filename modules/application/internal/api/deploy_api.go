@@ -49,6 +49,9 @@ type deployRequest struct {
 	// nil leaves the stored value untouched. It persists with the publish and
 	// the upserted pull secret rides the same pipeline.
 	CredentialRef *string `json:"credentialRef,omitempty"`
+	// PreviewToken echoes the hash a dry-run preview returned; the apply
+	// refuses to run when the current diff no longer hashes to it.
+	PreviewToken string `json:"previewToken,omitempty"`
 }
 
 type deployDocResult struct {
@@ -66,13 +69,15 @@ type deployResponse struct {
 	Results     []deployDocResult `json:"results"`
 	Anchored    bool              `json:"anchored"`
 	AnchorError string            `json:"anchorError,omitempty"`
-	Drift       []syncops.DocDiff `json:"drift,omitempty"`   // diff(live, anchor): cluster-side drift
-	Pending     []syncops.DocDiff `json:"pending,omitempty"` // diff(manifests, anchor): DB-side pending
-	Change      []syncops.DocDiff `json:"change,omitempty"`  // diff(live, manifests): net change to push
+	Change      []syncops.DocDiff `json:"change,omitempty"` // diff(manifests, live): net change to push
 	// Preview carries the redacted old/new document pair per changed document
 	// so the UI can render a YAML diff of the net change (design §6).
-	Preview   []deployDocPreview `json:"preview,omitempty"`
-	LatestRev int                `json:"latestRev,omitempty"`
+	Preview []deployDocPreview `json:"preview,omitempty"`
+	// PreviewToken is the stable hash of the diff behind a dry-run preview;
+	// the confirming deploy request sends it back and the apply rejects the
+	// publish when the current diff no longer hashes to it (design §6).
+	PreviewToken string `json:"previewToken,omitempty"`
+	LatestRev    int    `json:"latestRev,omitempty"`
 }
 
 // deployDocPreview is one changed document's before/after view. Old is the
@@ -86,17 +91,16 @@ type deployDocPreview struct {
 }
 
 // DeployConfig pushes the pending manifest set to the cluster (design §6):
-// the conflict gate first (every cluster-side drift path must be merged or
-// knowingly overridden), then ensure-namespace, then per-document
-// Create/Update with per-resource RBAC, ownership-checked creates and a
-// best-effort anchor read-back. {dryRun:true} runs the whole pipeline against
-// the API server with dry-run: All and touches neither cluster state beyond
-// reads nor the database. Pending changes ({spec}/{manifests}) and {image}
-// are persisted as a revision and applied by this same request — the save
-// never happens without the publish. A missing config enters create mode: the
-// base set is rendered from the app draft spec or copied from another
-// cluster's config, the row and its rev1 are created (dry-run stages them in
-// memory only), then the regular publish pipeline runs.
+// ensure-namespace, then per-document Create/Update with per-resource RBAC,
+// ownership-checked creates and a best-effort anchor read-back. {dryRun:true}
+// runs the whole pipeline against the API server with dry-run: All and
+// touches neither cluster state beyond reads nor the database. Pending
+// changes ({spec}/{manifests}) and {image} are persisted as a revision and
+// applied by this same request — the save never happens without the publish.
+// A missing config enters create mode: the base set is rendered from the app
+// draft spec or copied from another cluster's config, the row and its rev1
+// are created (dry-run stages them in memory only), then the regular publish
+// pipeline runs.
 func (h *Handler) DeployConfig(c *gin.Context) {
 	app := h.findAppOr404(c)
 	if app == nil {
@@ -146,7 +150,7 @@ func (h *Handler) DeployConfig(c *gin.Context) {
 	if !ok {
 		return
 	}
-	h.publishPending(c, ctx, id, app, cfg, cli, manifests, req.DryRun, latestRev)
+	h.publishPending(c, ctx, id, app, cfg, cli, manifests, req.DryRun, latestRev, req.PreviewToken)
 }
 
 // bindDeployRequest parses the deploy body and enforces the spec/manifests
@@ -398,31 +402,35 @@ func (h *Handler) deployManifests(c *gin.Context, id identity, app *store.App, c
 	return manifests, latestRev, true
 }
 
-// publishPending runs the conflict-gated apply pipeline for the resolved
-// manifest set and writes the deploy response.
-func (h *Handler) publishPending(c *gin.Context, ctx context.Context, id identity, app *store.App, cfg *store.AppConfig, cli client.Client, manifests []unstructured.Unstructured, dryRun bool, latestRev int) {
-	resp, conflicts, err := h.runPublish(ctx, id, app, cfg, cli, manifests, dryRun)
-	if !h.publishFailure(c, err, conflicts) {
+// publishPending runs the apply pipeline for the resolved manifest set and
+// writes the deploy response.
+func (h *Handler) publishPending(c *gin.Context, ctx context.Context, id identity, app *store.App, cfg *store.AppConfig, cli client.Client, manifests []unstructured.Unstructured, dryRun bool, latestRev int, previewToken string) {
+	resp, err := h.applyPublish(ctx, id, app, cfg, cli, manifests, dryRun, previewToken)
+	if !h.publishFailure(c, err) {
 		return
 	}
 	resp.LatestRev = latestRev
 	c.JSON(http.StatusOK, resp)
 }
 
-// publishFailure maps a runPublish failure to its HTTP error response; false
-// means the caller must stop.
-func (h *Handler) publishFailure(c *gin.Context, err error, conflicts []syncops.ConflictDetail) bool {
+// failStalePreview answers a stale previewToken with the shared 409 mapping
+// (deploy dry-run pins the token; resolve re-checks it before adopting).
+func (h *Handler) failStalePreview(c *gin.Context) {
+	h.fail(c, http.StatusConflict, nil, (&previewStaleError{}).Error())
+}
+
+// publishFailure maps an applyPublish failure to its HTTP error response;
+// false means the caller must stop.
+func (h *Handler) publishFailure(c *gin.Context, err error) bool {
 	var nf *namespaceForbiddenError
+	var stale *previewStaleError
 	switch {
 	case errors.As(err, &nf):
 		h.fail(c, http.StatusForbidden, err, err.Error())
+	case errors.As(err, &stale):
+		h.failStalePreview(c)
 	case err != nil:
 		h.fail(c, http.StatusInternalServerError, err, "")
-	case len(conflicts) > 0:
-		c.JSON(http.StatusConflict, gin.H{
-			"error":     "cluster has manual changes conflicting with the pending publish, merge first",
-			"conflicts": conflicts,
-		})
 	default:
 		return true
 	}
@@ -576,51 +584,50 @@ func (h *Handler) rerenderForCredential(app *store.App, cfg *store.AppConfig, cr
 	return nil
 }
 
-// runPublish runs the conflict-gated apply pipeline for the pending manifest
-// set (design §6): ensure-namespace, live fetch, the gate, per-document
-// Create/Update and the anchor read-back; it ends with the drift/pending/
-// change diff groups. A gate verdict is returned as conflicts without any
-// write; with dryRun the apply only validates against the API server.
-func (h *Handler) runPublish(ctx context.Context, id identity, app *store.App, cfg *store.AppConfig, cli client.Client, manifests []unstructured.Unstructured, dryRun bool) (deployResponse, []syncops.ConflictDetail, error) {
+// applyPublish is the apply core of the publish pipeline (design §6):
+// ensure-namespace, live fetch, per-document Create/Update and the anchor
+// read-back; it ends with the net-change diff group. A non-empty previewToken
+// is checked against the hash of the current diff before any write (design
+// §6: the confirmed preview must describe the cluster state being pushed).
+// With dryRun the apply only validates against the API server and the
+// response carries the previewToken of that diff.
+func (h *Handler) applyPublish(ctx context.Context, id identity, app *store.App, cfg *store.AppConfig, cli client.Client, manifests []unstructured.Unstructured, dryRun bool, previewToken string) (deployResponse, error) {
 	if !dryRun {
 		if err := h.ensureNamespace(ctx, id, cli, cfg.Cluster, cfg.Namespace); err != nil {
-			return deployResponse{}, nil, err
+			return deployResponse{}, err
 		}
 	}
 
 	anchor, err := store.DecodeManifests(cfg.LastApplied)
 	if err != nil {
-		return deployResponse{}, nil, err
+		return deployResponse{}, err
 	}
 	templates := syncops.IdentityTemplates(manifests, anchor)
 	live, err := syncops.FetchLiveDocs(ctx, cli, templates)
 	if err != nil {
-		return deployResponse{}, nil, err
+		return deployResponse{}, err
 	}
 
-	// The gate and the diff groups run on normalized live objects: raw ones
-	// carry server-managed fields (status, clusterIP, last-applied
-	// annotations) that would surface as fake cluster-side drift. The apply
-	// path below keeps the raw objects — Update needs the resourceVersion.
+	// The diff group runs on normalized live objects: raw ones carry
+	// server-managed fields (status, clusterIP, last-applied annotations)
+	// that would surface as fake cluster-side drift. The apply path below
+	// keeps the raw objects — Update needs the resourceVersion.
 	liveForDiff := make(map[string]*unstructured.Unstructured, len(live))
 	for key, doc := range live {
 		liveForDiff[key] = syncops.Normalize(doc)
 	}
 
-	if len(anchor) > 0 {
-		overridden := decodeScopedPaths(cfg.OverriddenPaths)
-		if conflicts := syncops.ConflictGate(manifests, anchor, liveForDiff, overridden); len(conflicts) > 0 {
-			return deployResponse{}, conflicts, nil
-		}
+	change := syncops.DiffManifests(manifests, syncops.LiveList(liveForDiff, manifests))
+	if !dryRun && previewToken != "" && previewTokenHash(change) != previewToken {
+		return deployResponse{}, &previewStaleError{}
 	}
 
 	// The managed image pull secret rides every publish of a config with a
 	// credential: manual (DeployConfig), facade (DeployWithImage) and
 	// rollback all funnel here, so the namespace never publishes without it.
-	// After the gate: a conflicted publish keeps its no-writes guarantee.
 	if !dryRun && cfg.CredentialRef != "" {
 		if err := h.ensurePullSecret(ctx, id, cli, cfg); err != nil {
-			return deployResponse{}, nil, err
+			return deployResponse{}, err
 		}
 	}
 
@@ -658,25 +665,43 @@ func (h *Handler) runPublish(ctx context.Context, id identity, app *store.App, c
 	allOK := len(failedKeys) == 0
 	if !dryRun {
 		if err := h.persistDeployResult(cfg, anchor, anchorReadBacks, failedKeys, allOK); err != nil {
-			return deployResponse{}, nil, err
+			return deployResponse{}, err
 		}
 	}
 
-	drift := syncops.DiffManifests(syncops.LiveList(liveForDiff, anchor), anchor)
-	pending := syncops.DiffManifests(manifests, anchor)
-	change := syncops.DiffManifests(syncops.LiveList(liveForDiff, manifests), manifests)
-	return deployResponse{
+	resp := deployResponse{
 		Success:     allOK,
 		DryRun:      dryRun,
 		Results:     results,
 		Anchored:    anchorErr == "" && !dryRun,
 		AnchorError: anchorErr,
-		Drift:       drift,
-		Pending:     pending,
 		Change:      change,
 		Preview:     previewDocs(manifests, liveForDiff, change),
-	}, nil, nil
+	}
+	if dryRun {
+		resp.PreviewToken = previewTokenHash(change)
+	}
+	return resp, nil
 }
+
+// previewTokenHash derives the stable preview token of a diff result: the
+// hex-encoded SHA-256 prefix of its canonical JSON. The input is server-built
+// and marshalling cannot fail; a failure yields the empty token, which never
+// matches a client-sent one.
+func previewTokenHash(diff []syncops.DocDiff) string {
+	data, err := json.Marshal(diff)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:8])
+}
+
+// previewStaleError marks a previewToken that no longer matches the current
+// cluster diff, so callers answer 409 with a preview-again hint.
+type previewStaleError struct{}
+
+func (e *previewStaleError) Error() string { return "cluster state changed, preview again" }
 
 // previewDocs pairs each changed document with its normalized live (old) and
 // pending (new) view, both redacted. Documents the pending set no longer
@@ -710,8 +735,7 @@ func previewDocs(manifests []unstructured.Unstructured, live map[string]*unstruc
 // persistPendingConfig builds the pending manifest set from the locked config
 // row and writes it as the desired state with one revision, under the
 // optimistic rev check when expectedRev is set. The masked "***" secret
-// markers are restored from the current values, and the knowing-override
-// whitelist does not survive a wholesale rewrite.
+// markers are restored from the current values.
 func (h *Handler) persistPendingConfig(
 	id identity,
 	app *store.App,
@@ -761,13 +785,9 @@ func (h *Handler) persistPendingConfig(
 			return err
 		}
 		if err := tx.Model(&store.AppConfig{}).Where("id = ?", cur.ID).
-			Updates(map[string]interface{}{
-				"manifests":        store.SecretJSON(data),
-				"overridden_paths": store.JSONField(nil),
-			}).Error; err != nil {
+			Update("manifests", store.SecretJSON(data)).Error; err != nil {
 			return err
 		}
-		cfg.OverriddenPaths = store.JSONField(nil)
 		cfg.Manifests = store.SecretJSON(data)
 		newRev, err = store.AppendRevisionTx(tx, cur.ID, source, data, id.operatorID, 0)
 		return err
@@ -968,22 +988,6 @@ func (h *Handler) ensurePullSecret(ctx context.Context, id identity, cli client.
 	return nil
 }
 
-// decodeScopedPaths parses the stored OverriddenPaths list.
-func decodeScopedPaths(data store.JSONField) map[string]bool {
-	out := map[string]bool{}
-	if len(data) == 0 {
-		return out
-	}
-	var list []string
-	if err := json.Unmarshal(data, &list); err != nil {
-		return out
-	}
-	for _, s := range list {
-		out[s] = true
-	}
-	return out
-}
-
 // namespacedCopy returns a copy of doc with the config namespace applied;
 // the config namespace is authoritative for every document (design §3).
 func namespacedCopy(doc *unstructured.Unstructured, namespace string) (*unstructured.Unstructured, error) {
@@ -1075,8 +1079,7 @@ func readBack(ctx context.Context, cli client.Client, doc *unstructured.Unstruct
 
 // persistDeployResult writes the anchor and the deploy bookkeeping in one
 // transaction: read-backs of applied documents replace the previous anchor,
-// failed documents keep theirs (design §6 读回锚定). The override whitelist is
-// consumed only by a fully successful publish.
+// failed documents keep theirs (design §6 读回锚定).
 func (h *Handler) persistDeployResult(cfg *store.AppConfig, previousAnchor, readBacks []unstructured.Unstructured, failedKeys map[string]bool, allOK bool) error {
 	var newAnchor []unstructured.Unstructured
 	for i := range previousAnchor {
@@ -1104,7 +1107,6 @@ func (h *Handler) persistDeployResult(cfg *store.AppConfig, previousAnchor, read
 	}
 	if allOK {
 		updates["last_deployed_at"] = now
-		updates["overridden_paths"] = store.JSONField(nil)
 	}
 	return h.store.DB().Transaction(func(tx *gorm.DB) error {
 		return tx.Model(&store.AppConfig{}).Where("id = ?", cfg.ID).Updates(updates).Error

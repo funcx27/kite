@@ -170,51 +170,53 @@ type DocDiff struct {
 	Kind      string `json:"kind"`
 	Namespace string `json:"namespace,omitempty"`
 	Name      string `json:"name"`
-	// MissingIn is "a" or "b" when the document exists on one side only.
+	// MissingIn is "manifests" or "cluster" when the document exists on one
+	// side only: the side it is missing from.
 	MissingIn string   `json:"missingIn,omitempty"`
 	Paths     []string `json:"paths,omitempty"`
 	Truncated bool     `json:"truncated,omitempty"`
 }
 
-// DiffManifests aligns two manifest sets by (kind, namespace, name) after
-// normalization and collects the changed leaf paths per document (design
-// §4.4–§4.6). Paths use JSON notation with array indices, e.g.
+// DiffManifests aligns the manifest set and the live set by (kind, namespace,
+// name) after normalization and collects the changed leaf paths per document
+// (design §4.4–§4.6). MissingIn names the side a document is missing from.
+// Paths use JSON notation with array indices, e.g.
 // spec.template.spec.containers[0].image. A key present on only one side
 // counts as a change at that path.
-func DiffManifests(a, b []unstructured.Unstructured) []DocDiff {
-	na, nb := NormalizeManifests(a), NormalizeManifests(b)
-	bIdx := make(map[string]int, len(nb))
-	for i := range nb {
-		bIdx[store.DocKeyOf(&nb[i])] = i
+func DiffManifests(manifests, live []unstructured.Unstructured) []DocDiff {
+	nm, nl := NormalizeManifests(manifests), NormalizeManifests(live)
+	liveIdx := make(map[string]int, len(nl))
+	for i := range nl {
+		liveIdx[store.DocKeyOf(&nl[i])] = i
 	}
-	seen := make(map[string]bool, len(na))
-	out := make([]DocDiff, 0, len(na)+len(nb))
-	for i := range na {
-		key := store.DocKeyOf(&na[i])
+	seen := make(map[string]bool, len(nm))
+	out := make([]DocDiff, 0, len(nm)+len(nl))
+	for i := range nm {
+		key := store.DocKeyOf(&nm[i])
 		seen[key] = true
-		d := DocDiff{Kind: na[i].GetKind(), Namespace: na[i].GetNamespace(), Name: na[i].GetName()}
-		j, ok := bIdx[key]
+		d := DocDiff{Kind: nm[i].GetKind(), Namespace: nm[i].GetNamespace(), Name: nm[i].GetName()}
+		j, ok := liveIdx[key]
 		if !ok {
-			d.MissingIn = "b"
+			d.MissingIn = "cluster"
 			out = append(out, d)
 			continue
 		}
 		sink := &diffSink{limit: MaxDiffPaths}
-		diffValue(na[i].Object, nb[j].Object, "", sink)
+		diffValue(nm[i].Object, nl[j].Object, "", sink)
 		if len(sink.paths) == 0 {
 			continue
 		}
 		d.Paths, d.Truncated = sink.paths, sink.truncated
 		out = append(out, d)
 	}
-	for i := range nb {
-		key := store.DocKeyOf(&nb[i])
+	for i := range nl {
+		key := store.DocKeyOf(&nl[i])
 		if seen[key] {
 			continue
 		}
 		out = append(out, DocDiff{
-			Kind: nb[i].GetKind(), Namespace: nb[i].GetNamespace(), Name: nb[i].GetName(),
-			MissingIn: "a",
+			Kind: nl[i].GetKind(), Namespace: nl[i].GetNamespace(), Name: nl[i].GetName(),
+			MissingIn: "manifests",
 		})
 	}
 	return out
@@ -225,11 +227,6 @@ func DiffManifests(a, b []unstructured.Unstructured) []DocDiff {
 type absentType struct{}
 
 var absent = absentType{}
-
-func isAbsent(v interface{}) bool {
-	_, ok := v.(absentType)
-	return ok
-}
 
 func deepEqualJSON(a, b interface{}) bool {
 	return reflect.DeepEqual(a, b)
@@ -271,20 +268,12 @@ func (s *diffSink) add(path string) {
 	s.paths = append(s.paths, path)
 }
 
-// docDiffPaths returns the complete set of changed leaf paths between two
-// documents after normalization. Unlike DiffManifests it is never capped at
-// MaxDiffPaths: that cap bounds the presented diff (design §4.6), while the
-// publish gate must see every cluster-side drift path (design §1/§6).
-func docDiffPaths(a, b *unstructured.Unstructured) []string {
-	sink := &diffSink{}
-	diffValue(Normalize(a).Object, Normalize(b).Object, "", sink)
-	return sink.paths
-}
-
 // diffValue walks two trees and records the leaf paths where they differ.
-// Maps recurse per key, lists per index (an insertion shifts indices and is
-// reported at each affected path, capped by MaxDiffPaths); any other
-// combination is a leaf.
+// Maps recurse per key; lists whose elements all carry a non-empty name
+// string align by name (paths carry a [name=x] selector, a single-side name
+// is one change at that path), other lists per index (an insertion shifts
+// indices and is reported at each affected path, capped by MaxDiffPaths);
+// any other combination is a leaf.
 func diffValue(a, b interface{}, path string, sink *diffSink) {
 	if sink.truncated || deepEqualJSON(a, b) {
 		return
@@ -307,6 +296,15 @@ func diffValue(a, b interface{}, path string, sink *diffSink) {
 	al, aok := a.([]interface{})
 	bl, bok := b.([]interface{})
 	if aok && bok {
+		if pairs, ok := alignListByName(al, bl); ok {
+			for _, p := range pairs {
+				if sink.truncated {
+					return
+				}
+				diffValue(p.av, p.bv, fmt.Sprintf("%s[name=%s]", path, p.name), sink)
+			}
+			return
+		}
 		n := len(al)
 		if len(bl) > n {
 			n = len(bl)
@@ -327,4 +325,70 @@ func diffValue(a, b interface{}, path string, sink *diffSink) {
 		return
 	}
 	sink.add(path)
+}
+
+// namedElem is one name-aligned pair of list elements; a missing side holds
+// the absent marker.
+type namedElem struct {
+	name   string
+	av, bv interface{}
+}
+
+// alignListByName pairs two lists' elements by their name key, names in
+// sorted union order so the diff is deterministic. It fails when any element
+// is not a map with a non-empty name string, falling back to index alignment.
+func alignListByName(al, bl []interface{}) ([]namedElem, bool) {
+	aIdx := elementsByName(al)
+	if aIdx == nil {
+		return nil, false
+	}
+	bIdx := elementsByName(bl)
+	if bIdx == nil {
+		return nil, false
+	}
+	seen := map[string]bool{}
+	var names []string
+	for n := range aIdx {
+		if !seen[n] {
+			seen[n] = true
+			names = append(names, n)
+		}
+	}
+	for n := range bIdx {
+		if !seen[n] {
+			seen[n] = true
+			names = append(names, n)
+		}
+	}
+	sort.Strings(names)
+	out := make([]namedElem, 0, len(names))
+	for _, n := range names {
+		av, bv := interface{}(absent), interface{}(absent)
+		if v, ok := aIdx[n]; ok {
+			av = v
+		}
+		if v, ok := bIdx[n]; ok {
+			bv = v
+		}
+		out = append(out, namedElem{name: n, av: av, bv: bv})
+	}
+	return out, true
+}
+
+// elementsByName indexes a list's map elements by their name string; nil when
+// any element is not a map or carries no non-empty name.
+func elementsByName(list []interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(list))
+	for _, e := range list {
+		m, ok := store.AsMap(e)
+		if !ok {
+			return nil
+		}
+		n, _ := m["name"].(string)
+		if n == "" {
+			return nil
+		}
+		out[n] = e
+	}
+	return out
 }

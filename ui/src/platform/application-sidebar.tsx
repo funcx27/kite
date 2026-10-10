@@ -1,4 +1,5 @@
 import { useCallback } from 'react'
+import { useSpaces, withSpaceParam } from '@/platform/space-context'
 import {
   IconApps,
   IconChevronsLeft,
@@ -27,6 +28,7 @@ export function ApplicationSidebar(
 ) {
   const { t } = useTranslation()
   const location = useLocation()
+  const { currentSpace } = useSpaces()
   const { isMobile, setOpenMobile, state, toggleSidebar } = useSidebar()
 
   const handleMenuItemClick = useCallback(() => {
@@ -54,7 +56,10 @@ export function ApplicationSidebar(
                 isActive={isActive('/applications')}
                 className="transition-all duration-200 hover:bg-accent/60 active:scale-95 data-[active=true]:bg-primary/10 data-[active=true]:text-primary data-[active=true]:shadow-sm"
               >
-                <Link to="/applications" onClick={handleMenuItemClick}>
+                <Link
+                  to={withSpaceParam('/applications', currentSpace)}
+                  onClick={handleMenuItemClick}
+                >
                   <IconApps className="text-sidebar-primary" />
                   <span className="font-medium">{t('nav.applications')}</span>
                 </Link>
@@ -67,7 +72,10 @@ export function ApplicationSidebar(
                 isActive={location.pathname.startsWith('/workflows')}
                 className="transition-all duration-200 hover:bg-accent/60 active:scale-95 data-[active=true]:bg-primary/10 data-[active=true]:text-primary data-[active=true]:shadow-sm"
               >
-                <Link to="/workflows" onClick={handleMenuItemClick}>
+                <Link
+                  to={withSpaceParam('/workflows', currentSpace)}
+                  onClick={handleMenuItemClick}
+                >
                   <IconGitMerge className="text-sidebar-primary" />
                   <span className="font-medium">{t('workflow.title')}</span>
                 </Link>
@@ -84,7 +92,10 @@ export function ApplicationSidebar(
                 isActive={isActive('/application-settings')}
                 className="transition-all duration-200 hover:bg-accent/60 active:scale-95 data-[active=true]:bg-primary/10 data-[active=true]:text-primary data-[active=true]:shadow-sm"
               >
-                <Link to="/application-settings" onClick={handleMenuItemClick}>
+                <Link
+                  to={withSpaceParam('/application-settings', currentSpace)}
+                  onClick={handleMenuItemClick}
+                >
                   <IconSettings className="text-sidebar-primary" />
                   <span className="font-medium">{t('nav.settings')}</span>
                 </Link>

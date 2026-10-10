@@ -351,23 +351,28 @@ func vertexLine(v *client.Vertex) string {
 }
 
 // DeployApp publishes an image through the application module's exported
-// deploy facade (design §5.2): full gate semantics — conflicts come back as
-// a typed error whose text enumerates each document's kind/namespace/name/
-// drift paths so the node failure points at the merge; per-document RBAC and
-// audit run with the run's trigger user inside the application module. The
-// facade streams the publish header and per-document apply results onto
-// onLog for the node's log.
+// deploy facade (design §5.2): the module's drift gate runs first —
+// unresolved cluster drift fails the node with *application.DriftError, whose
+// text names the resolution surface followed by each drifted document's
+// paths; per-document RBAC and audit run with the run's trigger user inside
+// the application module. The facade streams the publish header and
+// per-document apply results onto onLog for the node's log.
 func (d *Deps) DeployApp(ctx context.Context, req exec.DeployRequest, onLog func(string)) (exec.DeployResult, error) {
 	if d.app == nil {
 		return exec.DeployResult{}, fmt.Errorf("application module is not wired: deploy nodes cannot run")
 	}
 	out, err := application.DeployWithImage(ctx, d.app, req.App, req.Cluster, req.Image, req.OperatorID, req.DryRun, onLog)
 	if err != nil {
-		var cf *application.ConflictError
-		if errors.As(err, &cf) {
-			return exec.DeployResult{}, fmt.Errorf(
-				"deploy app %q on cluster %q: %w (merge the conflicts in the application module, then retry the run)",
-				req.App, req.Cluster, err)
+		var df *application.DriftError
+		if errors.As(err, &df) {
+			// Enumerate the drifted documents after the wrapped gate text so
+			// the node failure points at each drift path.
+			var b strings.Builder
+			for _, doc := range df.Docs {
+				fmt.Fprintf(&b, "\n  %s/%s/%s: %s", doc.Kind, doc.Namespace, doc.Name, strings.Join(doc.Paths, ", "))
+			}
+			return exec.DeployResult{}, fmt.Errorf("deploy app %q on cluster %q: %w%s",
+				req.App, req.Cluster, err, b.String())
 		}
 		return exec.DeployResult{}, fmt.Errorf("deploy app %q on cluster %q: %w", req.App, req.Cluster, err)
 	}

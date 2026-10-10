@@ -144,7 +144,6 @@ func (h *Handler) SyncConfig(c *gin.Context) {
 		if err := tx.Model(&store.AppConfig{}).Where("id = ?", cur.ID).Updates(map[string]interface{}{
 			"manifests":         store.SecretJSON(data),
 			"last_applied":      store.SecretJSON(data),
-			"overridden_paths":  store.JSONField(nil),
 			"status_summary":    store.StatusSynced,
 			"status_checked_at": now,
 			"last_synced_at":    now,

@@ -86,8 +86,7 @@ func RegisterRoutes(api *gin.RouterGroup, deps Deps, st *store.Store) {
 	g.POST("/:name/configs/:cfgCluster/deploy", h.DeployConfig)
 	g.POST("/:name/configs/:cfgCluster/sync", h.SyncConfig)
 	g.POST("/:name/configs/:cfgCluster/offline", h.OfflineConfig)
-	g.GET("/:name/configs/:cfgCluster/merge-preview", h.MergePreview)
-	g.POST("/:name/configs/:cfgCluster/merge", h.MergeConfig)
+	g.POST("/:name/configs/:cfgCluster/resolve", h.ResolveConfig)
 	g.GET("/:name/configs/:cfgCluster/status", h.GetStatus)
 	g.GET("/:name/configs/:cfgCluster/resources", h.GetResources)
 	g.POST("/:name/configs/:cfgCluster/restart", h.RestartConfig)
@@ -194,7 +193,7 @@ func (h *Handler) recordOperation(id identity, entry store.HistoryEntry, success
 }
 
 // bindOptionalJSON parses an optional JSON body; an empty body yields the
-// zero struct so endpoints like deploy/offline/merge accept bare POSTs.
+// zero struct so endpoints like deploy/offline accept bare POSTs.
 func bindOptionalJSON(c *gin.Context, req interface{}) error {
 	if c.Request.Body == nil || c.Request.ContentLength == 0 {
 		return nil

@@ -24,6 +24,10 @@ interface SpaceContextType {
   // across every healthy cluster: a space exists only on the clusters it was
   // created on, so a single-cluster list would hide it everywhere else.
   spaces: string[]
+  // Clusters each space exists on, keyed by space name. Derived from the same
+  // lists as spaces, so a space adopted on a cluster appears there even
+  // before any application uses it.
+  spaceClusters: Record<string, string[]>
   // null means "all spaces".
   currentSpace: string | null
   // Syncs the selection into state, the ?space= query param and localStorage.
@@ -77,18 +81,28 @@ export function SpaceProvider({ children }: { children: React.ReactNode }) {
     })),
   })
 
-  const spaces = useMemo(() => {
-    const names = new Set<string>()
-    for (const result of listResults) {
+  // listResults[i] is healthyClusters[i]'s list; map each listed namespace
+  // back to the cluster it was seen on, and derive the space-name list from
+  // the same pass.
+  const spaceClusters = useMemo(() => {
+    const bySpace: Record<string, string[]> = {}
+    listResults.forEach((result, index) => {
+      const cluster = healthyClusters[index]
       for (const ns of result.data?.items ?? []) {
-        if (ns.metadata?.name) names.add(ns.metadata.name)
+        const name = ns.metadata?.name
+        if (name) (bySpace[name] ??= []).push(cluster)
       }
-    }
-    return [...names].sort()
+    })
+    for (const clusters of Object.values(bySpace)) clusters.sort()
+    return bySpace
     // listResults identity churns every render; the derived items array is
     // what actually matters.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [listResults.map((r) => r.dataUpdatedAt).join()])
+  }, [listResults.map((r) => r.dataUpdatedAt).join(), healthyClusters])
+  const spaces = useMemo(
+    () => Object.keys(spaceClusters).sort(),
+    [spaceClusters]
+  )
   const isLoading = listResults.some((r) => r.isLoading)
   const error =
     listResults.length > 0 && listResults.every((r) => r.isError)
@@ -160,6 +174,7 @@ export function SpaceProvider({ children }: { children: React.ReactNode }) {
 
   const value: SpaceContextType = {
     spaces,
+    spaceClusters,
     currentSpace,
     setCurrentSpace,
     isLoading,
@@ -175,4 +190,34 @@ export function useSpaces() {
     throw new Error('useSpaces must be used within a SpaceProvider')
   }
   return context
+}
+
+// Back-fills ?space= on pages that resolve a missing param against the active
+// space (lists, settings), so the URL reflects what is shown and stays
+// shareable. An explicit empty ?space= is never overwritten: it is the
+// deliberate "global view" choice (see ApplicationSettingsPage).
+export function useSyncSpaceParam() {
+  const { currentSpace } = useSpaces()
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  useEffect(() => {
+    if (currentSpace === null || searchParams.has('space')) return
+    setSearchParams(
+      (prev) => {
+        const nextParams = new URLSearchParams(prev)
+        nextParams.set('space', currentSpace)
+        return nextParams
+      },
+      { replace: true }
+    )
+  }, [searchParams, currentSpace, setSearchParams])
+}
+
+// Appends the active space to an internal path so navigation keeps the scope;
+// a bare path under an active space would be re-synced by useSyncSpaceParam
+// anyway. No-op while "all spaces" is active.
+export function withSpaceParam(path: string, space: string | null): string {
+  if (!space) return path
+  const joiner = path.includes('?') ? '&' : '?'
+  return `${path}${joiner}space=${encodeURIComponent(space)}`
 }

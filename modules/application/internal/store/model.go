@@ -17,7 +17,7 @@ const (
 	RevSourceWizard      = "wizard"          // config saved from the wizard
 	RevSourceDeployImage = "deploy-image"    // image changed in the deploy dialog
 	RevSourceSync        = "sync"            // adopted from the cluster
-	RevSourceMerge       = "merge"           // conflict merge
+	RevSourceResolve     = "resolve"         // drift resolution
 	RevSourceCopy        = "copy"            // copied to another cluster
 	RevSourceYAML        = "yaml"            // full-manifests YAML edit
 	RevSourceRollback    = "rollback"        // rolled back to a revision
@@ -29,8 +29,6 @@ const (
 const (
 	StatusSynced     = "synced"
 	StatusDrift      = "drift"
-	StatusConflict   = "conflict"
-	StatusMerged     = "merged"
 	StatusUndeployed = "undeployed"
 	StatusError      = "error"
 )
@@ -75,8 +73,10 @@ type AppConfig struct {
 	// Manifests and LastApplied hold Secret data/stringData values, so both
 	// are encrypted at rest with KITE_ENCRYPT_KEY like revision snapshots
 	// (design §9); they arrive decrypted through GORM's Scanner.
-	Manifests   SecretJSON `json:"manifests" gorm:"type:text"`   // desired config, multi-doc
-	LastApplied SecretJSON `json:"lastApplied" gorm:"type:text"` // anchor read back after deploy/sync
+	Manifests SecretJSON `json:"manifests" gorm:"type:text"` // desired config, multi-doc
+	// LastApplied is the cluster-side baseline of the workflow publish gate,
+	// refreshed after deploy/sync/resolve.
+	LastApplied SecretJSON `json:"lastApplied" gorm:"type:text"`
 
 	// CredentialRef names the credential whose registry entries kite upserts
 	// into the namespace as a managed image pull secret before every publish;
@@ -86,7 +86,11 @@ type AppConfig struct {
 
 	StatusSummary   string     `json:"statusSummary" gorm:"type:varchar(20);not null;default:'';index"`
 	StatusCheckedAt *time.Time `json:"statusCheckedAt"`
-	OverriddenPaths JSONField  `json:"overriddenPaths" gorm:"type:text"` // knowingly-overridden drift paths
+
+	// ReadyReplicas/Replicas snapshot the live workload's replica counts during
+	// the status check; nil means undetected or no workload.
+	ReadyReplicas *int64 `json:"readyReplicas"`
+	Replicas      *int64 `json:"replicas"`
 
 	LastDeployedAt *time.Time `json:"lastDeployedAt"`
 	LastSyncedAt   *time.Time `json:"lastSyncedAt"`

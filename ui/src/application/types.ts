@@ -64,7 +64,7 @@ export interface ApplicationManifest {
 // ── Applications (apps_api.go) ──
 
 export type ApplicationStatusSummary =
-  'synced' | 'drift' | 'conflict' | 'merged' | 'undeployed' | 'error' | ''
+  'synced' | 'drift' | 'undeployed' | 'error' | ''
 
 export interface ApplicationConfigSummary {
   id: number
@@ -73,6 +73,13 @@ export interface ApplicationConfigSummary {
   statusSummary: ApplicationStatusSummary
   statusCheckedAt: string | null
   lastDeployedAt: string | null
+  // Live workload replica snapshot from the last persisted status check;
+  // null when the check did not reach the workload (undeployed / unchecked).
+  readyReplicas?: number | null
+  replicas?: number | null
+  /** The config's namespace lost the space label (space unlinked on that
+   *  cluster): the config stays visible but carries the unlinked marker. */
+  spaceUnlinked?: boolean
 }
 
 export interface Application {
@@ -119,22 +126,14 @@ export interface ApplicationConfig {
   namespace: string
   manifests: ApplicationManifest[]
   spec?: ApplicationSpec
-  lastApplied: ApplicationManifest[]
   /** Pull credential whose registry entries kite upserts as a managed
    *  image pull secret on every publish; empty disables it. */
   credentialRef: string
   statusSummary: ApplicationStatusSummary
   statusCheckedAt: string | null
-  overriddenPaths: string[]
   lastDeployedAt: string | null
   lastSyncedAt: string | null
   latestRev: number
-}
-
-export interface UpdateApplicationConfigRequest {
-  spec?: ApplicationSpec
-  manifests?: ApplicationManifest[]
-  expectedRev: number
 }
 
 // Wizard edits handed over to the deploy dialog: persisted as a revision and
@@ -161,6 +160,9 @@ export interface ApplicationDeployRequest {
   /** Create mode only (target config does not exist yet): deep-copy this
    *  cluster's manifests as the base instead of rendering App.Spec. */
   copyFrom?: string
+  /** Dry-run preview token echoed back on the real deploy: the server
+   *  re-computes the diff and answers 409 when the cluster moved on. */
+  previewToken?: string
 }
 
 export interface ApplicationDeployDocResult {
@@ -185,7 +187,9 @@ export interface ApplicationDocDiff {
   kind: string
   namespace?: string
   name: string
-  missingIn?: 'a' | 'b'
+  /** Set when the document exists on one side only: the side it is missing
+   *  from ("cluster" = DB-only, pending publish; "manifests" = cluster-only). */
+  missingIn?: 'manifests' | 'cluster'
   paths?: string[]
   truncated?: boolean
 }
@@ -196,10 +200,10 @@ export interface ApplicationDeployResponse {
   results: ApplicationDeployDocResult[]
   anchored: boolean
   anchorError?: string
-  drift?: ApplicationDocDiff[]
-  pending?: ApplicationDocDiff[]
   change?: ApplicationDocDiff[]
   preview?: ApplicationDeployDocPreview[]
+  /** Present on dry-run responses; echo it back on the real deploy. */
+  previewToken?: string
   latestRev?: number
 }
 
@@ -207,78 +211,7 @@ export interface ApplicationDeployResponse {
 // request carried a cluster (structurally identical to ApplicationDeployResponse).
 export type ApplicationDeployResult = ApplicationDeployResponse
 
-// 409 body of a deploy rejected by the conflict gate (deploy_api.go).
-export interface ApplicationConflict {
-  kind: string
-  namespace?: string
-  name: string
-  paths: string[]
-}
-
-// ── Merge (merge_api.go, syncops/merge.go) ──
-
-export const MERGE_DOC_ROOT_PATH = '$doc'
-
-export type ApplicationMergeChoice = 'ours' | 'theirs'
-
-export interface ApplicationMergeCollision {
-  path: string
-  base?: unknown
-  ours?: unknown
-  theirs?: unknown
-  chosen?: ApplicationMergeChoice
-}
-
-export interface ApplicationMergeAutoItem {
-  path: string
-  /** Value in the baseline before the cluster-side change (omitted when absent). */
-  base?: unknown
-  /** Adopted cluster-side value (omitted when the cluster deleted it). */
-  theirs?: unknown
-}
-
-export interface ApplicationMergeDocReport {
-  kind: string
-  namespace?: string
-  name: string
-  onlyIn?: 'ours' | 'theirs'
-  dropped?: boolean
-  autoAdopted?: ApplicationMergeAutoItem[]
-  overridden?: string[]
-  collisions?: ApplicationMergeCollision[]
-}
-
-export interface ApplicationMergePreview {
-  merged: ApplicationManifest[]
-  docs: ApplicationMergeDocReport[]
-  /** False when confirming ends in a synced config (pure adoption): no publish follows. */
-  publishRequired?: boolean
-}
-
-export interface ApplicationMergeRequest {
-  // Keys are scoped paths "<docKey>:<path>", values are ours|theirs.
-  choices?: Record<string, ApplicationMergeChoice>
-  // Scoped paths of auto-adopted cluster changes reverted to the baseline;
-  // persisted as OverriddenPaths (知情覆盖).
-  rollbacks?: string[]
-}
-
-export interface ApplicationMergeResponse {
-  latestRev: number
-  overriddenPaths: string[]
-  /** False when the merged set already matches the cluster (pure adoption): re-anchored, no publish needed. */
-  publishRequired?: boolean
-}
-
-// ── Sync / offline (sync_api.go, offline_api.go) ──
-
-export interface ApplicationSyncResponse {
-  success: boolean
-  adopted: string[]
-  kept: string[]
-  skipped: string[]
-  latestRev: number
-}
+// ── Offline (offline_api.go) ──
 
 export interface ApplicationOfflineFailure {
   doc: string
@@ -297,15 +230,41 @@ export interface ApplicationOfflineResponse {
   appUndeployed: boolean
 }
 
-// ── Status report (status_api.go) ──
+// ── Status (status_api.go) ──
+
+// One status document: the change set plus the redacted normalized live and
+// manifest views the diff paths refer to. A document missing on one side
+// omits that side's view and names it in missingIn.
+export interface ApplicationStatusDoc extends ApplicationDocDiff {
+  live?: ApplicationManifest
+  manifest?: ApplicationManifest
+}
 
 export interface ApplicationStatusReport {
   status: ApplicationStatusSummary
-  action?: string
+  docs: ApplicationStatusDoc[]
+  /** Stable hash of the diff behind this report; resolve requires it back. */
+  previewToken?: string
   checkedAt: string
-  drift: ApplicationDocDiff[]
-  pending: ApplicationDocDiff[]
   error?: string
+}
+
+// ── Resolve (resolve_api.go) ──
+
+// One document's selected drift paths: the live subtree at each path is
+// adopted into the stored manifests. Only documents present on both sides
+// are accepted — one-sided documents are handled by sync / publish.
+export interface ApplicationResolveAdoption {
+  kind: string
+  namespace?: string
+  name: string
+  paths: string[]
+}
+
+export interface ApplicationResolveRequest {
+  expectedRev: number
+  previewToken: string
+  adoptions: ApplicationResolveAdoption[]
 }
 
 // ── Revisions (revisions_api.go) ──
@@ -338,7 +297,7 @@ export interface ApplicationRevisionDetail {
 export interface ApplicationRollbackRequest {
   rev: number
   // One-step rollback: persist the rollback revision and publish it through
-  // the conflict-gated pipeline in the same request.
+  // the same pipeline as a deploy.
   deploy?: boolean
 }
 

@@ -47,7 +47,6 @@ type configResponse struct {
 	CredentialRef   string          `json:"credentialRef"`
 	StatusSummary   string          `json:"statusSummary"`
 	StatusCheckedAt *time.Time      `json:"statusCheckedAt"`
-	OverriddenPaths json.RawMessage `json:"overriddenPaths"`
 	LastDeployedAt  *time.Time      `json:"lastDeployedAt"`
 	LastSyncedAt    *time.Time      `json:"lastSyncedAt"`
 	LatestRev       int             `json:"latestRev"`
@@ -66,7 +65,6 @@ func toConfigResponse(cfg *store.AppConfig, latestRev int) configResponse {
 		LastApplied:     json.RawMessage(redactJSON(cfg.LastApplied)),
 		StatusSummary:   cfg.StatusSummary,
 		StatusCheckedAt: cfg.StatusCheckedAt,
-		OverriddenPaths: json.RawMessage(cfg.OverriddenPaths),
 		LastDeployedAt:  cfg.LastDeployedAt,
 		LastSyncedAt:    cfg.LastSyncedAt,
 		LatestRev:       latestRev,
@@ -273,15 +271,9 @@ func (h *Handler) UpdateConfig(c *gin.Context) {
 		}
 		cur.Manifests = store.SecretJSON(data)
 		if err := tx.Model(&store.AppConfig{}).Where("id = ?", cur.ID).
-			Updates(map[string]interface{}{
-				"manifests": cur.Manifests,
-				// The desired config was rewritten wholesale; a stale
-				// knowing-override whitelist must not survive it.
-				"overridden_paths": store.JSONField(nil),
-			}).Error; err != nil {
+			Update("manifests", cur.Manifests).Error; err != nil {
 			return err
 		}
-		cur.OverriddenPaths = store.JSONField(nil)
 		newRev, err = store.AppendRevisionTx(tx, cur.ID, source, cur.Manifests, h.deps.OperatorID(c), 0)
 		if err != nil {
 			return err

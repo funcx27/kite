@@ -49,7 +49,7 @@ func DocKeyOf(doc *unstructured.Unstructured) string {
 
 // DecodeManifests parses the stored JSON array of documents. Numbers are
 // canonicalized so values decoded from different sources (DB, requests,
-// ExtraYAML, cluster read-back) compare equal in diff and merge.
+// ExtraYAML, cluster read-back) compare equal in diff.
 func DecodeManifests(data []byte) ([]unstructured.Unstructured, error) {
 	if len(strings.TrimSpace(string(data))) == 0 {
 		return nil, nil
@@ -170,27 +170,6 @@ func canonicalizeNumbers(v interface{}) interface{} {
 			t[i] = canonicalizeNumbers(child)
 		}
 		return t
-	default:
-		return v
-	}
-}
-
-// DeepCopyValue clones a decoded JSON tree so merge results never share
-// structure with their base/ours/theirs inputs.
-func DeepCopyValue(v interface{}) interface{} {
-	switch t := v.(type) {
-	case map[string]interface{}:
-		out := make(map[string]interface{}, len(t))
-		for k, child := range t {
-			out[k] = DeepCopyValue(child)
-		}
-		return out
-	case []interface{}:
-		out := make([]interface{}, len(t))
-		for i, child := range t {
-			out[i] = DeepCopyValue(child)
-		}
-		return out
 	default:
 		return v
 	}

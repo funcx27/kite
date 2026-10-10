@@ -1,12 +1,14 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/funcx27/kite/modules/application/internal/render"
@@ -35,6 +37,13 @@ type configSummary struct {
 	StatusSummary   string     `json:"statusSummary"`
 	StatusCheckedAt *time.Time `json:"statusCheckedAt"`
 	LastDeployedAt  *time.Time `json:"lastDeployedAt"`
+	ReadyReplicas   *int64     `json:"readyReplicas"`
+	Replicas        *int64     `json:"replicas"`
+	// SpaceUnlinked marks a config whose namespace lost the space label (space
+	// was unlinked on that cluster) — the config stays visible with its own
+	// state instead of being filtered away. Absent when the cluster could not
+	// be queried, degrading to fully visible.
+	SpaceUnlinked bool `json:"spaceUnlinked,omitempty"`
 }
 
 type createAppRequest struct {
@@ -61,7 +70,9 @@ type updateAppRequest struct {
 	Spec        json.RawMessage `json:"spec"`
 }
 
-func toAppResponse(app *store.App) appResponse {
+// toAppResponse annotates each config with SpaceUnlinked against the labeled
+// spaces index; a nil or cluster-missing index annotates nothing.
+func toAppResponse(app *store.App, spaces map[string]map[string]bool) appResponse {
 	resp := appResponse{
 		ID:          app.ID,
 		Name:        app.Name,
@@ -73,14 +84,20 @@ func toAppResponse(app *store.App) appResponse {
 		Configs:     make([]configSummary, 0, len(app.Configs)),
 	}
 	for _, cfg := range app.Configs {
-		resp.Configs = append(resp.Configs, configSummary{
+		sum := configSummary{
 			ID:              cfg.ID,
 			Cluster:         cfg.Cluster,
 			Namespace:       cfg.Namespace,
 			StatusSummary:   cfg.StatusSummary,
 			StatusCheckedAt: cfg.StatusCheckedAt,
 			LastDeployedAt:  cfg.LastDeployedAt,
-		})
+			ReadyReplicas:   cfg.ReadyReplicas,
+			Replicas:        cfg.Replicas,
+		}
+		if labeled, ok := spaces[cfg.Cluster]; ok && !labeled[cfg.Namespace] {
+			sum.SpaceUnlinked = true
+		}
+		resp.Configs = append(resp.Configs, sum)
 	}
 	return resp
 }
@@ -94,14 +111,63 @@ func (h *Handler) ListApps(c *gin.Context) {
 		return
 	}
 	cluster := c.GetString(clusterNameContextKey)
-	visible := make([]appResponse, 0, len(apps))
+	scoped := make([]store.App, 0, len(apps))
 	for i := range apps {
 		if !h.deps.Authorize(c, authzResource, "get", cluster, apps[i].Namespace) {
 			continue
 		}
-		visible = append(visible, toAppResponse(&apps[i]))
+		scoped = append(scoped, apps[i])
+	}
+	spaces := h.labeledSpaces(c.Request.Context(), appConfigClusters(scoped))
+	visible := make([]appResponse, 0, len(scoped))
+	for i := range scoped {
+		visible = append(visible, toAppResponse(&scoped[i], spaces))
 	}
 	c.JSON(http.StatusOK, gin.H{"applications": visible, "total": len(visible)})
+}
+
+// labeledSpaces maps each queried cluster to the set of namespaces carrying
+// the space marker, read with one label-selector list per cluster. A cluster
+// that cannot be queried (unknown or offline) is absent from the map, which
+// callers treat as "keep everything visible" — unreachable clusters degrade
+// like the status column's unreachable marker, they never hide applications.
+func (h *Handler) labeledSpaces(ctx context.Context, clusters []string) map[string]map[string]bool {
+	out := make(map[string]map[string]bool, len(clusters))
+	for _, cluster := range clusters {
+		cli, err := h.deps.ResolveCluster(ctx, cluster)
+		if err != nil {
+			continue
+		}
+		list := &unstructured.UnstructuredList{}
+		list.SetAPIVersion("v1")
+		list.SetKind("NamespaceList")
+		if err := cli.List(ctx, list, client.MatchingLabels{store.LabelKiteSpace: "true"}); err != nil {
+			continue
+		}
+		names := make(map[string]bool, len(list.Items))
+		for i := range list.Items {
+			if name := list.Items[i].GetName(); name != "" {
+				names[name] = true
+			}
+		}
+		out[cluster] = names
+	}
+	return out
+}
+
+// appConfigClusters returns the distinct clusters referenced by the configs.
+func appConfigClusters(apps []store.App) []string {
+	seen := map[string]bool{}
+	for i := range apps {
+		for j := range apps[i].Configs {
+			seen[apps[i].Configs[j].Cluster] = true
+		}
+	}
+	clusters := make([]string, 0, len(seen))
+	for name := range seen {
+		clusters = append(clusters, name)
+	}
+	return clusters
 }
 
 // validateCreateAppReq parses the create body and enforces the DNS-1123 and
@@ -171,7 +237,7 @@ func (h *Handler) CreateApp(c *gin.Context) {
 			Cluster: authCluster, ResourceType: authzResource, ResourceName: app.Name,
 			Namespace: app.Namespace, Operation: "create", YAML: redacted(app.Spec),
 		})
-		c.JSON(http.StatusCreated, toAppResponse(&app))
+		c.JSON(http.StatusCreated, toAppResponse(&app, nil))
 		return
 	}
 	h.createAndDeployApp(c, id, &app, req.Cluster, cli)
@@ -211,11 +277,11 @@ func (h *Handler) createAndDeployApp(c *gin.Context, id identity, app *store.App
 		return
 	}
 	h.auditAppCreated(id, app, &cfg, manifests)
-	resp, conflicts, err := h.runPublish(c.Request.Context(), id, app, &cfg, cli, docs, false)
-	if !h.publishFailure(c, err, conflicts) {
+	resp, err := h.applyPublish(c.Request.Context(), id, app, &cfg, cli, docs, false, "")
+	if !h.publishFailure(c, err) {
 		return
 	}
-	c.JSON(http.StatusCreated, createAppResponse{appResponse: toAppResponse(app), Deploy: &resp})
+	c.JSON(http.StatusCreated, createAppResponse{appResponse: toAppResponse(app, nil), Deploy: &resp})
 }
 
 // auditAppCreated records the app-create and config-create history entries of
@@ -239,7 +305,8 @@ func (h *Handler) GetApp(c *gin.Context) {
 	if !h.authorize(c, "get", c.GetString(clusterNameContextKey), app.Namespace) {
 		return
 	}
-	c.JSON(http.StatusOK, toAppResponse(app))
+	spaces := h.labeledSpaces(c.Request.Context(), appConfigClusters([]store.App{*app}))
+	c.JSON(http.StatusOK, toAppResponse(app, spaces))
 }
 
 func (h *Handler) UpdateApp(c *gin.Context) {
@@ -274,7 +341,7 @@ func (h *Handler) UpdateApp(c *gin.Context) {
 		YAML:         redacted(app.Spec),
 		PreviousYAML: redacted(previous),
 	})
-	c.JSON(http.StatusOK, toAppResponse(app))
+	c.JSON(http.StatusOK, toAppResponse(app, nil))
 }
 
 // DeleteApp removes an app only when none of its cluster configs is deployed

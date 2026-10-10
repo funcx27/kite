@@ -10,6 +10,7 @@ import {
 import type { Application } from '@/application/types'
 import { useQueryClient } from '@tanstack/react-query'
 import * as yaml from 'js-yaml'
+import { Eye, Undo2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -38,7 +39,8 @@ const revisionSourceKeys: Record<string, string> = {
   wizard: 'wizard',
   'deploy-image': 'deployImage',
   sync: 'sync',
-  merge: 'merge',
+  resolve: 'resolve',
+  'pull-credential': 'pullCredential',
   copy: 'copy',
   yaml: 'yaml',
   rollback: 'rollback',
@@ -78,6 +80,11 @@ export function HistoryDialog({
     original: string
     modified: string
   }>({ open: false, rev: 0, fromRev: 0, original: '', modified: '' })
+  const [view, setView] = useState<{
+    open: boolean
+    content: string
+    title: string
+  }>({ open: false, content: '', title: '' })
 
   const revisions = data?.revisions ?? []
 
@@ -104,6 +111,21 @@ export function HistoryDialog({
         original: yaml.dump(older.manifests),
         modified: yaml.dump(newer.manifests),
         title: t('applications.history.diffTitle', { from: a, to: b }),
+      })
+    } catch (err) {
+      toast.error(translateError(err, t))
+    }
+  }
+
+  // Full manifests of one revision in a read-only viewer; Secret values are
+  // already masked (*** — see the row's redacted badge).
+  const viewRevision = async (rev: number) => {
+    try {
+      const revision = await fetchApplicationRevision(app.name, cluster, rev)
+      setView({
+        open: true,
+        content: yaml.dump(revision.manifests),
+        title: t('applications.history.viewTitle', { rev }),
       })
     } catch (err) {
       toast.error(translateError(err, t))
@@ -251,22 +273,39 @@ export function HistoryDialog({
                         {formatDate(revision.createdAt)}
                       </td>
                       <td className="px-3 py-2 text-right">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={rollingBack || revision.rev === latestRev}
-                          title={
-                            revision.rev === latestRev
-                              ? t('applications.history.rollbackSelfHint')
-                              : t('applications.history.rollbackHint')
-                          }
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            void openRollbackDiff(revision.rev)
-                          }}
-                        >
-                          {t('applications.history.rollback')}
-                        </Button>
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="size-8"
+                            title={t('applications.history.viewYaml')}
+                            aria-label={t('applications.history.viewYaml')}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              void viewRevision(revision.rev)
+                            }}
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="size-8"
+                            disabled={rollingBack || revision.rev === latestRev}
+                            title={
+                              revision.rev === latestRev
+                                ? t('applications.history.rollbackSelfHint')
+                                : t('applications.history.rollbackHint')
+                            }
+                            aria-label={t('applications.history.rollback')}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              void openRollbackDiff(revision.rev)
+                            }}
+                          >
+                            <Undo2 className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -310,6 +349,17 @@ export function HistoryDialog({
         original={diff.original}
         modified={diff.modified}
         title={diff.title}
+      />
+
+      <YamlDiffViewer
+        viewOnly
+        raw
+        open={view.open}
+        onOpenChange={(nextOpen) =>
+          setView((prev) => ({ ...prev, open: nextOpen }))
+        }
+        content={view.content}
+        title={view.title}
       />
 
       {rollbackDiff.open && rollbackDiff.original === rollbackDiff.modified ? (

@@ -3,6 +3,7 @@ import {
   ColumnDef,
   flexRender,
   getCoreRowModel,
+  Header,
   useReactTable,
 } from '@tanstack/react-table'
 import { useTranslation } from 'react-i18next'
@@ -36,6 +37,12 @@ export interface Action<T> {
   dynamicLabel?: (item: T) => string | React.ReactNode
   onClick: (item: T) => void
   shouldDisable?: (item: T) => boolean
+}
+
+function renderHeaderCell<T>(header: Header<T, unknown>) {
+  return header.isPlaceholder
+    ? null
+    : flexRender(header.column.columnDef.header, header.getContext())
 }
 
 export function ActionTable<T>({
@@ -112,9 +119,7 @@ export function ActionTable<T>({
                   key={header.id}
                   className={header.id === 'actions' ? 'w-14 text-right' : ''}
                 >
-                  {header.isPlaceholder
-                    ? null
-                    : (header.column.columnDef.header as React.ReactNode)}
+                  {renderHeaderCell(header)}
                 </TableHead>
               ))}
             </TableRow>

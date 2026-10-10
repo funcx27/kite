@@ -1,5 +1,6 @@
 import { Check, Layers } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { useNavigate } from 'react-router-dom'
 
 import {
   DropdownMenuItem,
@@ -8,6 +9,7 @@ import {
   DropdownMenuSubTrigger,
 } from '@/components/ui/dropdown-menu'
 
+import { useSpaces, withSpaceParam } from './space-context'
 import { useWorkMode } from './work-mode-context'
 
 // The work-mode radio group, inserted into the host user menu as its single
@@ -15,6 +17,8 @@ import { useWorkMode } from './work-mode-context'
 export function WorkModeMenuItem() {
   const { t } = useTranslation()
   const { mode, setMode } = useWorkMode()
+  const { currentSpace } = useSpaces()
+  const navigate = useNavigate()
 
   return (
     <DropdownMenuSub>
@@ -24,7 +28,10 @@ export function WorkModeMenuItem() {
       </DropdownMenuSubTrigger>
       <DropdownMenuSubContent>
         <DropdownMenuItem
-          onClick={() => setMode('application')}
+          onClick={() => {
+            setMode('application')
+            navigate(withSpaceParam('/applications', currentSpace))
+          }}
           role="menuitemradio"
           aria-checked={mode === 'application'}
           className={`flex items-center justify-between gap-2 cursor-pointer ${

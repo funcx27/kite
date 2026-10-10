@@ -51,7 +51,6 @@ export function CreateSpaceDialog({
   defaultCluster?: string
 }) {
   const { t } = useTranslation()
-  const { spaces } = useSpaces()
   const { clusters } = useCluster()
   const upsertQuotas = useUpsertSpaceQuotasMutation()
   const availableClusters = useMemo(
@@ -61,11 +60,6 @@ export function CreateSpaceDialog({
   const [name, setName] = useState('')
   const [nameError, setNameError] = useState('')
   const [selectedClusters, setSelectedClusters] = useState<string[]>([])
-  // Name that already succeeded on at least one cluster in this dialog
-  // session. Retrying it after a partial failure must bypass the
-  // duplicate-name precheck: the invalidated namespace list already contains
-  // it while the upsert itself is idempotent.
-  const succeededNameRef = useRef<string | null>(null)
   // Values of unchecked clusters are kept so a mistaken uncheck does not
   // wipe what was typed.
   const [quotaInputs, setQuotaInputs] = useState<
@@ -101,7 +95,6 @@ export function CreateSpaceDialog({
     setQuotaInputs({})
     setExistingQuotas({})
     setExistingTick((tick) => tick + 1)
-    succeededNameRef.current = null
     const current = getCurrentCluster()
     const fallback =
       defaultCluster ??
@@ -166,10 +159,6 @@ export function CreateSpaceDialog({
       setNameError(t('sidebar.spaces.invalidName'))
       return
     }
-    if (spaces.includes(trimmed) && succeededNameRef.current !== trimmed) {
-      setNameError(t('sidebar.spaces.nameExists'))
-      return
-    }
     if (selectedClusters.length === 0) {
       setNameError(t('sidebar.spaces.clusterRequired'))
       return
@@ -197,9 +186,6 @@ export function CreateSpaceDialog({
         setNameError('')
         onOpenChange(false)
       } else {
-        if (result.succeeded.length > 0) {
-          succeededNameRef.current = trimmed
-        }
         const detail = result.failed
           .map((f) => `${f.cluster}: ${translateError(f.error, t)}`)
           .join('; ')

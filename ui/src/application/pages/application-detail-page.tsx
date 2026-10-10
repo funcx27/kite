@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { fetchApplicationConfig, useApplication } from '@/application/api'
+import { useApplication, useApplicationConfig } from '@/application/api'
 import {
   ApplicationWizard,
   type ApplicationWizardMode,
@@ -7,46 +7,32 @@ import {
 import { ClusterTab } from '@/application/components/cluster-tab'
 import { DeployDialog } from '@/application/components/deploy-dialog'
 import { HistoryDialog } from '@/application/components/history-dialog'
-import { MergeDialog } from '@/application/components/merge-dialog'
 import { OfflineDialog } from '@/application/components/offline-dialog'
-import {
-  ApplicationStatusChip,
-  ClusterStatusDot,
-} from '@/application/components/status-badge'
-import type { Application, ApplicationPendingChange } from '@/application/types'
+import { ApplicationStatusChip } from '@/application/components/status-badge'
+import type {
+  Application,
+  ApplicationConfigSummary,
+  ApplicationPendingChange,
+} from '@/application/types'
+import { useSpaces, withSpaceParam } from '@/platform/space-context'
 import { useWorkflows } from '@/workflow/api'
 import * as yaml from 'js-yaml'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { toast } from 'sonner'
 
-import { translateError } from '@/lib/utils'
 import { useCluster } from '@/hooks/use-cluster'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { YamlDiffViewer } from '@/components/yaml-diff-viewer'
 
-type DialogName =
-  | 'deploy'
-  | 'deploy-copy'
-  | 'merge'
-  | 'offline'
-  | 'history'
-  | 'lastApplied'
-  | 'wizard'
+type DialogName = 'deploy' | 'deploy-copy' | 'offline' | 'history' | 'wizard'
 
 // Application detail page (design §11): cluster-tab layout. The deploy
 // dialog is the only modify+publish entry — existing configs, the first
 // publish of an undeployed app, and copy-to-another-cluster (createCopyFrom)
-// all go through it; merge is reachable only from the conflict states;
-// history rollback persists and publishes in one confirm.
+// all go through it; drift side-taking lives in the cluster tab; history
+// rollback persists and publishes in one confirm.
 export function ApplicationDetailPage() {
   const { t } = useTranslation()
   const { name, cluster: clusterParam } = useParams<{
@@ -55,6 +41,7 @@ export function ApplicationDetailPage() {
   }>()
   const navigate = useNavigate()
   const { currentCluster } = useCluster()
+  const { currentSpace } = useSpaces()
   const { data: app, isLoading, error } = useApplication(name)
   usePageTitle(app ? `${app.namespace} / ${app.name}` : t('nav.applications'))
 
@@ -63,13 +50,17 @@ export function ApplicationDetailPage() {
   // Copy-create flow: the cluster whose config is deep-copied (the tab the
   // menu was opened from); null unless the copy deploy dialog is open.
   const [copySource, setCopySource] = useState<string | null>(null)
-  const [lastAppliedYaml, setLastAppliedYaml] = useState('')
   // Wizard edits waiting for [确认发布]: carried into the deploy dialog and
   // only persisted together with the publish; cancelling discards them.
   const [pendingChange, setPendingChange] =
     useState<ApplicationPendingChange | null>(null)
 
   const configs = useMemo(() => app?.configs ?? [], [app])
+  // An application belongs to the space it was created in (its namespace);
+  // outside the active space the detail view is out of scope. The global
+  // view (currentSpace null) sees every app.
+  const outOfSpace =
+    app !== undefined && currentSpace !== null && app.namespace !== currentSpace
   // The active cluster is a URL path segment (app → cluster → pod hierarchy),
   // so views are shareable; a missing or stale segment falls back to the
   // first config.
@@ -77,12 +68,20 @@ export function ApplicationDetailPage() {
     configs.find((config) => config.cluster === clusterParam) ?? configs[0]
 
   useEffect(() => {
-    if (configs.length === 0) return
+    if (outOfSpace || configs.length === 0) return
     if (clusterParam && configs.some((c) => c.cluster === clusterParam)) return
     navigate(`/applications/${name}/clusters/${configs[0].cluster}`, {
       replace: true,
     })
-  }, [configs, clusterParam, name, navigate])
+  }, [outOfSpace, configs, clusterParam, name, navigate])
+
+  // Space gate: switching away from an app's space returns to that space's
+  // application list instead of showing a foreign app.
+  useEffect(() => {
+    if (outOfSpace) {
+      navigate(withSpaceParam('/applications', currentSpace), { replace: true })
+    }
+  }, [outOfSpace, currentSpace, navigate])
 
   // setActiveTab moves between cluster routes; an empty value drops back to
   // the bare app route and lets the effect above pick the first config.
@@ -96,17 +95,6 @@ export function ApplicationDetailPage() {
   const openWizardForEdit = () => {
     setWizardMode('cluster')
     setOpenDialog('wizard')
-  }
-
-  const viewLastApplied = async () => {
-    if (!app || !current) return
-    try {
-      const detail = await fetchApplicationConfig(app.name, current.cluster)
-      setLastAppliedYaml(yaml.dump(detail.lastApplied ?? []))
-      setOpenDialog('lastApplied')
-    } catch (err) {
-      toast.error(translateError(err, t))
-    }
   }
 
   if (isLoading) {
@@ -123,6 +111,11 @@ export function ApplicationDetailPage() {
         {t('applications.detail.notFound', { name: name ?? '' })}
       </div>
     )
+  }
+
+  // Redirecting out of scope: render nothing so the foreign app never paints.
+  if (outOfSpace) {
+    return null
   }
 
   return (
@@ -171,37 +164,40 @@ export function ApplicationDetailPage() {
               <TabsList>
                 {configs.map((config) => (
                   <TabsTrigger key={config.cluster} value={config.cluster}>
-                    <ClusterStatusDot
-                      cluster={config.cluster}
-                      statusSummary={config.statusSummary}
-                      className="mr-1.5"
-                    />
                     {config.cluster}
                   </TabsTrigger>
                 ))}
               </TabsList>
             </Tabs>
           )}
-          {current && (
-            <ClusterTab
-              key={current.cluster}
-              app={app}
-              config={current}
-              active={true}
-              onDeploy={() => {
-                setCopySource(null)
-                setOpenDialog('deploy')
-              }}
-              onOffline={() => setOpenDialog('offline')}
-              onMerge={() => setOpenDialog('merge')}
-              onHistory={() => setOpenDialog('history')}
-              onCopyConfig={() => {
-                setCopySource(current.cluster)
-                setOpenDialog('deploy-copy')
-              }}
-              onViewLastApplied={() => void viewLastApplied()}
-            />
-          )}
+          {current &&
+            (current.spaceUnlinked ? (
+              <UnlinkedClusterPanel
+                app={app}
+                config={current}
+                onCopyConfig={() => {
+                  setCopySource(current.cluster)
+                  setOpenDialog('deploy-copy')
+                }}
+              />
+            ) : (
+              <ClusterTab
+                key={current.cluster}
+                app={app}
+                config={current}
+                active={true}
+                onDeploy={() => {
+                  setCopySource(null)
+                  setOpenDialog('deploy')
+                }}
+                onOffline={() => setOpenDialog('offline')}
+                onHistory={() => setOpenDialog('history')}
+                onCopyConfig={() => {
+                  setCopySource(current.cluster)
+                  setOpenDialog('deploy-copy')
+                }}
+              />
+            ))}
         </>
       )}
 
@@ -224,16 +220,6 @@ export function ApplicationDetailPage() {
               }
             }}
             onEditConfig={openWizardForEdit}
-            onResolveConflict={() => setOpenDialog('merge')}
-          />
-          <MergeDialog
-            app={app}
-            cluster={current.cluster}
-            open={openDialog === 'merge'}
-            onOpenChange={(nextOpen) => {
-              if (!nextOpen) setOpenDialog(null)
-            }}
-            onMerged={() => setOpenDialog('deploy')}
           />
           <OfflineDialog
             app={app}
@@ -293,7 +279,6 @@ export function ApplicationDetailPage() {
           }
         }}
         onEditConfig={openWizardForEdit}
-        onResolveConflict={() => setOpenDialog('merge')}
       />
 
       <ApplicationWizard
@@ -311,27 +296,57 @@ export function ApplicationDetailPage() {
           setOpenDialog(copySource ? 'deploy-copy' : 'deploy')
         }}
       />
+    </div>
+  )
+}
 
-      <Dialog
-        open={openDialog === 'lastApplied'}
-        onOpenChange={(nextOpen) => {
-          if (!nextOpen) setOpenDialog(null)
-        }}
-      >
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>
-              {t('applications.detail.viewLastApplied')}
-            </DialogTitle>
-            <DialogDescription className="sr-only">
-              {t('applications.detail.viewLastApplied')}
-            </DialogDescription>
-          </DialogHeader>
-          <pre className="max-h-[60vh] overflow-auto rounded-lg bg-zinc-950 p-4 font-mono text-xs leading-5 text-zinc-300">
-            {lastAppliedYaml || '—'}
-          </pre>
-        </DialogContent>
-      </Dialog>
+// Unlinked config: the namespace left the space, so the tab shows no runtime
+// view at all — only the stored config stays reachable: view its YAML, or
+// copy it to another cluster (the copy deploy dialog deep-copies this base).
+function UnlinkedClusterPanel({
+  app,
+  config,
+  onCopyConfig,
+}: {
+  app: Application
+  config: ApplicationConfigSummary
+  onCopyConfig: () => void
+}) {
+  const { t } = useTranslation()
+  const [viewYaml, setViewYaml] = useState(false)
+  const { data: detail } = useApplicationConfig(app.name, config.cluster)
+
+  return (
+    <div className="flex flex-col items-center gap-2 rounded-xl border bg-card px-6 py-16 text-center">
+      <div className="text-sm font-medium">
+        {t('applications.detail.unlinkedTitle')}
+      </div>
+      <div className="max-w-lg text-xs text-muted-foreground">
+        {t('applications.detail.unlinkedHint')}
+      </div>
+      <div className="mt-2 flex items-center gap-2">
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!detail}
+          onClick={() => setViewYaml(true)}
+        >
+          {t('applications.detail.viewConfigYaml')}
+        </Button>
+        <Button size="sm" onClick={onCopyConfig}>
+          {t('applications.detail.copyToCluster')}
+        </Button>
+      </div>
+      <YamlDiffViewer
+        viewOnly
+        raw
+        open={viewYaml}
+        onOpenChange={setViewYaml}
+        content={viewYaml && detail ? yaml.dump(detail.manifests) : ''}
+        title={t('applications.detail.configYamlTitle', {
+          cluster: config.cluster,
+        })}
+      />
     </div>
   )
 }

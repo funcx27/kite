@@ -3,7 +3,7 @@
 // edit / delete). The list API carries no trigger config, so trigger badges
 // live in the editor only.
 import { useMemo, useState } from 'react'
-import { useSpaces } from '@/platform/space-context'
+import { useSpaces, useSyncSpaceParam } from '@/platform/space-context'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
@@ -68,6 +68,7 @@ function WorkflowList() {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const { currentSpace } = useSpaces()
+  useSyncSpaceParam()
   const { data: workflows, isLoading } = useWorkflows()
   const [search, setSearch] = useState('')
   // 'all' is the sentinel for "no filter" — Radix SelectItem rejects ''.

@@ -8,7 +8,6 @@ import {
 import { applicationStatusLabel } from '@/application/lib'
 import type {
   Application,
-  ApplicationConflict,
   ApplicationDeployDocPreview,
   ApplicationDocDiff,
   ApplicationPendingChange,
@@ -56,8 +55,6 @@ interface DeployDialogProps {
   createCopyFrom?: string
   /** Opens the wizard for [修改配置] */
   onEditConfig?: () => void
-  /** Opens the merge preview for the conflict state */
-  onResolveConflict?: () => void
   /** Wizard edits carried into this dialog: persisted and published by the
    *  same [确认发布] request; cancelling discards them. */
   pending?: ApplicationPendingChange
@@ -71,6 +68,9 @@ interface DryRunState {
   change: ApplicationDocDiff[]
   changeCount: number
   preview: ApplicationDeployDocPreview[]
+  /** Dry-run response token; [确认发布] echoes it back so the server can
+   *  reject the push (409) when the cluster moved on after the preview. */
+  previewToken?: string
 }
 
 const idleDryRun: DryRunState = {
@@ -87,13 +87,12 @@ const idleDryRun: DryRunState = {
 // an empty-string item value); sent to the backend as the empty string.
 const pullCredentialNone = '__none__'
 
-// The deploy dialog is the single entry for modify + publish (design §11):
-// quick image edit, pending wizard edits, a server-side dry-run preview with
-// expandable field-level detail, and the conflict state that only offers the
-// three-way merge. Persisting a revision and applying it happen together on
-// [确认发布] — never before. Create modes (first publish / copy-create) also
-// go through here: the target config does not exist until the confirm request
-// creates it and publishes in one chain.
+// The deploy dialog is the single entry for modify + publish: quick image
+// edit, pending wizard edits, and a server-side dry-run preview with
+// expandable field-level detail. Persisting a revision and applying it happen
+// together on [确认发布] — never before. Create modes (first publish /
+// copy-create) also go through here: the target config does not exist until
+// the confirm request creates it and publishes in one chain.
 export function DeployDialog({
   app,
   open,
@@ -102,7 +101,6 @@ export function DeployDialog({
   firstPublish = false,
   createCopyFrom,
   onEditConfig,
-  onResolveConflict,
   pending,
 }: DeployDialogProps) {
   const { t } = useTranslation()
@@ -115,7 +113,6 @@ export function DeployDialog({
   const [image, setImage] = useState('')
   const [deploying, setDeploying] = useState(false)
   const [pullCredential, setPullCredential] = useState(pullCredentialNone)
-  const [conflicts, setConflicts] = useState<ApplicationConflict[] | null>(null)
   const [diffDoc, setDiffDoc] = useState<{
     kind: string
     name: string
@@ -141,7 +138,6 @@ export function DeployDialog({
   useEffect(() => {
     if (open) {
       setTargetCluster(cluster)
-      setConflicts(null)
       setDiffDoc(null)
       setImage('')
       setPullCredential(pullCredentialNone)
@@ -257,11 +253,6 @@ export function DeployDialog({
   const pullCredentialRef =
     pullCredential === pullCredentialNone ? '' : pullCredential
 
-  const drift = statusReport?.drift ?? []
-  // Only the gate verdict (action=merge) or a real 409 blocks publishing;
-  // drift alone stays non-empty in the merged state until the publish lands.
-  const isConflict = statusReport?.action === 'merge' || conflicts !== null
-
   const originalImage =
     pending?.spec?.workload.image ??
     config?.spec?.workload.image ??
@@ -272,7 +263,8 @@ export function DeployDialog({
   // pending wizard edits and image ride the preview and are only injected in
   // memory, so previews never write revisions (design §6). Create modes run
   // it too once a target cluster is picked — the backend renders/copies the
-  // base manifests in memory.
+  // base manifests in memory. The response's previewToken pins this diff for
+  // the confirm request.
   const runDryRun = useCallback(async () => {
     if (!activeCluster) return
     setDryRun((prev) => ({ ...prev, loading: true, error: null }))
@@ -303,13 +295,9 @@ export function DeployDialog({
         change,
         changeCount,
         preview: result.preview ?? [],
+        previewToken: result.previewToken,
       })
     } catch (err) {
-      if (err instanceof ApplicationApiError && err.status === 409) {
-        setConflicts(
-          (err.payload.conflicts as ApplicationConflict[] | undefined) ?? []
-        )
-      }
       setDryRun({
         loading: false,
         error: translateError(err, t),
@@ -332,25 +320,21 @@ export function DeployDialog({
   ])
 
   useEffect(() => {
-    if (!open || isConflict) return
+    if (!open) return
     const timer = setTimeout(() => void runDryRun(), 300)
     return () => clearTimeout(timer)
     // Re-validate when the image input settles or the config appears.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, activeCluster, image, isConflict, config, pending])
+  }, [open, activeCluster, image, config, pending])
 
-  // A merged config may have nothing to push (pure adoption or legacy state):
-  // publishing is the no-op apply that advances the consistency anchor.
-  const mergedPending = statusReport?.status === 'merged'
+  // Publishing needs a real change to push (create modes always have one).
   const hasChanges =
     isCreateMode ||
     imageChanged ||
-    mergedPending ||
     dryRun.changeCount > 0 ||
     dryRun.creates.length > 0
 
   const canConfirm =
-    !isConflict &&
     !dryRun.loading &&
     !dryRun.error &&
     hasChanges &&
@@ -365,6 +349,7 @@ export function DeployDialog({
         image: imageChanged ? image.trim() : undefined,
         credentialRef: pullCredentialRef,
         copyFrom: copyMode ? createCopyFrom : undefined,
+        previewToken: dryRun.previewToken,
         ...pendingRequest,
       })
       if (result.success) {
@@ -383,9 +368,11 @@ export function DeployDialog({
       onOpenChange(false)
     } catch (err) {
       if (err instanceof ApplicationApiError && err.status === 409) {
-        setConflicts(
-          (err.payload.conflicts as ApplicationConflict[] | undefined) ?? []
-        )
+        // The previewToken no longer matches the cluster diff (or the config
+        // moved underneath): reload the preview for a fresh decision.
+        toast.info(t('applications.deploy.previewStale'))
+        await queryClient.invalidateQueries({ queryKey: ['applications'] })
+        void runDryRun()
       } else {
         toast.error(translateError(err, t))
       }
@@ -448,316 +435,260 @@ export function DeployDialog({
             </DialogDescription>
           </DialogHeader>
 
-          {isConflict ? (
-            <div className="space-y-3">
-              <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5 text-xs text-destructive">
-                <span>⛔</span>
-                <span>{t('applications.deploy.conflictBanner')}</span>
-              </div>
-              <div className="rounded-lg border border-amber-200 bg-amber-50/40 p-3 dark:border-amber-800 dark:bg-amber-950/40">
-                <div className="text-xs font-semibold text-amber-700 dark:text-amber-400">
-                  {t('applications.deploy.clusterSideChanges', {
-                    count:
-                      conflicts?.reduce(
-                        (sum, conflict) => sum + conflict.paths.length,
-                        0
-                      ) ??
-                      drift.reduce(
-                        (sum, docDiff) => sum + (docDiff.paths?.length ?? 0),
-                        0
-                      ),
-                  })}
-                </div>
-                <div className="mt-1.5 space-y-1.5">
-                  {(conflicts ?? drift).map((conflict) =>
-                    (conflict.paths ?? []).map((path) => (
-                      <div
-                        key={`${conflict.kind}/${conflict.name}:${path}`}
-                        className="font-mono text-xs text-muted-foreground"
-                      >
-                        {conflict.kind}/{conflict.name} · {path}
-                      </div>
-                    ))
-                  )}
-                </div>
-                <div className="mt-1 text-xs text-muted-foreground">
-                  {t('applications.deploy.conflictSourceHint')}
-                </div>
-              </div>
-              <Button
-                className="w-full"
-                onClick={() => {
-                  onOpenChange(false)
-                  onResolveConflict?.()
-                }}
-              >
-                {t('applications.deploy.resolveConflict')}
-              </Button>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {isCreateMode && (
-                <div>
-                  <Label>{t('applications.deploy.targetCluster')}</Label>
-                  <Select
-                    value={targetCluster ?? ''}
-                    onValueChange={setTargetCluster}
-                  >
-                    <SelectTrigger className="mt-1.5">
-                      <SelectValue
-                        placeholder={t('applications.deploy.pickCluster')}
-                      />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {availableClusters.map((candidate) => (
-                        <SelectItem key={candidate.name} value={candidate.name}>
-                          {candidate.name} · {candidate.version ?? ''}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {copyMode
-                      ? t('applications.deploy.copyCreateHint', {
-                          source: createCopyFrom,
-                        })
-                      : t('applications.deploy.targetClusterHint')}
-                  </p>
-                </div>
-              )}
-
+          <div className="space-y-4">
+            {isCreateMode && (
               <div>
-                <Label>{t('applications.deploy.image')}</Label>
-                <Input
-                  value={image}
-                  onChange={(event) => setImage(event.target.value)}
-                  className="mt-1.5 font-mono text-sm"
-                  disabled={!activeCluster || (!isCreateMode && !config)}
-                />
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {t('applications.deploy.imageHint')}
-                </p>
-              </div>
-
-              <div>
-                <Label>{t('applications.deploy.pullCredential')}</Label>
+                <Label>{t('applications.deploy.targetCluster')}</Label>
                 <Select
-                  value={pullCredential}
-                  onValueChange={changePullCredential}
-                  disabled={!activeCluster}
+                  value={targetCluster ?? ''}
+                  onValueChange={setTargetCluster}
                 >
-                  <SelectTrigger className="mt-1.5 w-64">
+                  <SelectTrigger className="mt-1.5">
                     <SelectValue
-                      placeholder={t(
-                        'applications.deploy.pullCredentialPlaceholder'
-                      )}
+                      placeholder={t('applications.deploy.pickCluster')}
                     />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value={pullCredentialNone}>
-                      {t('applications.deploy.pullCredentialNone')}
-                    </SelectItem>
-                    {credentialNames.map((name) => (
-                      <SelectItem key={name} value={name}>
-                        {name}
+                    {availableClusters.map((candidate) => (
+                      <SelectItem key={candidate.name} value={candidate.name}>
+                        {candidate.name} · {candidate.version ?? ''}
                       </SelectItem>
                     ))}
-                    {credentialEcho && (
-                      <SelectItem value={credentialEcho}>
-                        {credentialEcho}
-                      </SelectItem>
-                    )}
                   </SelectContent>
                 </Select>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {t('applications.deploy.pullCredentialHint')}
+                  {copyMode
+                    ? t('applications.deploy.copyCreateHint', {
+                        source: createCopyFrom,
+                      })
+                    : t('applications.deploy.targetClusterHint')}
                 </p>
               </div>
+            )}
 
-              <div>
-                <Label>{t('applications.deploy.otherConfig')}</Label>
-                <div className="mt-1.5 flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2.5">
-                  <span className="text-xs text-muted-foreground">
-                    {summary}
+            <div>
+              <Label>{t('applications.deploy.image')}</Label>
+              <Input
+                value={image}
+                onChange={(event) => setImage(event.target.value)}
+                className="mt-1.5 font-mono text-sm"
+                disabled={!activeCluster || (!isCreateMode && !config)}
+              />
+              <p className="mt-1 text-xs text-muted-foreground">
+                {t('applications.deploy.imageHint')}
+              </p>
+            </div>
+
+            <div>
+              <Label>{t('applications.deploy.pullCredential')}</Label>
+              <Select
+                value={pullCredential}
+                onValueChange={changePullCredential}
+                disabled={!activeCluster}
+              >
+                <SelectTrigger className="mt-1.5 w-64">
+                  <SelectValue
+                    placeholder={t(
+                      'applications.deploy.pullCredentialPlaceholder'
+                    )}
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={pullCredentialNone}>
+                    {t('applications.deploy.pullCredentialNone')}
+                  </SelectItem>
+                  {credentialNames.map((name) => (
+                    <SelectItem key={name} value={name}>
+                      {name}
+                    </SelectItem>
+                  ))}
+                  {credentialEcho && (
+                    <SelectItem value={credentialEcho}>
+                      {credentialEcho}
+                    </SelectItem>
+                  )}
+                </SelectContent>
+              </Select>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {t('applications.deploy.pullCredentialHint')}
+              </p>
+            </div>
+
+            <div>
+              <Label>{t('applications.deploy.otherConfig')}</Label>
+              <div className="mt-1.5 flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2.5">
+                <span className="text-xs text-muted-foreground">{summary}</span>
+                {!isCreateMode && activeCluster && config && (
+                  <ApplicationStatusChip
+                    status={statusReport?.status ?? config.statusSummary}
+                  />
+                )}
+                {pending && (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-400">
+                    <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                    {t('applications.deploy.pendingEdits')}
                   </span>
-                  {!isCreateMode && activeCluster && config && (
-                    <ApplicationStatusChip
-                      status={statusReport?.status ?? config.statusSummary}
-                    />
-                  )}
-                  {pending && (
-                    <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-400">
-                      <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-                      {t('applications.deploy.pendingEdits')}
-                    </span>
-                  )}
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="ml-auto"
-                    disabled={!activeCluster}
-                    onClick={() => {
-                      onOpenChange(false)
-                      onEditConfig?.()
-                    }}
-                  >
-                    {t('applications.deploy.editConfig')}
-                  </Button>
-                </div>
+                )}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="ml-auto"
+                  disabled={!activeCluster}
+                  onClick={() => {
+                    onOpenChange(false)
+                    onEditConfig?.()
+                  }}
+                >
+                  {t('applications.deploy.editConfig')}
+                </Button>
               </div>
+            </div>
 
-              <div>
-                <Label>{t('applications.deploy.changePreview')}</Label>
-                <div className="mt-1.5 rounded-lg bg-zinc-950 p-3 font-mono text-xs leading-5 text-zinc-300">
-                  {dryRun.loading ? (
-                    <span className="text-zinc-500">
-                      {t('applications.deploy.dryRunRunning')}
-                    </span>
-                  ) : dryRun.error ? (
-                    <span className="text-red-400">{dryRun.error}</span>
-                  ) : isCreateMode && !targetCluster ? (
-                    <span className="text-zinc-500">
-                      {t('applications.deploy.createModeHint')}
-                    </span>
-                  ) : dryRun.creates.length > 0 &&
-                    dryRun.updates.length === 0 ? (
-                    <div className="space-y-0.5">
-                      <div className="text-zinc-500">
-                        #{' '}
-                        {t('applications.deploy.createModeDocs', {
-                          count: dryRun.creates.length,
-                        })}
-                      </div>
-                      {dryRun.preview.map((doc) => (
-                        <div key={`${doc.kind}/${doc.name}`}>
-                          <button
-                            type="button"
-                            title={t('applications.deploy.viewDocDiff')}
-                            className="hover:underline"
-                            onClick={() =>
-                              setDiffDoc({ kind: doc.kind, name: doc.name })
-                            }
-                          >
-                            <span className="text-sky-300">create</span>{' '}
-                            {doc.kind}/{doc.name}
-                          </button>
-                          {imageChanged && (
-                            <span className="text-zinc-500">
-                              {' '}
-                              · image → {image.trim()}
-                            </span>
-                          )}
-                        </div>
-                      ))}
+            <div>
+              <Label>{t('applications.deploy.changePreview')}</Label>
+              <div className="mt-1.5 rounded-lg bg-zinc-950 p-3 font-mono text-xs leading-5 text-zinc-300">
+                {dryRun.loading ? (
+                  <span className="text-zinc-500">
+                    {t('applications.deploy.dryRunRunning')}
+                  </span>
+                ) : dryRun.error ? (
+                  <span className="text-red-400">{dryRun.error}</span>
+                ) : isCreateMode && !targetCluster ? (
+                  <span className="text-zinc-500">
+                    {t('applications.deploy.createModeHint')}
+                  </span>
+                ) : dryRun.creates.length > 0 && dryRun.updates.length === 0 ? (
+                  <div className="space-y-0.5">
+                    <div className="text-zinc-500">
+                      #{' '}
+                      {t('applications.deploy.createModeDocs', {
+                        count: dryRun.creates.length,
+                      })}
                     </div>
-                  ) : hasChanges ? (
-                    <div className="space-y-0.5">
-                      {/* Only documents with an actual content change are
+                    {dryRun.preview.map((doc) => (
+                      <div key={`${doc.kind}/${doc.name}`}>
+                        <button
+                          type="button"
+                          title={t('applications.deploy.viewDocDiff')}
+                          className="hover:underline"
+                          onClick={() =>
+                            setDiffDoc({ kind: doc.kind, name: doc.name })
+                          }
+                        >
+                          <span className="text-sky-300">create</span>{' '}
+                          {doc.kind}/{doc.name}
+                        </button>
+                        {imageChanged && (
+                          <span className="text-zinc-500">
+                            {' '}
+                            · image → {image.trim()}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : hasChanges ? (
+                  <div className="space-y-0.5">
+                    {/* Only documents with an actual content change are
                         listed: re-applied-but-identical ones would read as
                         changes that do not exist. */}
-                      {dryRun.preview.map((doc) => (
-                        <div key={`${doc.kind}/${doc.name}`}>
-                          <button
-                            type="button"
-                            title={t('applications.deploy.viewDocDiff')}
-                            className="hover:underline"
-                            onClick={() =>
-                              setDiffDoc({ kind: doc.kind, name: doc.name })
+                    {dryRun.preview.map((doc) => (
+                      <div key={`${doc.kind}/${doc.name}`}>
+                        <button
+                          type="button"
+                          title={t('applications.deploy.viewDocDiff')}
+                          className="hover:underline"
+                          onClick={() =>
+                            setDiffDoc({ kind: doc.kind, name: doc.name })
+                          }
+                        >
+                          <span
+                            className={
+                              doc.action === 'create'
+                                ? 'text-sky-300'
+                                : 'text-emerald-300'
                             }
                           >
-                            <span
-                              className={
-                                doc.action === 'create'
-                                  ? 'text-sky-300'
-                                  : 'text-emerald-300'
-                              }
-                            >
-                              {doc.action}
-                            </span>{' '}
-                            {doc.kind}/{doc.name}
-                          </button>
-                        </div>
-                      ))}
-                      {imageChanged && (
-                        <div>
-                          <span className="text-emerald-300">update</span>{' '}
-                          image: {originalImage || '—'} → {image.trim()}
-                        </div>
-                      )}
-                      {dryRun.creates.length +
-                        dryRun.updates.length -
-                        dryRun.preview.length >
-                        0 && (
-                        <div className="text-zinc-500">
-                          {t('applications.deploy.unchangedDocs', {
-                            count:
-                              dryRun.creates.length +
-                              dryRun.updates.length -
-                              dryRun.preview.length,
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <span className="text-zinc-500">
-                      {t('applications.deploy.noChanges')}
-                    </span>
-                  )}
-                </div>
-                {!dryRun.loading && !dryRun.error && canConfirm && (
-                  <div className="mt-2 flex items-center gap-1.5 text-xs text-green-600">
-                    <span>✔</span>
-                    <span>
-                      {isCreateMode
-                        ? t('applications.deploy.dryRunOkCreate')
-                        : t('applications.deploy.dryRunOk')}
-                    </span>
+                            {doc.action}
+                          </span>{' '}
+                          {doc.kind}/{doc.name}
+                        </button>
+                      </div>
+                    ))}
+                    {imageChanged && (
+                      <div>
+                        <span className="text-emerald-300">update</span> image:{' '}
+                        {originalImage || '—'} → {image.trim()}
+                      </div>
+                    )}
+                    {dryRun.creates.length +
+                      dryRun.updates.length -
+                      dryRun.preview.length >
+                      0 && (
+                      <div className="text-zinc-500">
+                        {t('applications.deploy.unchangedDocs', {
+                          count:
+                            dryRun.creates.length +
+                            dryRun.updates.length -
+                            dryRun.preview.length,
+                        })}
+                      </div>
+                    )}
                   </div>
+                ) : (
+                  <span className="text-zinc-500">
+                    {t('applications.deploy.noChanges')}
+                  </span>
                 )}
               </div>
-
-              <div className="flex items-start gap-2 rounded-lg bg-muted/50 px-3 py-2.5 text-xs text-muted-foreground">
-                <span>ℹ</span>
-                <span>{t('applications.deploy.anchorHint')}</span>
-              </div>
-
-              {!isCreateMode && config?.lastDeployedAt && (
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  {t('applications.deploy.lastDeployed', {
-                    time: formatDate(config.lastDeployedAt),
-                  })}
-                  {config.lastSyncedAt && (
-                    <>
-                      ·{' '}
-                      {t('applications.deploy.lastSynced', {
-                        time: formatDate(config.lastSyncedAt),
-                      })}
-                    </>
-                  )}
-                  {statusReport?.checkedAt && (
-                    <>· {applicationStatusLabel(statusReport.status, t)}</>
-                  )}
+              {!dryRun.loading && !dryRun.error && canConfirm && (
+                <div className="mt-2 flex items-center gap-1.5 text-xs text-green-600">
+                  <span>✔</span>
+                  <span>
+                    {isCreateMode
+                      ? t('applications.deploy.dryRunOkCreate')
+                      : t('applications.deploy.dryRunOk')}
+                  </span>
                 </div>
               )}
             </div>
-          )}
+
+            <div className="flex items-start gap-2 rounded-lg bg-muted/50 px-3 py-2.5 text-xs text-muted-foreground">
+              <span>ℹ</span>
+              <span>{t('applications.deploy.anchorHint')}</span>
+            </div>
+
+            {!isCreateMode && config?.lastDeployedAt && (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                {t('applications.deploy.lastDeployed', {
+                  time: formatDate(config.lastDeployedAt),
+                })}
+                {config.lastSyncedAt && (
+                  <>
+                    ·{' '}
+                    {t('applications.deploy.lastSynced', {
+                      time: formatDate(config.lastSyncedAt),
+                    })}
+                  </>
+                )}
+                {statusReport?.checkedAt && (
+                  <>· {applicationStatusLabel(statusReport.status, t)}</>
+                )}
+              </div>
+            )}
+          </div>
 
           <DialogFooter>
             <Button variant="outline" onClick={() => onOpenChange(false)}>
               {t('common.actions.cancel')}
             </Button>
-            {!isConflict && (
-              <Button
-                disabled={!canConfirm}
-                onClick={() => void handleDeploy()}
-              >
-                {copyMode
-                  ? t('applications.deploy.confirmCopyPublish')
-                  : firstPublish
-                    ? t('applications.deploy.confirmFirstPublish')
-                    : t('applications.deploy.confirmPublish')}
-              </Button>
-            )}
+            <Button disabled={!canConfirm} onClick={() => void handleDeploy()}>
+              {copyMode
+                ? t('applications.deploy.confirmCopyPublish')
+                : firstPublish
+                  ? t('applications.deploy.confirmFirstPublish')
+                  : t('applications.deploy.confirmPublish')}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
 	"gorm.io/gorm"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/funcx27/kite/modules/application/internal/store"
 	"github.com/funcx27/kite/modules/application/internal/syncops"
@@ -24,27 +24,6 @@ type DocPreview struct {
 	New    json.RawMessage `json:"new,omitempty"`
 }
 
-// ConflictDetail is one document's unresolved cluster-side drift paths
-// reported by the publish conflict gate (design §6).
-type ConflictDetail = syncops.ConflictDetail
-
-// ConflictError reports the publish conflict gate verdict (design §6): the
-// pending set may not apply until every listed cluster-side drift path is
-// merged in the application module. The message enumerates each conflict so
-// out-of-band callers (workflow nodes) can surface the detail verbatim.
-type ConflictError struct {
-	Details []ConflictDetail
-}
-
-func (e *ConflictError) Error() string {
-	var b strings.Builder
-	b.WriteString("cluster has manual changes conflicting with the pending publish, merge first in the application module:")
-	for _, d := range e.Details {
-		fmt.Fprintf(&b, "\n  %s %s %s: %s", d.Kind, d.Namespace, d.Name, strings.Join(d.Paths, ", "))
-	}
-	return b.String()
-}
-
 // DeployOutcome is the deploy facade result: the revision the publish produced
 // (0 — none persisted: dry-run or an imageless publish of the current config)
 // and the redacted change preview documents.
@@ -53,18 +32,61 @@ type DeployOutcome struct {
 	Preview  []DocPreview
 }
 
+// DriftError reports the workflow publish gate verdict: the live cluster
+// state has drifted from the anchor on documents both sides still share, so
+// the pending set may not apply until the drift is resolved (选边/同步/发布).
+// Docs enumerates each drifted document with its changed leaf paths.
+type DriftError struct {
+	Docs []syncops.DocDiff
+}
+
+func (e *DriftError) Error() string {
+	return "cluster has unresolved drift; resolve it in the application module (side-taking/sync/publish) and retry"
+}
+
+// publishGate is the workflow publish gate (workflow design §5.2): the diff
+// between the anchor and the live cluster must be empty on every document
+// both sides share. Never-deployed configs pass (empty anchor); documents
+// missing on the cluster pass (the publish creates them); DB-side pending
+// changes and the image bump do not participate — the gate compares the
+// cluster only against the anchor.
+func (h *Handler) publishGate(ctx context.Context, cli client.Client, cfg *store.AppConfig) error {
+	anchor, err := store.DecodeManifests(cfg.LastApplied)
+	if err != nil {
+		return fmt.Errorf("decode anchor: %w", err)
+	}
+	if len(anchor) == 0 {
+		return nil
+	}
+	live, err := syncops.FetchLiveDocs(ctx, cli, anchor)
+	if err != nil {
+		return fmt.Errorf("fetch live objects: %w", err)
+	}
+	var drift []syncops.DocDiff
+	for _, d := range syncops.DiffManifests(anchor, syncops.LiveList(live, anchor)) {
+		if len(d.Paths) > 0 {
+			drift = append(drift, d)
+		}
+	}
+	if len(drift) > 0 {
+		return &DriftError{Docs: drift}
+	}
+	return nil
+}
+
 // DeployWithImage runs the application's 改镜像即发布 pipeline for an
 // out-of-band identity (workflow design §5.2): resolve the cluster client,
 // persist the image into the manifests as a Source=deploy-image revision,
-// then the conflict-gated, per-document-authorized apply with anchor
-// read-back. A missing config is created from Render(App.Spec) first — row
-// and rev1, gated on applications:create like the HTTP create funnels — and
-// published like any other. dryRun validates against the API server only: the
-// create-mode row is staged in memory, nothing is persisted (design §7).
-// Permissions are checked with deps.AuthorizeUser under
-// operatorID; the caller's context cancellation aborts in-flight applies.
-// onLog receives the publish header, one line per applied document and any
-// conflict details; nil disables it.
+// run the drift gate against the anchor, then the per-document-authorized
+// apply with anchor read-back. A missing config is created from
+// Render(App.Spec) first — row and rev1, gated on applications:create like
+// the HTTP create funnels — and published like any other. dryRun validates
+// against the API server only: the create-mode row is staged in memory,
+// nothing is persisted (design §7). Permissions are checked with
+// deps.AuthorizeUser under operatorID; unresolved cluster drift comes back
+// as *DriftError; the caller's context cancellation aborts in-flight
+// applies. onLog receives the publish header, one line per drifted document
+// on a gated publish and one line per applied document; nil disables it.
 func DeployWithImage(ctx context.Context, deps Deps, st *store.Store, appName, cluster, image string, operatorID uint, dryRun bool, onLog func(string)) (*DeployOutcome, error) {
 	if onLog == nil {
 		onLog = func(string) {}
@@ -124,7 +146,15 @@ func DeployWithImage(ctx context.Context, deps Deps, st *store.Store, appName, c
 		return nil, err
 	}
 
-	resp, conflicts, err := h.runPublish(ctx, id, app, cfg, cli, manifests, dryRun)
+	// The gate runs after the image persist but before any cluster write, so
+	// a gated publish keeps its no-writes guarantee. The DriftError itself
+	// enumerates the drifted documents; the adapter folds that list into the
+	// node's error text, so it must not be logged here again.
+	if err := h.publishGate(ctx, cli, cfg); err != nil {
+		return nil, err
+	}
+
+	resp, err := h.applyPublish(ctx, id, app, cfg, cli, manifests, dryRun, "")
 	if err != nil {
 		return nil, err
 	}
@@ -137,12 +167,6 @@ func DeployWithImage(ctx context.Context, deps Deps, st *store.Store, appName, c
 			logf("%s %s: %s", r.Kind, key, r.Error)
 		}
 	}
-	if len(conflicts) > 0 {
-		for _, d := range conflicts {
-			logf("conflict %s %s: %s", store.DocKey(d.Kind, d.Namespace, d.Name), strings.Join(d.Paths, ", "))
-		}
-		return nil, &ConflictError{Details: conflicts}
-	}
 	return &DeployOutcome{Revision: latestRev, Preview: toDocPreviews(resp.Preview)}, nil
 }
 
@@ -150,7 +174,7 @@ func DeployWithImage(ctx context.Context, deps Deps, st *store.Store, appName, c
 // it from the app's draft spec when the cluster has none yet (row + rev1).
 // Landing a config row is a create whatever funnel does it, so the create
 // path carries the same applications:create gate as the HTTP create funnels;
-// everything else stays with runPublish's per-document checks. With dryRun
+// everything else stays with applyPublish's per-document checks. With dryRun
 // the row is only staged in memory — a dry-run never persists (design §7).
 func (h *Handler) facadeTargetConfig(id identity, app *store.App, cluster string, dryRun bool) (*store.AppConfig, error) {
 	cfg, err := h.findConfig(app.ID, cluster)

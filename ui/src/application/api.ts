@@ -4,32 +4,28 @@ import type {
   ApplicationDeployRequest,
   ApplicationDeployResponse,
   ApplicationListResponse,
-  ApplicationMergePreview,
-  ApplicationMergeRequest,
-  ApplicationMergeResponse,
   ApplicationOfflineResponse,
   ApplicationPreviewRequest,
   ApplicationPreviewResponse,
+  ApplicationResolveRequest,
   ApplicationRevisionDetail,
   ApplicationRevisionListResponse,
   ApplicationRollbackRequest,
   ApplicationRollbackResponse,
   ApplicationRuntimeView,
   ApplicationStatusReport,
-  ApplicationSyncResponse,
   CreateApplicationRequest,
   SpaceQuotaInput,
   SpaceQuotaListResponse,
   SpaceQuotaUpsertResponse,
-  UpdateApplicationConfigRequest,
   UpdateApplicationRequest,
 } from '@/application/types'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { apiClient, type ApiRequestOptions } from '@/lib/api-client'
 
-// Typed API error preserving the JSON body, so callers can read structured
-// payloads of non-2xx answers (deploy 409 conflicts, 409 expectedRev, ...).
+// Typed API error preserving the JSON body, so callers can act on non-2xx
+// answers (409 previewToken / expectedRev mismatches, ...).
 export class ApplicationApiError extends Error {
   status: number
   payload: Record<string, unknown>
@@ -132,20 +128,7 @@ export const useApplicationConfig = (
   })
 }
 
-// Optimistic-locked save: expectedRev must match the config's latest
-// revision; carries either {spec} (injected onto the manifests) or
-// {manifests} (full replacement).
-export const updateApplicationConfig = (
-  name: string,
-  cluster: string,
-  req: UpdateApplicationConfigRequest
-) =>
-  applicationRequest<ApplicationConfig>(
-    `/${encodeURIComponent(name)}/configs/${encodeURIComponent(cluster)}`,
-    { method: 'PUT', body: JSON.stringify(req) }
-  )
-
-// ── Deploy / sync / offline ──
+// ── Deploy / offline ──
 
 // {dryRun: true} runs the full pipeline against the API server with
 // dry-run: All without touching cluster state or the database. When the
@@ -161,12 +144,6 @@ export const deployApplicationConfig = (
     { method: 'POST', body: JSON.stringify(req) }
   )
 
-export const syncApplicationConfig = (name: string, cluster: string) =>
-  applicationRequest<ApplicationSyncResponse>(
-    `/${encodeURIComponent(name)}/configs/${encodeURIComponent(cluster)}/sync`,
-    { method: 'POST' }
-  )
-
 // Offline always deletes the cluster objects AND the config row with its
 // revision chain (irreversible); a partial cluster-side failure keeps the
 // config for retry (HTTP 409).
@@ -176,38 +153,17 @@ export const offlineApplicationConfig = (name: string, cluster: string) =>
     { method: 'POST' }
   )
 
-// ── Conflict merge ──
+// ── Resolve (drift side-taking) ──
 
-export const fetchApplicationMergePreview = (name: string, cluster: string) =>
-  applicationRequest<ApplicationMergePreview>(
-    `/${encodeURIComponent(name)}/configs/${encodeURIComponent(cluster)}/merge-preview`,
-    { method: 'GET' }
-  )
-
-export const useApplicationMergePreview = (
-  name: string | undefined,
-  cluster: string | undefined,
-  options?: { disable?: boolean }
-) => {
-  return useQuery({
-    queryKey: ['applications', name, 'merge-preview', cluster],
-    queryFn: () =>
-      fetchApplicationMergePreview(name as string, cluster as string),
-    enabled: !!name && !!cluster && !options?.disable,
-    placeholderData: (prevData) => prevData,
-  })
-}
-
-// choices keys are scoped paths "<docKey>:<path>" (MERGE_DOC_ROOT_PATH for
-// document-level collisions); rollbacks lists auto-adopted paths reverted to
-// the baseline, persisted as OverriddenPaths.
-export const mergeApplicationConfig = (
+// Adopts the selected live subtrees into the stored manifests (path-level,
+// two-sided documents only) and re-anchors; answers the config's fresh status.
+export const resolveApplicationConfig = (
   name: string,
   cluster: string,
-  req: ApplicationMergeRequest = {}
+  req: ApplicationResolveRequest
 ) =>
-  applicationRequest<ApplicationMergeResponse>(
-    `/${encodeURIComponent(name)}/configs/${encodeURIComponent(cluster)}/merge`,
+  applicationRequest<ApplicationStatusReport>(
+    `/${encodeURIComponent(name)}/configs/${encodeURIComponent(cluster)}/resolve`,
     { method: 'POST', body: JSON.stringify(req) }
   )
 

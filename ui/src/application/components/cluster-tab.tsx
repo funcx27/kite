@@ -1,17 +1,21 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  resolveApplicationConfig,
   restartApplicationConfig,
   restartApplicationPod,
   useApplicationConfig,
   useApplicationResources,
   useApplicationStatus,
 } from '@/application/api'
+import { dumpDocYaml, type DocYamlDump } from '@/application/lib'
 import type {
   Application,
   ApplicationConfigSummary,
-  ApplicationDocDiff,
+  ApplicationResolveAdoption,
+  ApplicationStatusDoc,
 } from '@/application/types'
 import { useQueryClient } from '@tanstack/react-query'
+import { ChevronRight } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
@@ -19,6 +23,13 @@ import { toast } from 'sonner'
 import { formatBytes, formatDate, translateError } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -33,6 +44,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { YamlDiffViewer } from '@/components/yaml-diff-viewer'
 
 import { ApplicationStatusChip } from './status-badge'
 
@@ -42,10 +54,8 @@ interface ClusterTabProps {
   active: boolean
   onDeploy: () => void
   onOffline: () => void
-  onMerge: () => void
   onHistory: () => void
   onCopyConfig: () => void
-  onViewLastApplied: () => void
 }
 
 function podAge(startTime: string | undefined): string {
@@ -70,69 +80,84 @@ function formatSpecPair(
   return pair === '—/— · —/—' ? '—' : pair
 }
 
-// DiffPathsCard lists one diff group's documents and changed paths — the
-// debug view behind both the conflict and merged consistency states.
-function DiffPathsCard({
-  tone,
-  title,
-  docs,
-  footer,
+type SideChoice = 'db' | 'cluster'
+
+function driftDocKey(doc: {
+  kind: string
+  namespace?: string
+  name: string
+}): string {
+  return `${doc.kind}/${doc.namespace || ''}/${doc.name}`
+}
+
+// Anchor line for a path absent from one side's dump: the nearest preceding
+// path in document order (per the other side, which still has it) that exists
+// on this side; if none, the following path's line − 1; 0 when this side has
+// no diff lines at all.
+function anchorFor(
+  missing: DocYamlDump,
+  guide: DocYamlDump,
+  path: string
+): number {
+  const order = guide.orderedPaths
+  const at = order.indexOf(path)
+  if (at < 0) return 0
+  for (let i = at - 1; i >= 0; i--) {
+    const line = missing.lineOfPath[order[i]]
+    if (line) return line
+  }
+  for (let i = at + 1; i < order.length; i++) {
+    const line = missing.lineOfPath[order[i]]
+    if (line) return Math.max(0, line - 1)
+  }
+  return 0
+}
+
+// DriftDocCard renders one drift document row: opening it shows the
+// live-vs-manifest diff view with per-path side-pick arrows on the changed
+// lines themselves. One-sided documents (missingIn) explain themselves and
+// carry no pick actions.
+function DriftDocCard({
+  doc,
+  onView,
 }: {
-  tone: 'amber' | 'sky'
-  title: string
-  docs: ApplicationDocDiff[]
-  footer?: string
+  doc: ApplicationStatusDoc
+  onView: (doc: ApplicationStatusDoc) => void
 }) {
   const { t } = useTranslation()
-  const box =
-    tone === 'amber'
-      ? 'border-amber-200 bg-amber-50/40 dark:border-amber-800 dark:bg-amber-950/40'
-      : 'border-sky-200 bg-sky-50/40 dark:border-sky-800 dark:bg-sky-950/40'
-  const heading =
-    tone === 'amber'
-      ? 'text-amber-700 dark:text-amber-400'
-      : 'text-sky-700 dark:text-sky-400'
+  const note = doc.missingIn
+    ? doc.missingIn === 'cluster'
+      ? t('applications.detail.docMissingInCluster')
+      : t('applications.detail.docMissingInManifests')
+    : t('applications.detail.pathsCount', { count: doc.paths?.length ?? 0 }) +
+      (doc.truncated ? ` · ${t('applications.detail.pathsTruncated')}` : '')
   return (
-    <div className={`rounded-lg border p-3 ${box}`}>
-      <div className={`mb-2 text-xs font-semibold ${heading}`}>{title}</div>
-      <div className="space-y-2">
-        {docs.map((docDiff) => (
-          <div key={`${docDiff.kind}/${docDiff.name}`}>
-            <div className="font-mono text-xs text-muted-foreground">
-              {docDiff.kind}/{docDiff.name}
-            </div>
-            {(docDiff.paths ?? []).map((path) => (
-              <div key={path} className="font-mono text-xs">
-                {path}
-              </div>
-            ))}
-            {(!docDiff.paths || docDiff.paths.length === 0) && (
-              <div className="font-mono text-xs">
-                {t('applications.detail.docLevelChange')}
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
-      {footer && (
-        <div className="mt-2 text-xs text-muted-foreground">{footer}</div>
-      )}
-    </div>
+    <button
+      type="button"
+      className="flex w-full items-center gap-2 rounded-lg border p-3 text-left transition-colors hover:bg-accent"
+      onClick={() => onView(doc)}
+    >
+      <span className="font-mono text-xs font-medium">
+        {doc.kind}/{doc.name}
+      </span>
+      <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+        {note}
+      </span>
+      <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+    </button>
   )
 }
 
-// One cluster tab of the detail page (design §11): overview bar → pod table →
-// network card → consistency card → warning events.
+// One cluster tab of the detail page: overview bar → pod table → network
+// card → consistency card (drift side-taking) → warning events.
 export function ClusterTab({
   app,
   config,
   active,
   onDeploy,
   onOffline,
-  onMerge,
   onHistory,
   onCopyConfig,
-  onViewLastApplied,
 }: ClusterTabProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
@@ -156,7 +181,18 @@ export function ClusterTab({
   const [confirmTarget, setConfirmTarget] = useState<string | null>(null)
   const confirmTimer = useRef<number | undefined>(undefined)
 
+  // Drift side-taking: per "<docKey>:<path>" picks, defaulting to the DB
+  // side; reset whenever a fresh report replaces the diff behind them.
+  const [choices, setChoices] = useState<Record<string, SideChoice>>({})
+  const [viewDoc, setViewDoc] = useState<ApplicationStatusDoc | null>(null)
+  const [resolving, setResolving] = useState(false)
+  // Resolve writes a revision, so the apply button routes through a confirm
+  // dialog that spells out the side split before committing.
+  const [confirmApply, setConfirmApply] = useState(false)
+
   useEffect(() => () => window.clearTimeout(confirmTimer.current), [])
+
+  useEffect(() => setChoices({}), [statusReport])
 
   const askRestart = (target: string, run: () => void) => {
     window.clearTimeout(confirmTimer.current)
@@ -174,17 +210,115 @@ export function ClusterTab({
 
   const namespace = config.namespace || app.namespace
   const status = statusReport?.status ?? config.statusSummary
-  const drift = statusReport?.drift ?? []
-  const pending = statusReport?.pending ?? []
-  // Conflict means the publish gate is blocked (action=merge): drift alone
-  // stays non-empty in the merged state until the next publish re-anchors.
-  const isConflict = statusReport?.action === 'merge'
-  const isOfflined =
-    (config.statusSummary === 'undeployed' || status === 'undeployed') &&
-    drift.length === 0
+  // Offlined = undeployed (no manifests to diff); nothing else signals it.
+  const isOfflined = status === 'undeployed'
 
   const workload = runtime?.workload
   const workloadUnauthorized = !workload || workload.unauthorized
+
+  // Paths switched to the cluster side, grouped per document — the resolve
+  // payload. The report's previewToken pins the diff these picks decided on.
+  const adoptions: ApplicationResolveAdoption[] = useMemo(
+    () =>
+      (statusReport?.docs ?? [])
+        .map((doc) => ({
+          kind: doc.kind,
+          namespace: doc.namespace,
+          name: doc.name,
+          paths: (doc.paths ?? []).filter(
+            (path) => choices[`${driftDocKey(doc)}:${path}`] === 'cluster'
+          ),
+        }))
+        .filter((adoption) => adoption.paths.length > 0),
+    [statusReport, choices]
+  )
+  const canApply =
+    adoptions.length > 0 &&
+    !!statusReport?.previewToken &&
+    !!detail &&
+    !resolving
+
+  // Pick split across the report's changed paths: cluster picks are what the
+  // resolve request adopts; db picks keep the stored value (no write), so the
+  // apply button names both sides to stay unambiguous.
+  const pickCounts = useMemo(() => {
+    let cluster = 0
+    let db = 0
+    for (const doc of statusReport?.docs ?? []) {
+      for (const path of doc.paths ?? []) {
+        if (choices[`${driftDocKey(doc)}:${path}`] === 'cluster') cluster++
+        else db++
+      }
+    }
+    return { cluster, db }
+  }, [statusReport, choices])
+
+  const pickSide = (key: string, value: SideChoice) =>
+    setChoices((prev) => ({ ...prev, [key]: value }))
+
+  // The open document rendered through our own deterministic emitter: the
+  // path→line map pins each side-pick widget to its changed line. raw content
+  // — the viewer must not re-dump, that would reflow the lines.
+  const docDump = useMemo(
+    () =>
+      viewDoc
+        ? {
+            live: dumpDocYaml(viewDoc.live),
+            manifest: dumpDocYaml(viewDoc.manifest),
+          }
+        : null,
+    [viewDoc]
+  )
+  const lineWidgets = useMemo(() => {
+    if (!viewDoc || !docDump) return []
+    const docKey = driftDocKey(viewDoc)
+    return (viewDoc.paths ?? [])
+      .map((path) => {
+        const manifestLine =
+          docDump.manifest.lineOfPath[path] ??
+          anchorFor(docDump.manifest, docDump.live, path)
+        const liveLine =
+          docDump.live.lineOfPath[path] ??
+          anchorFor(docDump.live, docDump.manifest, path)
+        return {
+          path,
+          originalLine: liveLine,
+          modifiedLine: manifestLine,
+          picked: choices[`${docKey}:${path}`] ?? 'db',
+          dbTitle: t('applications.detail.useDb'),
+          clusterTitle: t('applications.detail.useCluster'),
+          onPick: (picked: SideChoice) => pickSide(`${docKey}:${path}`, picked),
+        }
+      })
+      .filter((widget) => widget.originalLine > 0 || widget.modifiedLine > 0)
+  }, [viewDoc, docDump, choices, pickSide, t])
+
+  const handleResolve = async () => {
+    if (!statusReport?.previewToken || !detail) return
+    setResolving(true)
+    try {
+      await resolveApplicationConfig(app.name, config.cluster, {
+        expectedRev: detail.latestRev,
+        previewToken: statusReport.previewToken,
+        adoptions,
+      })
+      toast.success(t('applications.detail.resolveApplied'))
+      setChoices({})
+      setViewDoc(null)
+      await queryClient.invalidateQueries({
+        queryKey: ['applications', app.name, 'config', config.cluster],
+      })
+      await refetchStatus()
+    } catch (err) {
+      toast.error(translateError(err, t))
+      // A stale previewToken or a concurrent save (409) means the diff the
+      // picks were made on is gone; reload the report for a fresh decision.
+      await refetchStatus()
+    } finally {
+      setResolving(false)
+      setConfirmApply(false)
+    }
+  }
 
   const handleRestart = async () => {
     setRestarting(true)
@@ -301,9 +435,6 @@ export function ClusterTab({
               </DropdownMenuItem>
               <DropdownMenuItem onClick={onCopyConfig}>
                 {t('applications.detail.copyToCluster')}
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={onViewLastApplied}>
-                {t('applications.detail.viewLastApplied')}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -537,13 +668,7 @@ export function ClusterTab({
               <span className="text-sm font-semibold">
                 {t('applications.detail.consistency')}
               </span>
-              {isConflict ? (
-                <ApplicationStatusChip status="conflict" />
-              ) : pending.length > 0 || statusReport?.status === 'merged' ? (
-                <ApplicationStatusChip status="merged" />
-              ) : (
-                <ApplicationStatusChip status={status} />
-              )}
+              <ApplicationStatusChip status={status} />
               <span className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
                 {statusReport?.checkedAt &&
                   t('applications.detail.checkedAt', {
@@ -559,99 +684,27 @@ export function ClusterTab({
               </span>
             </div>
 
-            {isConflict ? (
-              <>
-                <div className="grid gap-4 md:grid-cols-2">
-                  <DiffPathsCard
-                    tone="amber"
-                    title={t('applications.detail.clusterSideChanges', {
-                      count: drift.reduce(
-                        (sum, docDiff) => sum + (docDiff.paths?.length ?? 1),
-                        0
-                      ),
-                    })}
-                    docs={drift}
-                    footer={t('applications.detail.conflictSourceHint')}
+            {status === 'error' ? (
+              <div className="text-sm text-destructive">
+                {statusReport?.error || t('applications.status.error')}
+              </div>
+            ) : status === 'drift' && statusReport ? (
+              <div className="space-y-2">
+                {statusReport.docs.map((doc) => (
+                  <DriftDocCard
+                    key={driftDocKey(doc)}
+                    doc={doc}
+                    onView={setViewDoc}
                   />
-                  <DiffPathsCard
-                    tone="sky"
-                    title={t('applications.detail.dbSideChanges', {
-                      count: pending.reduce(
-                        (sum, docDiff) => sum + (docDiff.paths?.length ?? 1),
-                        0
-                      ),
-                    })}
-                    docs={pending}
-                    footer={
-                      pending.length === 0
-                        ? t('applications.detail.noPendingChanges')
-                        : undefined
-                    }
-                  />
-                </div>
-                <div className="mt-3 flex flex-wrap items-center gap-2 border-t pt-3">
-                  <span className="text-sm text-muted-foreground">
-                    {t('applications.detail.conflictGate')}
-                  </span>
-                  <Button size="sm" className="ml-auto" onClick={onMerge}>
-                    {t('applications.detail.resolveConflict')}
-                  </Button>
-                </div>
-              </>
-            ) : pending.length > 0 || statusReport?.status === 'merged' ? (
-              <div className="space-y-3">
-                {(drift.length > 0 || pending.length > 0) && (
-                  <div className="grid gap-4 md:grid-cols-2">
-                    {drift.length > 0 && (
-                      <DiffPathsCard
-                        tone="amber"
-                        title={t('applications.detail.adoptedClusterChanges', {
-                          count: drift.reduce(
-                            (sum, docDiff) =>
-                              sum + (docDiff.paths?.length ?? 1),
-                            0
-                          ),
-                        })}
-                        docs={drift}
-                      />
-                    )}
-                    {pending.length > 0 && (
-                      <DiffPathsCard
-                        tone="sky"
-                        title={t('applications.detail.pendingPublishChanges', {
-                          count: pending.reduce(
-                            (sum, docDiff) =>
-                              sum + (docDiff.paths?.length ?? 1),
-                            0
-                          ),
-                        })}
-                        docs={pending}
-                      />
-                    )}
-                  </div>
-                )}
-                <div className="flex items-center gap-3 border-t pt-3">
-                  <span className="text-sm text-muted-foreground">
-                    {t('applications.detail.mergedBanner')}
-                  </span>
-                  <Button size="sm" className="ml-auto" onClick={onDeploy}>
-                    {t('applications.detail.goPublish')}
-                  </Button>
-                </div>
+                ))}
               </div>
             ) : (
               <div className="flex items-center gap-3">
                 <span className="text-sm text-muted-foreground">
-                  {t('applications.detail.syncedBanner')}
+                  {status === 'synced'
+                    ? t('applications.detail.syncedBanner')
+                    : t('applications.detail.checkingStatus')}
                 </span>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="ml-auto"
-                  onClick={onViewLastApplied}
-                >
-                  {t('applications.detail.viewLastApplied')}
-                </Button>
               </div>
             )}
           </div>
@@ -699,6 +752,74 @@ export function ClusterTab({
           </div>
         </>
       )}
+
+      {/* Selected document's live vs manifest view: pane badges name the two
+          sides, each changed path's ← → pair floats over the diff's center
+          seam (← adopts the cluster value, → the DB value), and the compact
+          pick-all control sits at the seam's top; the apply action stays in
+          the dialog header. */}
+      {viewDoc && (
+        <YamlDiffViewer
+          open={true}
+          onOpenChange={(nextOpen) => {
+            if (!nextOpen) setViewDoc(null)
+          }}
+          original={docDump?.live.text ?? ''}
+          modified={docDump?.manifest.text ?? ''}
+          raw
+          lineWidgets={lineWidgets}
+          pickAllLabels={{
+            cluster: t('applications.detail.useClusterAll'),
+            db: t('applications.detail.useDbAll'),
+          }}
+          paneLabels={{
+            original: t('applications.detail.clusterLive'),
+            modified: t('applications.detail.dbConfig'),
+          }}
+          title={`${viewDoc.kind}/${viewDoc.name}`}
+          hideUnchanged={true}
+          height={420}
+          action={
+            <Button
+              size="sm"
+              disabled={!canApply}
+              title={t('applications.detail.applySelectionHint')}
+              onClick={() => setConfirmApply(true)}
+            >
+              {t('applications.detail.applySelectionCounts', {
+                cluster: pickCounts.cluster,
+                db: pickCounts.db,
+              })}
+            </Button>
+          }
+        />
+      )}
+
+      {/* Resolve confirm: the side split behind the apply button is spelled
+          out before the write commits. */}
+      <Dialog open={confirmApply} onOpenChange={setConfirmApply}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {t('applications.detail.applyConfirmTitle')}
+            </DialogTitle>
+            <DialogDescription>
+              {t('applications.detail.applyConfirmBody', {
+                cluster: pickCounts.cluster,
+                db: pickCounts.db,
+              })}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setConfirmApply(false)}>
+              {t('common.actions.cancel')}
+            </Button>
+            <Button disabled={resolving} onClick={() => void handleResolve()}>
+              {t('applications.detail.applyConfirmAction')}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

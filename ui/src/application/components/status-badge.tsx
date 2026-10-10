@@ -1,17 +1,45 @@
+import type { ReactNode } from 'react'
 import {
-  applicationDotState,
   applicationDotStyles,
+  applicationListStatus,
   applicationStatusLabel,
   applicationStatusStyles,
-  clusterHealth,
-  clusterStatusTooltip,
   type ApplicationDotState,
 } from '@/application/lib'
-import { ApplicationStatusSummary } from '@/application/types'
+import {
+  ApplicationConfigSummary,
+  ApplicationStatusSummary,
+} from '@/application/types'
 import { useTranslation } from 'react-i18next'
 
 import { cn } from '@/lib/utils'
 import { useCluster } from '@/hooks/use-cluster'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+
+// NoteTooltip renders the layered status notes (space association / cluster
+// health / config status) as a real multi-line tooltip; native title
+// attributes swallow the newlines and collapse everything onto one line.
+function NoteTooltip({
+  note,
+  children,
+}: {
+  note?: string
+  children: ReactNode
+}) {
+  if (!note) return <>{children}</>
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent className="whitespace-pre-line text-left">
+        {note}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
 
 export function ApplicationStatusChip({
   status,
@@ -37,7 +65,7 @@ export function ApplicationStatusChip({
 }
 
 // StatusDotGlyph renders the bare dot shape for a dot state — no cluster
-// lookup; shared by ClusterStatusDot and the list legend. The
+// lookup; shared by the list status column and its legend. The
 // clusterUnreachable state is a red dot on a gray backing disc so it stays
 // distinguishable from the plain config-error red and undeployed gray.
 export function StatusDotGlyph({
@@ -52,53 +80,58 @@ export function StatusDotGlyph({
   const style = applicationDotStyles[state]
   if (style.backing) {
     return (
-      <span
-        title={title}
-        className={cn(
-          'inline-flex h-2.5 w-2.5 shrink-0 items-center justify-center rounded-full',
-          style.backing,
-          className
-        )}
-      >
-        <span className={cn('h-1.5 w-1.5 rounded-full', style.dot)} />
-      </span>
+      <NoteTooltip note={title}>
+        <span
+          className={cn(
+            'inline-flex h-2.5 w-2.5 shrink-0 items-center justify-center rounded-full',
+            style.backing,
+            className
+          )}
+        >
+          <span className={cn('h-1.5 w-1.5 rounded-full', style.dot)} />
+        </span>
+      </NoteTooltip>
     )
   }
   return (
-    <span
-      title={title}
-      className={cn('inline-block h-2 w-2 rounded-full', style.dot, className)}
-    />
+    <NoteTooltip note={title}>
+      <span
+        className={cn(
+          'inline-block h-2 w-2 rounded-full',
+          style.dot,
+          className
+        )}
+      />
+    </NoteTooltip>
   )
 }
 
-// ClusterStatusDot renders the shared cluster-health × config-status dot
-// (detail-page cluster tabs and the list status column). The cluster layer
-// wins over the persisted config summary; the title tooltip spells out both
-// layers.
-export function ClusterStatusDot({
-  cluster,
-  statusSummary,
-  className,
+// ApplicationConfigStatus renders one config's row in the list page status
+// column: ready-first dot + ready/replicas text + cluster name. Pure display
+// (cluster filtering lives in the toolbar); the title tooltip spells out
+// cluster health, ready replicas and config status.
+export function ApplicationConfigStatus({
+  config,
 }: {
-  cluster?: string
-  statusSummary: ApplicationStatusSummary
-  className?: string
+  config: ApplicationConfigSummary
 }) {
   const { t } = useTranslation()
   const { clusters, isLoading: clustersLoading } = useCluster()
-  // While the cluster list is still loading it cannot judge health; pass
-  // undefined so dots do not flash the unreachable marker on bootstrap.
   const knownClusters = clustersLoading ? undefined : clusters
-  const state = applicationDotState(
-    statusSummary,
-    clusterHealth(cluster ?? '', cluster ? knownClusters : undefined)
+  const { state, text, tooltip } = applicationListStatus(
+    config,
+    knownClusters,
+    t
   )
   return (
-    <StatusDotGlyph
-      state={state}
-      title={clusterStatusTooltip(cluster, statusSummary, knownClusters, t)}
-      className={className}
-    />
+    <NoteTooltip note={tooltip}>
+      <span className="flex items-center gap-1.5 whitespace-nowrap">
+        <StatusDotGlyph state={state} />
+        {text && <span className="font-mono text-xs tabular-nums">{text}</span>}
+        <span className="font-mono text-xs text-muted-foreground">
+          {config.cluster}
+        </span>
+      </span>
+    </NoteTooltip>
   )
 }

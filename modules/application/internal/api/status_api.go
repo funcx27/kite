@@ -1,35 +1,53 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"github.com/funcx27/kite/modules/application/internal/drift"
+	"github.com/funcx27/kite/modules/application/internal/runtime"
 	"github.com/funcx27/kite/modules/application/internal/store"
 	"github.com/funcx27/kite/modules/application/internal/syncops"
 )
 
-type statusResponse struct {
-	Status    string            `json:"status"`
-	Action    string            `json:"action,omitempty"`
-	CheckedAt time.Time         `json:"checkedAt"`
-	Drift     []syncops.DocDiff `json:"drift"`
-	Pending   []syncops.DocDiff `json:"pending"`
-	Error     string            `json:"error,omitempty"`
+// statusDoc is one status diff entry: the change set plus the redacted
+// normalized live/manifest views for side-by-side display and adoptions. A
+// document missing on one side omits that side's view.
+type statusDoc struct {
+	syncops.DocDiff
+	Live     json.RawMessage `json:"live,omitempty"`
+	Manifest json.RawMessage `json:"manifest,omitempty"`
 }
 
-// GetStatus computes the on-demand drift report (design §7): the two diff
-// groups against the anchor plus the suggested action, and writes the
-// outcome back to StatusSummary/StatusCheckedAt so the list page aggregates
-// the persisted values without re-diffing (design §3/§11). A failed
-// detection is itself a check outcome: the config is marked error and the
-// message is returned in the body. Undeployed configs (empty anchor) answer
-// from the DB alone, so a down cluster never blocks their report.
+type statusResponse struct {
+	Status string      `json:"status"`
+	Docs   []statusDoc `json:"docs"`
+	// PreviewToken is the stable hash of the diff behind this report; the
+	// resolve endpoint requires it back.
+	PreviewToken string    `json:"previewToken,omitempty"`
+	CheckedAt    time.Time `json:"checkedAt"`
+	Error        string    `json:"error,omitempty"`
+	// ReadyReplicas/Replicas are the live workload's replica counts, persisted
+	// with the check for the list page's readiness display; nil when the app
+	// has no workload.
+	ReadyReplicas *int64 `json:"readyReplicas,omitempty"`
+	Replicas      *int64 `json:"replicas,omitempty"`
+}
+
+// GetStatus computes the single-channel drift report: the diff between the
+// stored manifests and the live cluster objects, and writes the outcome back
+// to StatusSummary/StatusCheckedAt plus the workload's replica counts so the
+// list page aggregates the persisted values without re-diffing (design
+// §3/§11). A failed detection is itself a check outcome: the config is marked
+// error and the message is returned in the body. Configs without manifests
+// answer undeployed from the DB alone, so a down cluster never blocks their
+// report.
 func (h *Handler) GetStatus(c *gin.Context) {
-	_, cfg, ok := h.findAppConfig(c)
+	app, cfg, ok := h.findAppConfig(c)
 	if !ok {
 		return
 	}
@@ -38,23 +56,21 @@ func (h *Handler) GetStatus(c *gin.Context) {
 	}
 	now := time.Now()
 
-	rep, checkErr := h.computeStatus(c, cfg)
-	if checkErr != nil {
-		rep = drift.Result{Status: store.StatusError, Drift: []syncops.DocDiff{}, Pending: []syncops.DocDiff{}}
-	}
-	if err := h.store.DB().Model(&store.AppConfig{}).Where("id = ?", cfg.ID).Updates(map[string]interface{}{
-		"status_summary":    rep.Status,
+	resp, checkErr := h.computeStatus(c, app.Name, cfg)
+	resp.CheckedAt = now
+	updates := map[string]interface{}{
+		"status_summary":    resp.Status,
 		"status_checked_at": now,
-	}).Error; err != nil {
+	}
+	// A completed check refreshes the replica counts (nil clears them, e.g.
+	// undeployed or no workload); a failed one keeps the last known values.
+	if resp.Status != store.StatusError {
+		updates["ready_replicas"] = resp.ReadyReplicas
+		updates["replicas"] = resp.Replicas
+	}
+	if err := h.store.DB().Model(&store.AppConfig{}).Where("id = ?", cfg.ID).Updates(updates).Error; err != nil {
 		h.fail(c, http.StatusInternalServerError, err, "")
 		return
-	}
-	resp := statusResponse{
-		Status:    rep.Status,
-		Action:    rep.Action,
-		CheckedAt: now,
-		Drift:     rep.Drift,
-		Pending:   rep.Pending,
 	}
 	if checkErr != nil {
 		resp.Error = checkErr.Error()
@@ -63,29 +79,87 @@ func (h *Handler) GetStatus(c *gin.Context) {
 }
 
 // computeStatus runs the drift check for one config: the live objects are
-// only fetched when an anchor exists to compare them against. The knowing
-// override whitelist feeds the merged-state detection, so a confirmed merge
-// is never re-reported as conflict (design §3/§4).
-func (h *Handler) computeStatus(c *gin.Context, cfg *store.AppConfig) (drift.Result, error) {
+// only fetched when there are manifests to compare them against. Both diff
+// sides are normalized inside DiffManifests, so server-managed fields never
+// surface as drift.
+func (h *Handler) computeStatus(c *gin.Context, appName string, cfg *store.AppConfig) (statusResponse, error) {
 	manifests, err := store.DecodeManifests(cfg.Manifests)
 	if err != nil {
-		return drift.Result{}, fmt.Errorf("decode manifests: %w", err)
+		return errorStatus(fmt.Errorf("decode manifests: %w", err))
 	}
-	anchor, err := store.DecodeManifests(cfg.LastApplied)
-	if err != nil {
-		return drift.Result{}, fmt.Errorf("decode anchor: %w", err)
-	}
-	if len(anchor) == 0 {
-		return drift.Check(manifests, anchor, nil, nil), nil
+	if len(manifests) == 0 {
+		return statusResponse{Status: store.StatusUndeployed, Docs: []statusDoc{}}, nil
 	}
 	cli, err := h.deps.ResolveCluster(c.Request.Context(), cfg.Cluster)
 	if err != nil {
-		return drift.Result{}, fmt.Errorf("resolve cluster %s: %w", cfg.Cluster, err)
+		return errorStatus(fmt.Errorf("resolve cluster %s: %w", cfg.Cluster, err))
 	}
-	templates := syncops.IdentityTemplates(manifests, anchor)
-	live, err := syncops.FetchLiveDocs(c.Request.Context(), cli, templates)
+	live, err := syncops.FetchLiveDocs(c.Request.Context(), cli, syncops.IdentityTemplates(manifests, nil))
 	if err != nil {
-		return drift.Result{}, fmt.Errorf("fetch live objects: %w", err)
+		return errorStatus(fmt.Errorf("fetch live objects: %w", err))
 	}
-	return drift.Check(manifests, anchor, live, decodeScopedPaths(cfg.OverriddenPaths)), nil
+	resp := statusOf(manifests, live)
+	resp.ReadyReplicas, resp.Replicas = workloadReplicas(appName, manifests, live)
+	return resp, nil
+}
+
+// workloadReplicas reads the live workload's replica counts for the persisted
+// readiness display; nil when the manifests define no workload or the cluster
+// object is gone.
+func workloadReplicas(app string, manifests []unstructured.Unstructured, live map[string]*unstructured.Unstructured) (ready, replicas *int64) {
+	wl := runtime.WorkloadOf(app, manifests)
+	if wl == nil {
+		return nil, nil
+	}
+	lw := live[store.DocKey(wl.GetKind(), wl.GetNamespace(), wl.GetName())]
+	if lw == nil {
+		return nil, nil
+	}
+	readyCount, _, _ := unstructured.NestedInt64(lw.Object, "status", "readyReplicas")
+	// spec.replicas absent means 1, the API server default (runtime's
+	// defaultReplicas).
+	desired, found, _ := unstructured.NestedInt64(lw.Object, "spec", "replicas")
+	if !found {
+		desired = 1
+	}
+	return &readyCount, &desired
+}
+
+// statusOf builds the status response for one manifests/live snapshot: synced
+// when the diff is empty, drift otherwise.
+func statusOf(manifests []unstructured.Unstructured, live map[string]*unstructured.Unstructured) statusResponse {
+	diff := syncops.DiffManifests(manifests, syncops.LiveList(live, manifests))
+	status := store.StatusDrift
+	if len(diff) == 0 {
+		status = store.StatusSynced
+	}
+	return statusResponse{
+		Status:       status,
+		Docs:         buildStatusDocs(diff, manifests, live),
+		PreviewToken: previewTokenHash(diff),
+	}
+}
+
+func errorStatus(err error) (statusResponse, error) {
+	return statusResponse{Status: store.StatusError, Docs: []statusDoc{}}, err
+}
+
+// buildStatusDocs pairs each diff entry with the redacted normalized live and
+// manifest documents — the same views the diff paths refer to (Normalize
+// folds Secret stringData into data, redactedDocRaw masks those values).
+func buildStatusDocs(diff []syncops.DocDiff, manifests []unstructured.Unstructured, live map[string]*unstructured.Unstructured) []statusDoc {
+	manIdx := docMap(manifests)
+	out := make([]statusDoc, 0, len(diff))
+	for i := range diff {
+		doc := statusDoc{DocDiff: diff[i]}
+		key := store.DocKey(diff[i].Kind, diff[i].Namespace, diff[i].Name)
+		if ld := live[key]; ld != nil {
+			doc.Live = redactedDocRaw(syncops.Normalize(ld))
+		}
+		if md := manIdx[key]; md != nil {
+			doc.Manifest = redactedDocRaw(syncops.Normalize(md))
+		}
+		out = append(out, doc)
+	}
+	return out
 }

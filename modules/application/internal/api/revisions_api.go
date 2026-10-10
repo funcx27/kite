@@ -103,9 +103,9 @@ func (h *Handler) GetRevision(c *gin.Context) {
 
 // RollbackConfig writes an earlier revision's manifests back as the current
 // desired configuration (design §7). With {deploy:true} the same request
-// continues through the conflict-gated publish, so rollback is one
-// confirm action that both persists the revision and applies it; without it
-// the manifests stay pending for a later publish.
+// continues through the publish, so rollback is one confirm action that both
+// persists the revision and applies it; without it the manifests stay pending
+// for a later publish.
 func (h *Handler) RollbackConfig(c *gin.Context) {
 	app, cfg, ok := h.findAppConfig(c)
 	if !ok {
@@ -162,10 +162,8 @@ func (h *Handler) RollbackConfig(c *gin.Context) {
 		if err != nil {
 			return err
 		}
-		if err := tx.Model(&store.AppConfig{}).Where("id = ?", cur.ID).Updates(map[string]interface{}{
-			"manifests":        store.SecretJSON(data),
-			"overridden_paths": store.JSONField(nil),
-		}).Error; err != nil {
+		if err := tx.Model(&store.AppConfig{}).Where("id = ?", cur.ID).
+			Update("manifests", store.SecretJSON(data)).Error; err != nil {
 			return err
 		}
 		newRev, err = store.AppendRevisionTx(tx, cur.ID, store.RevSourceRollback, data, h.deps.OperatorID(c), *req.Rev)
@@ -185,13 +183,10 @@ func (h *Handler) RollbackConfig(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"latestRev": newRev, "rolledBackTo": row.Rev})
 		return
 	}
-	// The rollback persists first (its revision records the intent); a gate
-	// conflict leaves it pending for the merge flow, mirroring the deploy
-	// path's image persist. The in-memory whitelist must not survive the
-	// wholesale rewrite the gate is about to read.
+	// The rollback persists first (its revision records the intent), mirroring
+	// the deploy path's image persist.
 	cfg.Manifests = store.SecretJSON(data)
-	cfg.OverriddenPaths = store.JSONField(nil)
-	resp, conflicts, err := h.runPublish(c.Request.Context(), h.requestIdentity(c), app, cfg, cli, rollbackDocs, false)
+	resp, err := h.applyPublish(c.Request.Context(), h.requestIdentity(c), app, cfg, cli, rollbackDocs, false, "")
 	var nf *namespaceForbiddenError
 	switch {
 	case errors.As(err, &nf):
@@ -199,13 +194,6 @@ func (h *Handler) RollbackConfig(c *gin.Context) {
 		return
 	case err != nil:
 		h.fail(c, http.StatusInternalServerError, err, "")
-		return
-	}
-	if len(conflicts) > 0 {
-		c.JSON(http.StatusConflict, gin.H{
-			"error":     "cluster has manual changes conflicting with the rollback, merge first",
-			"conflicts": conflicts,
-		})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
