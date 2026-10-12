@@ -113,6 +113,11 @@ func (s *AppSpec) Normalize(app string) {
 	// never carry M/G/Ki variants.
 	s.Workload.Limits.Memory = canonicalMemoryQuantity(s.Workload.Limits.Memory)
 	s.Workload.Requests.Memory = canonicalMemoryQuantity(s.Workload.Requests.Memory)
+	// CPU is canonicalized to the API server's read-back form so drift
+	// detection never flags same-value/different-string pairs like "0.5"
+	// vs "500m".
+	s.Workload.Limits.CPU = canonicalCPUQuantity(s.Workload.Limits.CPU)
+	s.Workload.Requests.CPU = canonicalCPUQuantity(s.Workload.Requests.CPU)
 	if s.Workload.Limits.CPU != "" && s.Workload.Requests.CPU == "" {
 		s.Workload.Requests.CPU = halfCPUQuantity(s.Workload.Limits.CPU)
 	}
@@ -273,6 +278,23 @@ func halfCPUQuantity(v string) string {
 		return v
 	}
 	return resource.NewMilliQuantity(half, resource.DecimalSI).String()
+}
+
+// canonicalCPUQuantity rewrites a CPU quantity into the form the API server
+// reads back (whole cores as plain integers, fractional cores in milli-cores:
+// "0.5" → "500m", "2000m" → "2") so stored specs and live objects diff equal.
+// Sub-milli values (e.g. "400u") pass through because milli rounding is
+// lossy; unparseable input passes through for Validate.
+func canonicalCPUQuantity(v string) string {
+	q, err := resource.ParseQuantity(v)
+	if err != nil {
+		return v
+	}
+	milli := resource.NewMilliQuantity(q.MilliValue(), resource.DecimalSI)
+	if milli.Cmp(q) != 0 {
+		return v
+	}
+	return milli.String()
 }
 
 // canonicalMemoryQuantity rewrites a memory quantity in binary Mi/Gi units,
