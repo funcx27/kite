@@ -28,11 +28,14 @@ type DeployOutcome = applicationapi.DeployOutcome
 
 // DeployWithImage publishes the application's config on the named cluster,
 // persisting the image into the manifests first (design §6: 改镜像即发布);
-// an empty image publishes the current config as-is. dryRun validates against
-// the API server only. Permissions are checked with deps.AuthorizeUser under
-// operatorID; unresolved cluster drift comes back as *DriftError. onLog
-// receives the publish header and one line per applied document; nil
-// disables it.
-func DeployWithImage(ctx context.Context, deps Deps, appName, cluster, image string, operatorID uint, dryRun bool, onLog func(string)) (*DeployOutcome, error) {
-	return applicationapi.DeployWithImage(ctx, deps, store.New(deps.DB()), appName, cluster, image, operatorID, dryRun, onLog)
+// an empty image publishes the current config as-is. A non-empty
+// registryCredentialRef that differs from the config's stored credential is
+// persisted before the image (managed pull-secret reference included, gated
+// on credentials:get); an empty ref keeps the config's credential. dryRun
+// validates against the API server only. Permissions are checked with
+// deps.AuthorizeUser under operatorID; unresolved cluster drift comes back
+// as *DriftError. onLog receives the publish header and one line per applied
+// document; nil disables it.
+func DeployWithImage(ctx context.Context, deps Deps, appName, cluster, image, registryCredentialRef string, operatorID uint, dryRun bool, onLog func(string)) (*DeployOutcome, error) {
+	return applicationapi.DeployWithImage(ctx, deps, store.New(deps.DB()), appName, cluster, image, registryCredentialRef, operatorID, dryRun, onLog)
 }

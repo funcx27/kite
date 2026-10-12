@@ -169,13 +169,14 @@ func (h *Handler) Create(c *gin.Context) {
 }
 
 // Update replaces the description and payload of an existing credential.
+// Blank passwords in the payload carry over from the stored credential
+// (registry entries by host+username, git by username), so editing metadata
+// or adding one entry never demands re-entering every secret; the merged
+// payload still passes the strict validation, so a new host, a kind switch
+// or a changed identity must bring its password.
 func (h *Handler) Update(c *gin.Context) {
 	var req updateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		h.fail(c, http.StatusBadRequest, err, "")
-		return
-	}
-	if err := validatePayload(req.Payload); err != nil {
 		h.fail(c, http.StatusBadRequest, err, "")
 		return
 	}
@@ -187,8 +188,18 @@ func (h *Handler) Update(c *gin.Context) {
 		h.failGet(c, err)
 		return
 	}
+	var stored store.Payload
+	if err := row.Payload.Unmarshal(&stored); err != nil {
+		h.fail(c, http.StatusInternalServerError, err, "")
+		return
+	}
+	payload := mergeBlankPasswords(req.Payload, &stored)
+	if err := validatePayload(payload); err != nil {
+		h.fail(c, http.StatusBadRequest, err, "")
+		return
+	}
 	row.Description = req.Description
-	if err := row.Payload.Marshal(req.Payload); err != nil {
+	if err := row.Payload.Marshal(payload); err != nil {
 		h.fail(c, http.StatusInternalServerError, err, "")
 		return
 	}
@@ -202,6 +213,32 @@ func (h *Handler) Update(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, s)
+}
+
+// mergeBlankPasswords fills blank passwords in an update payload from the
+// stored credential: registry entries match by host+username, the git
+// section by username — an unchanged non-secret identity keeps its secret;
+// any other blank password is left for validatePayload to reject.
+func mergeBlankPasswords(next, old *store.Payload) *store.Payload {
+	if next == nil || old == nil {
+		return next
+	}
+	if next.Git != nil && next.Git.Password == "" && old.Git != nil &&
+		next.Git.Username == old.Git.Username {
+		next.Git.Password = old.Git.Password
+	}
+	if len(next.Registry) > 0 {
+		prev := map[string]store.RegCred{}
+		for _, rc := range old.Registry {
+			prev[rc.Host] = rc
+		}
+		for i, rc := range next.Registry {
+			if rc.Password == "" && prev[rc.Host].Username == rc.Username {
+				next.Registry[i].Password = prev[rc.Host].Password
+			}
+		}
+	}
+	return next
 }
 
 // Delete removes the named credential.

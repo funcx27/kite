@@ -51,11 +51,15 @@ type HTTPSource struct {
 // application (design §5.2). OperatorID is the run's RBAC identity — the
 // deploy executor enforces per-document permissions with it (design §7).
 type DeployRequest struct {
-	App        string `json:"app"`
-	Cluster    string `json:"cluster"`
-	Image      string `json:"image,omitempty"` // empty = deploy the current config
-	DryRun     bool   `json:"dryRun,omitempty"`
-	OperatorID uint   `json:"operatorId"`
+	App     string `json:"app"`
+	Cluster string `json:"cluster"`
+	Image   string `json:"image,omitempty"` // empty = deploy the current config
+	// RegistryCredentialRef references the credential center entry whose
+	// managed pull secret is attached to the publish; empty = keep the
+	// application config's current credential.
+	RegistryCredentialRef string `json:"registryCredentialRef,omitempty"`
+	DryRun                bool   `json:"dryRun,omitempty"`
+	OperatorID            uint   `json:"operatorId"`
 }
 
 // DeployResult reports the deploy outcome (design §5.2 Outputs): the produced

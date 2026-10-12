@@ -148,11 +148,12 @@ func (r deployRunner) Run(ctx context.Context, rendered spec.Props, run store.Wo
 		return nil, fmt.Errorf("deploy node needs app and cluster")
 	}
 	res, err := r.deps.DeployApp(ctx, exec.DeployRequest{
-		App:        p.App,
-		Cluster:    p.Cluster,
-		Image:      p.Image,
-		DryRun:     p.DryRun,
-		OperatorID: run.TriggeredBy,
+		App:                   p.App,
+		Cluster:               p.Cluster,
+		Image:                 p.Image,
+		RegistryCredentialRef: p.RegistryCredentialRef,
+		DryRun:                p.DryRun,
+		OperatorID:            run.TriggeredBy,
 	}, onLog)
 	if err != nil {
 		return nil, err

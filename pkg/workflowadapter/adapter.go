@@ -361,7 +361,7 @@ func (d *Deps) DeployApp(ctx context.Context, req exec.DeployRequest, onLog func
 	if d.app == nil {
 		return exec.DeployResult{}, fmt.Errorf("application module is not wired: deploy nodes cannot run")
 	}
-	out, err := application.DeployWithImage(ctx, d.app, req.App, req.Cluster, req.Image, req.OperatorID, req.DryRun, onLog)
+	out, err := application.DeployWithImage(ctx, d.app, req.App, req.Cluster, req.Image, req.RegistryCredentialRef, req.OperatorID, req.DryRun, onLog)
 	if err != nil {
 		var df *application.DriftError
 		if errors.As(err, &df) {

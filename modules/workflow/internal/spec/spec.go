@@ -86,7 +86,11 @@ type DeployProps struct {
 	App     string `json:"app"`
 	Cluster string `json:"cluster"`
 	Image   string `json:"image,omitempty"` // empty = deploy the current config
-	DryRun  bool   `json:"dryRun,omitempty"`
+	// RegistryCredentialRef names the credential center entry whose managed
+	// pull secret is attached to this publish; empty = keep the application
+	// config's current credential.
+	RegistryCredentialRef string `json:"registryCredentialRef,omitempty"`
+	DryRun                bool   `json:"dryRun,omitempty"`
 }
 
 // NotifyProps is the notify payload (design §5.4).

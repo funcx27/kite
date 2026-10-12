@@ -642,6 +642,14 @@ function DeployPropsForm({
   const { t } = useTranslation()
   const { clusters } = useCluster()
   const { data: applications } = useApplications()
+  // Registry credentials feed the pull-secret pick; the Select degrades to a
+  // plain input when the list failed to load or is empty (same contract as
+  // the build form's credential fields).
+  const { data: credentials, isSuccess: credentialsLoaded } = useCredentials()
+  const credentialList = credentialsLoaded ? (credentials ?? []) : []
+  const registryCredentialNames = credentialList
+    .filter((c) => c.registryHosts.length > 0)
+    .map((c) => c.name)
   const savedApp = readStringProp(node, 'app')
   const savedCluster = readStringProp(node, 'cluster')
 
@@ -720,6 +728,17 @@ function DeployPropsForm({
           placeholder="{{steps.build1.outputs.imageRef}}"
         />
       </Field>
+      <CredentialRefField
+        propKey="registryCredentialRef"
+        saved={readStringProp(node, 'registryCredentialRef')}
+        names={registryCredentialNames}
+        label={t('workflow.props.registryCredentialRef')}
+        hint={t('workflow.props.deployRegistryCredentialRefHint')}
+        noneLabel={t('workflow.props.credentialRefNone')}
+        currentLabel={t('workflow.props.currentValue')}
+        patchProps={patchProps}
+        onFocusField={onFocusField}
+      />
       <AdvancedCollapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
         <label className="flex items-center gap-2 text-sm">
           <Checkbox

@@ -494,16 +494,7 @@ export function BuildProvidersManagement() {
               <TableRow key={provider.name}>
                 <TableCell>
                   <span
-                    className={
-                      provider.enabled === false
-                        ? 'font-mono text-sm text-muted-foreground'
-                        : 'font-mono text-sm'
-                    }
-                  >
-                    {provider.name}
-                  </span>
-                  <span
-                    className="ml-1.5 inline-flex align-middle"
+                    className="mr-1.5 inline-flex align-middle"
                     title={
                       provider.type === 'docker'
                         ? t('workflow.buildProviders.typeDocker')
@@ -515,6 +506,15 @@ export function BuildProvidersManagement() {
                     ) : (
                       <KubernetesIcon className="h-4 w-4" />
                     )}
+                  </span>
+                  <span
+                    className={
+                      provider.enabled === false
+                        ? 'font-mono text-sm text-muted-foreground'
+                        : 'font-mono text-sm'
+                    }
+                  >
+                    {provider.name}
                   </span>
                   {provider.name === defaultProvider && (
                     <Badge variant="secondary" className="ml-2">

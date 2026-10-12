@@ -10,6 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/funcx27/kite/modules/application/internal/render"
 	"github.com/funcx27/kite/modules/application/internal/store"
 	"github.com/funcx27/kite/modules/application/internal/syncops"
 )
@@ -82,12 +83,16 @@ func (h *Handler) publishGate(ctx context.Context, cli client.Client, cfg *store
 // Render(App.Spec) first — row and rev1, gated on applications:create like
 // the HTTP create funnels — and published like any other. dryRun validates
 // against the API server only: the create-mode row is staged in memory,
-// nothing is persisted (design §7). Permissions are checked with
+// nothing is persisted (design §7). A registryCredentialRef that differs
+// from the config's stored credential is persisted first (ref column plus
+// the managed pull-secret reference on the current manifests) and gated on
+// credentials:get under the operator; an empty ref keeps the config's
+// credential — the facade never clears one. Permissions are checked with
 // deps.AuthorizeUser under operatorID; unresolved cluster drift comes back
 // as *DriftError; the caller's context cancellation aborts in-flight
 // applies. onLog receives the publish header, one line per drifted document
 // on a gated publish and one line per applied document; nil disables it.
-func DeployWithImage(ctx context.Context, deps Deps, st *store.Store, appName, cluster, image string, operatorID uint, dryRun bool, onLog func(string)) (*DeployOutcome, error) {
+func DeployWithImage(ctx context.Context, deps Deps, st *store.Store, appName, cluster, image, registryCredentialRef string, operatorID uint, dryRun bool, onLog func(string)) (*DeployOutcome, error) {
 	if onLog == nil {
 		onLog = func(string) {}
 	}
@@ -134,9 +139,30 @@ func DeployWithImage(ctx context.Context, deps Deps, st *store.Store, appName, c
 		manifests []unstructured.Unstructured
 		latestRev int
 	)
+	// A workflow-sent credential reference rides the publish: equal-to-stored
+	// and empty refs leave the config alone (the facade never clears one).
+	setCred := registryCredentialRef != "" && registryCredentialRef != cfg.CredentialRef
 	switch {
-	case image != "" && dryRun:
-		manifests, err = previewImage(stored, app.Name, image)
+	case dryRun:
+		if image != "" {
+			manifests, err = previewImage(stored, app.Name, image)
+		} else {
+			manifests = stored
+		}
+		if err == nil && setCred {
+			// A dry-run stages the reference in memory only (design §7).
+			render.InjectPullSecret(manifests, pullSecretName(registryCredentialRef))
+		}
+	case setCred:
+		// The credential lands before the image persist: persistImage decodes
+		// the CURRENT manifests, so the injected reference survives it.
+		if !id.authorize(credentialsResource, "get", "", "") {
+			return nil, fmt.Errorf("user does not have permission to use credential %q", registryCredentialRef)
+		}
+		manifests, latestRev, err = h.persistCredential(id, app, cfg, registryCredentialRef)
+		if err == nil && image != "" {
+			manifests, latestRev, err = h.persistImage(id, app, cfg, image)
+		}
 	case image != "":
 		manifests, latestRev, err = h.persistImage(id, app, cfg, image)
 	default:
@@ -168,6 +194,57 @@ func DeployWithImage(ctx context.Context, deps Deps, st *store.Store, appName, c
 		}
 	}
 	return &DeployOutcome{Revision: latestRev, Preview: toDocPreviews(resp.Preview)}, nil
+}
+
+// persistCredential writes the config's pull credential reference and the
+// managed pull-secret reference on the CURRENT stored manifests as a
+// Source=pull-cred revision — never a fresh render, which would clobber
+// runtime changes such as the image a workflow deploy pushed (the same
+// contract as rerenderForCredential), so stored manifests, the applied set
+// and the live cluster stay identical and the reference never becomes drift.
+func (h *Handler) persistCredential(id identity, app *store.App, cfg *store.AppConfig, credentialRef string) ([]unstructured.Unstructured, int, error) {
+	previous := string(cfg.Manifests)
+	var docs []unstructured.Unstructured
+	newRev := 0
+	txErr := h.store.DB().Transaction(func(tx *gorm.DB) error {
+		cur, err := lockConfig(tx, cfg.ID)
+		if err != nil {
+			return err
+		}
+		docs, err = store.DecodeManifests(cur.Manifests)
+		if err != nil {
+			return err
+		}
+		render.InjectPullSecret(docs, pullSecretName(credentialRef))
+		data, err := store.EncodeManifests(docs)
+		if err != nil {
+			return err
+		}
+		if err := tx.Model(&store.AppConfig{}).Where("id = ?", cur.ID).
+			Updates(map[string]interface{}{
+				"manifests":      store.SecretJSON(data),
+				"credential_ref": credentialRef,
+			}).Error; err != nil {
+			return err
+		}
+		newRev, err = store.AppendRevisionTx(tx, cur.ID, store.RevSourcePullCred, data, id.operatorID, 0)
+		if err != nil {
+			return err
+		}
+		cfg.Manifests = data
+		cfg.CredentialRef = credentialRef
+		return nil
+	})
+	if txErr != nil {
+		return nil, 0, txErr
+	}
+	h.recordAudit(id, store.HistoryEntry{
+		Cluster: cfg.Cluster, ResourceType: authzResource, ResourceName: app.Name,
+		Namespace: cfg.Namespace, Operation: "update",
+		YAML:         redacted(cfg.Manifests),
+		PreviousYAML: redacted(store.JSONField(previous)),
+	})
+	return docs, newRev, nil
 }
 
 // facadeTargetConfig returns the config a facade publish applies to, creating
