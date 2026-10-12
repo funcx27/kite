@@ -184,7 +184,7 @@ export function ConfigFilesEditor({
             <Input
               value={pointInput}
               onChange={(event) => setPointInput(event.target.value)}
-              placeholder="/etc/xxx"
+              placeholder="/etc/my-app"
               className="h-8 max-w-56 py-0 font-mono text-xs"
               onKeyDown={(event) => {
                 if (event.key === 'Enter') addMountPoint()
@@ -252,7 +252,7 @@ export function ConfigFilesEditor({
                         setFullscreen(false)
                       }}
                     >
-                      {file.name}
+                      {file.mountPath}/{file.name}
                     </button>
                     <span
                       className={
@@ -354,6 +354,14 @@ export function ConfigFilesEditor({
                 )}
               </SelectContent>
             </Select>
+            {editing && (
+              <span
+                className="font-mono text-xs text-muted-foreground"
+                title={t('applications.wizard.fullPath')}
+              >
+                {editing.mountPath}/{editing.name}
+              </span>
+            )}
             <div className="ml-auto flex items-center gap-1.5">
               <Button
                 type="button"

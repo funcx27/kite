@@ -18,9 +18,18 @@ import {
 interface ImageEditorProps {
   container: Container
   onUpdate: (updates: Partial<Container>) => void
+  /** Hide the "Default" (unset → kubelet decides) option and default the
+   *  select to IfNotPresent — used by the application wizard, where an
+   *  explicit policy is always written; raw-workload editors keep the
+   *  unset choice. */
+  hideDefaultPolicy?: boolean
 }
 
-export function ImageEditor({ container, onUpdate }: ImageEditorProps) {
+export function ImageEditor({
+  container,
+  onUpdate,
+  hideDefaultPolicy = false,
+}: ImageEditorProps) {
   const { t } = useTranslation()
   const [showTagDropdown, setShowTagDropdown] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -112,14 +121,19 @@ export function ImageEditor({ container, onUpdate }: ImageEditorProps) {
       <div className="space-y-2">
         <Label htmlFor="image-pull-policy">{t('editors.pullPolicy')}</Label>
         <Select
-          value={container.imagePullPolicy || 'default'}
+          value={
+            container.imagePullPolicy ||
+            (hideDefaultPolicy ? 'IfNotPresent' : 'default')
+          }
           onValueChange={updateImagePullPolicy}
         >
-          <SelectTrigger id="image-pull-policy" className="w-full">
+          <SelectTrigger id="image-pull-policy" className="w-56">
             <SelectValue placeholder={t('editors.selectPullPolicy')} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="default">Default</SelectItem>
+            {!hideDefaultPolicy && (
+              <SelectItem value="default">Default</SelectItem>
+            )}
             <SelectItem value="IfNotPresent">IfNotPresent</SelectItem>
             <SelectItem value="Always">Always</SelectItem>
             <SelectItem value="Never">Never</SelectItem>

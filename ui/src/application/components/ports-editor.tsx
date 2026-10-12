@@ -116,7 +116,7 @@ export function PortsEditor({
                       update(index, { host: event.target.value })
                     }
                     placeholder={t('applications.wizard.hostPlaceholder')}
-                    className="min-w-24 flex-1 font-mono text-xs"
+                    className="w-56 shrink-0 font-mono text-xs"
                   />
                   <Input
                     value={port.path ?? ''}
@@ -124,7 +124,7 @@ export function PortsEditor({
                       update(index, { path: event.target.value })
                     }
                     placeholder="/"
-                    className="w-20 shrink-0 font-mono text-xs"
+                    className="w-36 shrink-0 font-mono text-xs"
                   />
                   <Button
                     type="button"

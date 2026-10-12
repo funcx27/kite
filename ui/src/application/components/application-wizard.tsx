@@ -42,13 +42,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { EnvironmentEditor } from '@/components/editors/environment-editor'
 import { ImageEditor } from '@/components/editors/image-editor'
 import { SimpleYamlEditor } from '@/components/simple-yaml-editor'
 
 import { ConfigFilesEditor } from './config-files-editor'
+import { EnvEditor } from './env-editor'
 import { PortsEditor } from './ports-editor'
-import { ResourceEditor } from './resource-editor'
+import { requestExceedsLimit, ResourceEditor } from './resource-editor'
 import { CreateSpaceDialog } from './space-picker'
 
 const STEP_COUNT = 6
@@ -105,7 +105,7 @@ function buildState(
     description: app?.description ?? '',
     workloadType: workload?.type || 'deployment',
     image: workload?.image || '',
-    imagePullPolicy: workload?.imagePullPolicy ?? '',
+    imagePullPolicy: workload?.imagePullPolicy || 'IfNotPresent',
     replicas: workload?.replicas ?? 1,
     container: {
       name: 'app',
@@ -165,14 +165,15 @@ export function ApplicationWizard({
   const queryClient = useQueryClient()
   const { spaces, currentSpace, isLoading: spacesLoading } = useSpaces()
   const { clusters } = useCluster()
-  // Create mode targets a space picked from the existing list — creation is
-  // blocked outright when no space exists (a space is a labeled namespace,
-  // there is no 'default' fallback).
-  const [space, setSpace] = useState('')
+  // Creation is bound to the sidebar's current space — the wizard offers no
+  // space picker (switching scope happens in the sidebar, not in a modal);
+  // it is still blocked outright when no space exists (a space is a labeled
+  // namespace, there is no 'default' fallback).
   const [createSpaceOpen, setCreateSpaceOpen] = useState(false)
   // Create mode's publish target: required, so finishing always deploys.
   const [targetCluster, setTargetCluster] = useState('')
-  const effectiveNamespace = mode === 'create' ? space : (app?.namespace ?? '')
+  const effectiveNamespace =
+    mode === 'create' ? (currentSpace ?? '') : (app?.namespace ?? '')
   const noSpaces = mode === 'create' && !spacesLoading && spaces.length === 0
 
   // Cluster mode pulls the config itself: form prefill from the extracted
@@ -205,7 +206,6 @@ export function ApplicationWizard({
     setPreviewYaml('')
     setError('')
     if (mode === 'create') {
-      setSpace(currentSpace ?? '')
       setTargetCluster('')
     }
     setState(buildState(mode, app, config))
@@ -274,6 +274,12 @@ export function ApplicationWizard({
     state.container.resources?.limits?.cpu?.trim() &&
     state.container.resources?.limits?.memory?.trim()
   )
+  const exceeds = requestExceedsLimit(state.container.resources)
+  const resourceError = exceeds.cpu
+    ? t('applications.editors.requestExceedsCpu')
+    : exceeds.memory
+      ? t('applications.editors.requestExceedsMemory')
+      : ''
 
   const validate = (): string => {
     if (mode === 'create') {
@@ -293,6 +299,7 @@ export function ApplicationWizard({
     if (limitsMissing) {
       return t('applications.wizard.limitsRequired')
     }
+    if (resourceError) return resourceError
     for (const port of spec.ports ?? []) {
       if (port.port < 1 || port.port > 65535) {
         return t('applications.wizard.invalidPort', { port: port.port })
@@ -311,9 +318,10 @@ export function ApplicationWizard({
       }
       if (nameInvalid) return t('applications.wizard.invalidName')
       if (!state.image.trim()) return t('applications.wizard.imageRequired')
-    }
-    if (step === 2 && limitsMissing) {
-      return t('applications.wizard.limitsRequired')
+      if (limitsMissing) {
+        return t('applications.wizard.limitsRequired')
+      }
+      if (resourceError) return resourceError
     }
     if (step === 4) {
       // state.ports, not spec.ports — buildSpec drops rows below the valid
@@ -425,7 +433,7 @@ export function ApplicationWizard({
 
   const stepLabels = [
     t('applications.wizard.stepBasic'),
-    t('applications.wizard.stepRuntime'),
+    t('applications.wizard.stepEnv'),
     t('applications.wizard.stepConfigFiles'),
     t('applications.wizard.stepNetwork'),
     t('applications.wizard.stepTargetCluster'),
@@ -445,9 +453,11 @@ export function ApplicationWizard({
                     name: app?.name,
                     cluster,
                   })}
-            <Badge variant="outline" className="font-mono">
-              {effectiveNamespace}
-            </Badge>
+            {effectiveNamespace && (
+              <Badge variant="outline" className="font-mono">
+                {effectiveNamespace}
+              </Badge>
+            )}
           </DialogTitle>
           <DialogDescription className="sr-only">
             {t('applications.wizard.createTitle')}
@@ -519,32 +529,47 @@ export function ApplicationWizard({
           ) : (
             <>
               {step === 1 && (
-                <div className="space-y-4">
-                  <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_14rem_8rem]">
+                <div className="max-w-3xl space-y-4">
+                  <div>
+                    <Label htmlFor="wizard-workload-type">
+                      {t('applications.wizard.workloadType')}
+                    </Label>
+                    <Select
+                      value={state.workloadType}
+                      onValueChange={(value) => patch({ workloadType: value })}
+                      disabled={
+                        mode === 'cluster' &&
+                        !!config &&
+                        config.statusSummary !== 'undeployed'
+                      }
+                    >
+                      <SelectTrigger
+                        id="wizard-workload-type"
+                        className="mt-1.5 w-44"
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="deployment">Deployment</SelectItem>
+                        <SelectItem value="statefulset">StatefulSet</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {mode === 'cluster' &&
+                      !!config &&
+                      config.statusSummary !== 'undeployed' && (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {t('applications.wizard.workloadTypeLocked')}
+                        </p>
+                      )}
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_8rem]">
                     <div>
                       <Label>{t('applications.wizard.appName')}</Label>
                       {mode === 'create' ? (
                         <div className="mt-1.5 flex">
-                          <Select value={space} onValueChange={setSpace}>
-                            <SelectTrigger className="w-44 shrink-0 rounded-r-none border-r-0 font-mono">
-                              <SelectValue
-                                placeholder={t(
-                                  'applications.wizard.spacePlaceholder'
-                                )}
-                              />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {spaces.map((candidate) => (
-                                <SelectItem
-                                  key={candidate}
-                                  value={candidate}
-                                  className="font-mono"
-                                >
-                                  {candidate}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                          <div className="flex h-9 w-44 shrink-0 items-center rounded-l-md border border-r-0 bg-muted px-3 font-mono text-sm text-muted-foreground">
+                            {effectiveNamespace || '—'}
+                          </div>
                           <span className="flex h-9 items-center border-y bg-muted px-1 text-sm text-muted-foreground">
                             /
                           </span>
@@ -567,44 +592,21 @@ export function ApplicationWizard({
                       </p>
                     </div>
                     <div>
-                      <Label>{t('applications.wizard.workloadType')}</Label>
-                      <Select
-                        value={state.workloadType}
-                        onValueChange={(value) =>
-                          patch({ workloadType: value })
-                        }
-                        disabled={
-                          mode === 'cluster' &&
-                          !!config &&
-                          config.statusSummary !== 'undeployed'
-                        }
-                      >
-                        <SelectTrigger className="mt-1.5 w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="deployment">Deployment</SelectItem>
-                          <SelectItem value="statefulset">
-                            StatefulSet
-                          </SelectItem>
-                        </SelectContent>
-                      </Select>
-                      {mode === 'cluster' &&
-                        !!config &&
-                        config.statusSummary !== 'undeployed' && (
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            {t('applications.wizard.workloadTypeLocked')}
-                          </p>
-                        )}
-                    </div>
-                    <div>
-                      <Label>{t('applications.wizard.replicas')}</Label>
+                      <Label htmlFor="wizard-replicas">
+                        {t('applications.wizard.replicas')}
+                      </Label>
                       <Input
+                        id="wizard-replicas"
                         type="number"
-                        min={0}
+                        min={1}
                         value={state.replicas}
                         onChange={(event) =>
-                          patch({ replicas: Number(event.target.value) || 0 })
+                          patch({
+                            replicas: Math.max(
+                              1,
+                              Number(event.target.value) || 1
+                            ),
+                          })
                         }
                         className="mt-1.5"
                       />
@@ -621,6 +623,7 @@ export function ApplicationWizard({
                     />
                   </div>
                   <ImageEditor
+                    hideDefaultPolicy
                     container={
                       {
                         name: 'app',
@@ -645,20 +648,6 @@ export function ApplicationWizard({
                       patch(next)
                     }}
                   />
-                </div>
-              )}
-
-              {step === 2 && (
-                <div className="space-y-6">
-                  <EnvironmentEditor
-                    container={state.container as never}
-                    namespace={effectiveNamespace}
-                    onUpdate={(updates) =>
-                      patch({
-                        container: { ...state.container, ...updates },
-                      })
-                    }
-                  />
                   <ResourceEditor
                     container={state.container as never}
                     onUpdate={(updates) =>
@@ -671,6 +660,17 @@ export function ApplicationWizard({
                           },
                         },
                       })
+                    }
+                  />
+                </div>
+              )}
+
+              {step === 2 && (
+                <div className="max-w-3xl">
+                  <EnvEditor
+                    env={state.container.env}
+                    onChange={(env) =>
+                      patch({ container: { ...state.container, env } })
                     }
                   />
                 </div>
@@ -750,17 +750,6 @@ export function ApplicationWizard({
                       )}
                     </div>
                   )}
-                  <div>
-                    <Label>{t('sidebar.spaces.label')}</Label>
-                    <div className="mt-1.5 flex h-9 items-center">
-                      <Badge variant="outline" className="font-mono">
-                        {effectiveNamespace}
-                      </Badge>
-                    </div>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {t('applications.wizard.spaceReadOnlyHint')}
-                    </p>
-                  </div>
                 </div>
               )}
 
