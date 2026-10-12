@@ -12,15 +12,14 @@ import { Button } from '@/components/ui/button'
 
 // Application-mode settings (design §11). The view follows the space: a
 // ?space=<name> shows that space's settings (resource quotas, build
-// settings); the bare path follows the header picker's active space, so
-// entering settings with a space selected lands in its view. An empty
-// ?space= is the explicit "global" choice — the view-global button links
-// there, because a bare link would be defaulted back to the active space.
-// useSyncSpaceParam mirrors a bare entry back to ?space=<active>, leaving
-// the explicit empty param untouched.
+// settings); the bare path follows the header picker's active space. The
+// view-global button clears the active space itself (setCurrentSpace(null)),
+// so the picker switches to "all spaces" instead of only this page going
+// global while the header still shows the space. An explicit empty ?space=
+// (bookmark) still renders the global view.
 export function ApplicationSettingsPage() {
   const { t } = useTranslation()
-  const { currentSpace } = useSpaces()
+  const { currentSpace, setCurrentSpace } = useSpaces()
   const [searchParams] = useSearchParams()
   useSyncSpaceParam()
   usePageTitle(t('nav.settings'))
@@ -38,10 +37,12 @@ export function ApplicationSettingsPage() {
           </p>
         </div>
         {space !== null ? (
-          <Button variant="ghost" size="sm" asChild>
-            <Link to="/application-settings?space=">
-              {t('applicationSettings.viewGlobal')}
-            </Link>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setCurrentSpace(null)}
+          >
+            {t('applicationSettings.viewGlobal')}
           </Button>
         ) : (
           currentSpace !== null && (

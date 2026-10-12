@@ -19,6 +19,10 @@ type BuildProvider struct {
 	// Name is the fleet provider name; DNS-1123, unique across config-file
 	// and managed providers (the create API rejects config collisions).
 	Name string `json:"name" gorm:"type:varchar(63);uniqueIndex;not null"`
+	// Enabled reports whether the provider is registered with the build
+	// fleet. Disabling unregisters it but keeps the row — a recoverable
+	// delete; builds pinned to the name fail until it is re-enabled.
+	Enabled bool `json:"enabled" gorm:"not null;default:true"`
 	// Cluster is the kite cluster name the provider builds on (k8s only).
 	Cluster string `json:"cluster" gorm:"type:varchar(100);not null"`
 	// Namespace receives the buildkitd runtime pods (k8s only).
@@ -89,6 +93,11 @@ type BuildRuntimeSetting struct {
 	Hosts              []BuildRuntimeHost  `json:"hosts" gorm:"serializer:json;type:text"`
 	InsecureRegistries []string            `json:"insecureRegistries" gorm:"serializer:json;type:text"`
 	Mirrors            map[string][]string `json:"mirrors" gorm:"serializer:json;type:text"`
+	// RootfulImage / RootlessImage override the buildkitd image of the
+	// rootful ("default") and "rootless" runtime profiles; empty = the
+	// built-in per-mode default.
+	RootfulImage  string `json:"rootfulImage" gorm:"type:varchar(255);not null;default:''"`
+	RootlessImage string `json:"rootlessImage" gorm:"type:varchar(255);not null;default:''"`
 }
 
 func (BuildRuntimeSetting) TableName() string {

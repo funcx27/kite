@@ -1,12 +1,16 @@
 // Managed build providers: k8s (managed-cluster) and docker (the kite host's
 // daemon) build providers created in the settings UI and injected into the
 // buildfleet runtime without a config change or restart. The default provider
-// is marked on its name (click to switch); the create/edit dialog also
-// carries the "set as default" switch, which upserts/deletes the global
-// build-settings row on save.
+// is marked with a badge on its name; the create/edit dialog also carries the
+// "set as default" switch, which upserts/deletes the global build-settings
+// row on save.
 import '@/workflow/i18n'
 
 import { useMemo, useState } from 'react'
+import {
+  DockerIcon,
+  KubernetesIcon,
+} from '@/application/components/brand-icons'
 import { IconPencil, IconPlus, IconTrash } from '@tabler/icons-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -40,6 +44,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
+import { Switch } from '@/components/ui/switch'
 import {
   Table,
   TableBody,
@@ -56,6 +61,7 @@ import {
   useCreateBuildProviderMutation,
   useDeleteBuildProviderMutation,
   useDeleteBuildSettingMutation,
+  useSetBuildProviderEnabledMutation,
   useUpdateBuildProviderMutation,
   useUpsertBuildSettingMutation,
   WorkflowApiError,
@@ -96,8 +102,8 @@ interface ProviderForm {
   // Fleet capacity caps (cpu cores / memory Gi).
   cpu: string
   memory: string
-  // Runtime profile name; always one of the API's runtimes ('' never occurs —
-  // the default profile is its own entry).
+  // Build mode sent as the provider runtime: 'default' (rootful) or
+  // 'rootless'.
   runtime: string
   // Per-instance build pod shape (cpu cores / memory Gi). k8s only.
   podCpu: string
@@ -132,7 +138,7 @@ const emptyForm = (defaults: BuildProviderDefaults): ProviderForm => ({
   name: '',
   cluster: '',
   namespace: '',
-  address: '',
+  address: 'unix:///var/run/docker.sock',
   tlsCa: '',
   tlsCert: '',
   tlsKey: '',
@@ -170,7 +176,7 @@ const formOf = (
   tlsInsecure: provider.tls?.insecureSkipVerify ?? false,
   cpu: provider.cpu ? String(provider.cpu) : '',
   memory: memoryGiOf(provider.memory),
-  runtime: provider.runtime || 'default',
+  runtime: provider.runtime === 'rootless' ? 'rootless' : 'default',
   podCpu: provider.podCpu ? String(provider.podCpu) : '',
   podMemoryGi: provider.podMemoryGi ? String(provider.podMemoryGi) : '',
   cacheEnabled: provider.cache?.enabled ?? false,
@@ -200,7 +206,6 @@ export function BuildProvidersManagement() {
   const { data, isLoading, error } = useBuildProviders()
   const providers = useMemo(() => data?.providers ?? [], [data])
   const configProviders = useMemo(() => data?.configProviders ?? [], [data])
-  const runtimes = useMemo(() => data?.runtimes ?? [], [data])
   const defaults = useMemo(() => data?.defaults ?? DEFAULTS_FALLBACK, [data])
   const { data: settingsData } = useBuildSettings()
   const settings = useMemo(() => settingsData?.settings ?? [], [settingsData])
@@ -209,6 +214,7 @@ export function BuildProvidersManagement() {
   const createMutation = useCreateBuildProviderMutation()
   const updateMutation = useUpdateBuildProviderMutation()
   const deleteMutation = useDeleteBuildProviderMutation()
+  const enabledMutation = useSetBuildProviderEnabledMutation()
   const upsertSettingMutation = useUpsertBuildSettingMutation()
   const deleteSettingMutation = useDeleteBuildSettingMutation()
 
@@ -427,22 +433,24 @@ export function BuildProvidersManagement() {
     createMutation.isPending ||
     updateMutation.isPending ||
     deleteMutation.isPending ||
+    enabledMutation.isPending ||
     upsertSettingMutation.isPending ||
     deleteSettingMutation.isPending
 
-  // instanceSpecCell renders the per-instance build pod shape, "2 核 · 4Gi";
+  // capacityCell renders the provider's fleet capacity caps, "4 核 · 8Gi";
   // zero/empty on both axes shows an em dash.
-  const instanceSpecCell = (provider: BuildProvider) => {
-    if (!provider.podCpu && !provider.podMemoryGi) {
+  const capacityCell = (provider: BuildProvider) => {
+    const memoryGi = memoryGiOf(provider.memory)
+    if (!provider.cpu && !memoryGi) {
       return <span className="text-muted-foreground">—</span>
     }
     return (
       <span className="font-mono text-xs">
-        {provider.podCpu
-          ? `${provider.podCpu} ${t('workflow.buildProviders.cpuUnit')}`
+        {provider.cpu
+          ? `${provider.cpu} ${t('workflow.buildProviders.cpuUnit')}`
           : ''}
-        {provider.podCpu && provider.podMemoryGi ? ' · ' : ''}
-        {provider.podMemoryGi ? `${provider.podMemoryGi}Gi` : ''}
+        {provider.cpu && memoryGi ? ' · ' : ''}
+        {memoryGi ? `${memoryGi}Gi` : ''}
       </span>
     )
   }
@@ -453,15 +461,17 @@ export function BuildProvidersManagement() {
         <div className="space-y-1">
           <CardTitle className="flex items-center gap-2">
             {t('workflow.buildProviders.title')}
-            <Badge variant="secondary">{t('workflow.globalBadge')}</Badge>
           </CardTitle>
           <CardDescription>
             {t('workflow.buildProviders.description')}
           </CardDescription>
         </div>
-        <Button onClick={openCreate}>
-          <IconPlus className="mr-1.5 h-4 w-4" />
-          {t('workflow.buildProviders.add')}
+        <Button
+          size="icon"
+          onClick={openCreate}
+          title={t('workflow.buildProviders.add')}
+        >
+          <IconPlus className="h-4 w-4" />
         </Button>
       </CardHeader>
       <CardContent>
@@ -471,7 +481,9 @@ export function BuildProvidersManagement() {
               <TableHead>{t('workflow.buildProviders.name')}</TableHead>
               <TableHead>{t('workflow.buildProviders.cluster')}</TableHead>
               <TableHead>{t('workflow.buildProviders.namespace')}</TableHead>
-              <TableHead>{t('workflow.buildProviders.instanceSpec')}</TableHead>
+              <TableHead>
+                {t('workflow.buildProviders.capacitySection')}
+              </TableHead>
               <TableHead className="text-right">
                 {t('common.fields.actions')}
               </TableHead>
@@ -481,10 +493,39 @@ export function BuildProvidersManagement() {
             {providers.map((provider) => (
               <TableRow key={provider.name}>
                 <TableCell>
-                  <span className="font-mono text-sm">{provider.name}</span>
-                  <Badge variant="outline" className="ml-2">
-                    {provider.type === 'docker' ? 'Docker' : 'k8s'}
-                  </Badge>
+                  <span
+                    className={
+                      provider.enabled === false
+                        ? 'font-mono text-sm text-muted-foreground'
+                        : 'font-mono text-sm'
+                    }
+                  >
+                    {provider.name}
+                  </span>
+                  <span
+                    className="ml-1.5 inline-flex align-middle"
+                    title={
+                      provider.type === 'docker'
+                        ? t('workflow.buildProviders.typeDocker')
+                        : t('workflow.buildProviders.typeK8s')
+                    }
+                  >
+                    {provider.type === 'docker' ? (
+                      <DockerIcon className="h-4 w-4" />
+                    ) : (
+                      <KubernetesIcon className="h-4 w-4" />
+                    )}
+                  </span>
+                  {provider.name === defaultProvider && (
+                    <Badge variant="secondary" className="ml-2">
+                      {t('workflow.buildProviders.defaultTag')}
+                    </Badge>
+                  )}
+                  {provider.enabled === false && (
+                    <Badge variant="outline" className="ml-2">
+                      {t('workflow.buildProviders.disabledTag')}
+                    </Badge>
+                  )}
                 </TableCell>
                 <TableCell>
                   <span className="font-mono">{provider.cluster || '—'}</span>
@@ -492,9 +533,20 @@ export function BuildProvidersManagement() {
                 <TableCell>
                   <span className="font-mono">{provider.namespace || '—'}</span>
                 </TableCell>
-                <TableCell>{instanceSpecCell(provider)}</TableCell>
+                <TableCell>{capacityCell(provider)}</TableCell>
                 <TableCell className="text-right">
-                  <div className="flex justify-end gap-1.5">
+                  <div className="flex items-center justify-end gap-1.5">
+                    <Switch
+                      checked={provider.enabled !== false}
+                      disabled={pending}
+                      onCheckedChange={(enabled) =>
+                        enabledMutation.mutate(
+                          { name: provider.name, enabled },
+                          { onError: (err) => toast.error(err.message) }
+                        )
+                      }
+                      title={t('workflow.buildProviders.toggleEnabled')}
+                    />
                     <Button
                       variant="ghost"
                       size="icon"
@@ -521,6 +573,11 @@ export function BuildProvidersManagement() {
               <TableRow key={name}>
                 <TableCell>
                   <span className="font-mono text-sm">{name}</span>
+                  {name === defaultProvider && (
+                    <Badge variant="secondary" className="ml-2">
+                      {t('workflow.buildProviders.defaultTag')}
+                    </Badge>
+                  )}
                 </TableCell>
                 <TableCell colSpan={2}>
                   <Badge variant="outline">
@@ -749,7 +806,7 @@ export function BuildProvidersManagement() {
             )}
 
             <Separator />
-            <SectionLabel label={t('workflow.buildProviders.runtimeSection')} />
+            <SectionLabel label={t('workflow.buildProviders.modeSection')} />
             <div className="space-y-1.5">
               <Select
                 value={form.runtime}
@@ -759,15 +816,16 @@ export function BuildProvidersManagement() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {runtimes.map((runtime) => (
-                    <SelectItem key={runtime} value={runtime}>
-                      {runtime}
-                    </SelectItem>
-                  ))}
+                  <SelectItem value="default">
+                    {t('workflow.buildProviders.modeRootful')}
+                  </SelectItem>
+                  <SelectItem value="rootless">
+                    {t('workflow.buildProviders.modeRootless')}
+                  </SelectItem>
                 </SelectContent>
               </Select>
               <p className="text-[11px] text-muted-foreground">
-                {t('workflow.buildProviders.runtimeHint')}
+                {t('workflow.buildProviders.modeHint')}
               </p>
             </div>
 

@@ -472,13 +472,15 @@ function CredentialSection({
         <div className="space-y-1">
           <CardTitle className="flex items-center gap-2">
             {t(titleKey)}
-            <Badge variant="secondary">{t('workflow.globalBadge')}</Badge>
           </CardTitle>
           <CardDescription>{t(descriptionKey)}</CardDescription>
         </div>
-        <Button onClick={() => onCreate(kind)}>
-          <IconPlus className="mr-1.5 h-4 w-4" />
-          {t('workflow.credentials.create')}
+        <Button
+          size="icon"
+          onClick={() => onCreate(kind)}
+          title={t('workflow.credentials.create')}
+        >
+          <IconPlus className="h-4 w-4" />
         </Button>
       </CardHeader>
       <CardContent>

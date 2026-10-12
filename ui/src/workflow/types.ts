@@ -244,6 +244,8 @@ export interface BuildProvider {
   // 'k8s' (managed cluster) or 'docker' (the kite host's daemon).
   type: 'k8s' | 'docker'
   name: string
+  // false = unregistered from the build fleet, row kept for re-enabling.
+  enabled: boolean
   // k8s only: the cluster the provider builds on and the namespace that
   // receives the buildkitd pods.
   cluster: string
@@ -330,6 +332,9 @@ export interface RuntimeHostEntry {
 }
 
 export interface RuntimeSettings {
+  // Buildkit images of the two build modes; '' = built-in default.
+  rootfulImage: string
+  rootlessImage: string
   hosts: RuntimeHostEntry[]
   insecureRegistries: string[]
   // Source registry host → internal mirror sources.

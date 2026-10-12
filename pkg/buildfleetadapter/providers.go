@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -173,6 +174,13 @@ func (d *Deps) k8sProviderConfig(row model.BuildProvider) (config.Provider, erro
 	return pc, nil
 }
 
+// configProviderName reports whether name belongs to the loaded buildfleet
+// config file — those providers are read-only through this API (create and
+// the enabled toggle reject them).
+func (d *Deps) configProviderName(name string) bool {
+	return slices.Contains(d.providerNames, name)
+}
+
 // authorizeProvider writes the unified 403 body and returns false when the
 // user may not perform verb on the workflows pseudo-resource in the provider
 // row's target cluster/namespace — the cluster the provider provisions into
@@ -195,6 +203,7 @@ func (d *Deps) RegisterProviderRoutes(api *gin.RouterGroup) {
 	api.GET("/providers", d.handleListProviders)
 	api.POST("/providers", d.handleCreateProvider)
 	api.PUT("/providers/:name", d.handleUpdateProvider)
+	api.PUT("/providers/:name/enabled", d.handleSetProviderEnabled)
 	api.DELETE("/providers/:name", d.handleDeleteProvider)
 	api.GET("/runtime-settings", d.handleGetRuntimeSettings)
 	api.PUT("/runtime-settings", d.handleUpdateRuntimeSettings)
@@ -218,6 +227,7 @@ type buildProviderTLSJSON struct {
 type buildProviderJSON struct {
 	Type                string                  `json:"type"`
 	Name                string                  `json:"name"`
+	Enabled             bool                    `json:"enabled"`
 	Cluster             string                  `json:"cluster"`
 	Namespace           string                  `json:"namespace"`
 	Address             string                  `json:"address"`
@@ -243,6 +253,7 @@ func toBuildProviderJSON(r model.BuildProvider) buildProviderJSON {
 	out := buildProviderJSON{
 		Type:                effectiveType(r),
 		Name:                r.Name,
+		Enabled:             r.Enabled,
 		Cluster:             r.Cluster,
 		Namespace:           r.Namespace,
 		Address:             r.Address,
@@ -454,6 +465,7 @@ func (d *Deps) handleCreateProvider(c *gin.Context) {
 	row := model.BuildProvider{
 		Type:      ptype,
 		Name:      strings.TrimSpace(req.Name),
+		Enabled:   true,
 		Cluster:   strings.TrimSpace(req.Cluster),
 		Namespace: strings.TrimSpace(req.Namespace),
 		CPU:       req.CPU,
@@ -488,11 +500,9 @@ func (d *Deps) handleCreateProvider(c *gin.Context) {
 	if !authorizeProvider(c, "create", row.Cluster, row.Namespace) {
 		return
 	}
-	for _, n := range d.providerNames {
-		if n == row.Name {
-			c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("provider %q is already defined in the buildfleet config", row.Name)})
-			return
-		}
+	if d.configProviderName(row.Name) {
+		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("provider %q is already defined in the buildfleet config", row.Name)})
+		return
 	}
 	if _, err := model.GetBuildProviderByName(row.Name); err == nil {
 		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("build provider %q already exists", row.Name)})
@@ -594,15 +604,18 @@ func (d *Deps) handleUpdateProvider(c *gin.Context) {
 		// below still records the new shape.
 		klog.Warningf("build provider %s was not registered before update: %v", name, err)
 	}
-	if err := d.registerProvider(c.Request.Context(), newPC); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+	// Disabled rows stay unregistered; the update only swaps the stored shape.
+	if row.Enabled {
+		if err := d.registerProvider(c.Request.Context(), newPC); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 	}
 	if err := model.UpdateBuildProvider(row); err != nil {
 		if rmErr := d.app.RemoveProvider(name); rmErr != nil {
 			klog.Errorf("failed to unregister build provider %s after failed persist: %v", name, rmErr)
 		}
-		if pcErr == nil {
+		if row.Enabled && pcErr == nil {
 			if reErr := d.registerProvider(c.Request.Context(), oldPC); reErr != nil {
 				klog.Errorf("failed to re-register old shape of build provider %s: %v", name, reErr)
 			}
@@ -653,6 +666,94 @@ func (d *Deps) handleDeleteProvider(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "build provider deleted"})
 }
 
+// setProviderEnabledRequest is the PUT /providers/:name/enabled body.
+type setProviderEnabledRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
+// handleSetProviderEnabled toggles one managed provider. Disabling
+// unregisters it from the fleet like deletion but keeps the row and its
+// kubeconfig cache — a recoverable delete; enabling re-registers it through
+// the same row→config→register path the restart restore uses.
+func (d *Deps) handleSetProviderEnabled(c *gin.Context) {
+	name := c.Param("name")
+	if !validDNS1123Label(name) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name must be a DNS-1123 label"})
+		return
+	}
+	var req setProviderEnabledRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid request body: %v", err)})
+		return
+	}
+	row, err := model.GetBuildProviderByName(name)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "build provider not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if d.configProviderName(name) {
+		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("provider %q is already defined in the buildfleet config", name)})
+		return
+	}
+	if !authorizeProvider(c, "update", row.Cluster, row.Namespace) {
+		return
+	}
+	if row.Enabled == req.Enabled {
+		c.JSON(http.StatusOK, toBuildProviderJSON(*row))
+		return
+	}
+	if req.Enabled {
+		d.enableProvider(c, row)
+		return
+	}
+	d.disableProvider(c, row)
+}
+
+// enableProvider registers a disabled row (row→config→register) and persists
+// the flag; a persist failure rolls the registration back, like creation.
+func (d *Deps) enableProvider(c *gin.Context, row *model.BuildProvider) {
+	pc, err := d.providerConfig(*row)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := d.registerProvider(c.Request.Context(), pc); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	row.Enabled = true
+	if err := model.UpdateBuildProvider(row); err != nil {
+		if rmErr := d.app.RemoveProvider(row.Name); rmErr != nil {
+			klog.Errorf("failed to unregister build provider %s after failed persist: %v", row.Name, rmErr)
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	recordProviderAudit(c, "update", *row)
+	c.JSON(http.StatusOK, toBuildProviderJSON(*row))
+}
+
+// disableProvider persists the flag and unregisters the row from the fleet —
+// the handleDeleteProvider unregister path minus the row/kubeconfig deletion.
+func (d *Deps) disableProvider(c *gin.Context, row *model.BuildProvider) {
+	row.Enabled = false
+	if err := model.UpdateBuildProvider(row); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := d.app.RemoveProvider(row.Name); err != nil {
+		// The row is disabled, so the next restart sheds the registration
+		// too; the runtime stays registered until then.
+		klog.Errorf("failed to unregister build provider %s: %v", row.Name, err)
+	}
+	recordProviderAudit(c, "update", *row)
+	c.JSON(http.StatusOK, toBuildProviderJSON(*row))
+}
+
 // runtimeHostJSON is one static hosts entry of the default runtime profile.
 type runtimeHostJSON struct {
 	IP    string   `json:"ip"`
@@ -660,11 +761,14 @@ type runtimeHostJSON struct {
 }
 
 // runtimeSettingsJSON is the API view of the build runtime settings: the
-// default runtime profile's hosts / registry wiring.
+// default runtime profile's hosts / registry wiring plus the two build
+// images (empty image = the built-in per-mode default).
 type runtimeSettingsJSON struct {
 	Hosts              []runtimeHostJSON   `json:"hosts"`
 	InsecureRegistries []string            `json:"insecureRegistries"`
 	Mirrors            map[string][]string `json:"mirrors"`
+	RootfulImage       string              `json:"rootfulImage"`
+	RootlessImage      string              `json:"rootlessImage"`
 }
 
 // runtimeOverride renders a persisted settings row as the default-profile
@@ -694,10 +798,48 @@ func runtimeSettingsView(r config.Runtime) runtimeSettingsJSON {
 	return out
 }
 
+// runtimeImages resolves the effective build images for the API view: a
+// non-empty persisted value wins, otherwise the live profile's image
+// (rootful from the default profile, rootless from the "rootless" profile
+// when the config defines one, else empty).
+func (d *Deps) runtimeImages(row *model.BuildRuntimeSetting) (rootful, rootless string) {
+	rootful = d.cfg.DefaultRuntime().Image()
+	if r, ok := d.cfg.RuntimeProfiles()["rootless"]; ok {
+		rootless = r.Image()
+	}
+	if row != nil {
+		if row.RootfulImage != "" {
+			rootful = row.RootfulImage
+		}
+		if row.RootlessImage != "" {
+			rootless = row.RootlessImage
+		}
+	}
+	return rootful, rootless
+}
+
+// cleanImageRef trims one build-image ref; empty means the built-in default.
+// Embedded whitespace can only be a paste error — a ref is one token.
+func cleanImageRef(ref string) (string, error) {
+	ref = strings.TrimSpace(ref)
+	if strings.IndexFunc(ref, unicode.IsSpace) >= 0 {
+		return "", fmt.Errorf("image ref %q must not contain whitespace", ref)
+	}
+	return ref, nil
+}
+
 // validateRuntimeSettings trims and checks the PUT body: every hosts entry
 // needs an ip and at least one name, insecure entries must be http(s) URLs,
-// mirrors need a non-empty host and at least one source.
+// mirrors need a non-empty host and at least one source, image refs must be
+// whitespace-free.
 func validateRuntimeSettings(s *runtimeSettingsJSON) error {
+	var err error
+	if s.RootfulImage, err = cleanImageRef(s.RootfulImage); err != nil {
+		return fmt.Errorf("rootfulImage: %w", err)
+	}
+	if s.RootlessImage, err = cleanImageRef(s.RootlessImage); err != nil {
+		return fmt.Errorf("rootlessImage: %w", err)
+	}
 	for i, h := range s.Hosts {
 		names := make([]string, 0, len(h.Names))
 		for _, n := range h.Names {
@@ -762,12 +904,15 @@ func (d *Deps) handleGetRuntimeSettings(c *gin.Context) {
 		hosts, insecure, mirrors := runtimeOverride(*row)
 		def = config.Runtime{Hosts: hosts, InsecureRegistries: insecure, Mirrors: mirrors}
 	}
-	c.JSON(http.StatusOK, runtimeSettingsView(def))
+	resp := runtimeSettingsView(def)
+	resp.RootfulImage, resp.RootlessImage = d.runtimeImages(row)
+	c.JSON(http.StatusOK, resp)
 }
 
 // handleUpdateRuntimeSettings validates and persists the settings, applies
-// them to the in-memory default profile and remounts every managed provider,
-// so the new hosts/registry wiring reaches running buildkitd provisioning.
+// them to the in-memory runtime profiles (default wiring plus the two build
+// images) and remounts every managed provider, so the new hosts/registry
+// wiring and images reach running buildkitd provisioning.
 func (d *Deps) handleUpdateRuntimeSettings(c *gin.Context) {
 	if !authorizeRuntimeSettings(c, "update") {
 		return
@@ -781,7 +926,12 @@ func (d *Deps) handleUpdateRuntimeSettings(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	row := model.BuildRuntimeSetting{InsecureRegistries: req.InsecureRegistries, Mirrors: req.Mirrors}
+	row := model.BuildRuntimeSetting{
+		InsecureRegistries: req.InsecureRegistries,
+		Mirrors:            req.Mirrors,
+		RootfulImage:       req.RootfulImage,
+		RootlessImage:      req.RootlessImage,
+	}
 	for _, h := range req.Hosts {
 		row.Hosts = append(row.Hosts, model.BuildRuntimeHost{IP: h.IP, Names: h.Names})
 	}
@@ -790,11 +940,14 @@ func (d *Deps) handleUpdateRuntimeSettings(c *gin.Context) {
 		return
 	}
 	hosts, insecure, mirrors := runtimeOverride(row)
+	d.cfg.SetRuntimeImages(row.RootfulImage, row.RootlessImage)
 	def := d.cfg.DefaultRuntime()
 	def.Hosts, def.InsecureRegistries, def.Mirrors = hosts, insecure, mirrors
 	d.cfg.SetDefaultRuntime(def)
 	d.remountManagedProviders(c.Request.Context())
-	c.JSON(http.StatusOK, runtimeSettingsView(def))
+	resp := runtimeSettingsView(def)
+	resp.RootfulImage, resp.RootlessImage = d.runtimeImages(&row)
+	c.JSON(http.StatusOK, resp)
 }
 
 // remountManagedProviders re-registers every persisted provider so the
@@ -807,6 +960,10 @@ func (d *Deps) remountManagedProviders(ctx context.Context) {
 		return
 	}
 	for i := range rows {
+		// Disabled rows stay unregistered; the enabled endpoint mounts them.
+		if !rows[i].Enabled {
+			continue
+		}
 		name := rows[i].Name
 		if err := d.app.RemoveProvider(name); err != nil {
 			// Unregistered runtime (restore previously skipped it) — the
@@ -854,6 +1011,10 @@ func (d *Deps) restoreProviders(ctx context.Context) {
 		return
 	}
 	for i := range rows {
+		// Disabled rows stay unregistered; the enabled endpoint mounts them.
+		if !rows[i].Enabled {
+			continue
+		}
 		pc, err := d.providerConfig(rows[i])
 		if err != nil {
 			klog.Errorf("skipping build provider %s: %v", rows[i].Name, err)

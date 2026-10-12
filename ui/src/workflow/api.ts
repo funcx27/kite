@@ -274,6 +274,14 @@ export const updateBuildProvider = (
     { method: 'PUT', body: JSON.stringify(req) }
   )
 
+// Disable = unregister from the build fleet but keep the row (recoverable);
+// enable re-registers it.
+export const setBuildProviderEnabled = (name: string, enabled: boolean) =>
+  workflowRequest<{ message: string }>(
+    `/buildfleet/providers/${encodeURIComponent(name)}/enabled`,
+    { method: 'PUT', body: JSON.stringify({ enabled }) }
+  )
+
 // ── Query hooks ──
 
 const workflowKeys = {
@@ -580,6 +588,15 @@ export const useDeleteBuildProviderMutation = () => {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: deleteBuildProvider,
+    onSuccess: () => invalidateProviderSurfaces(queryClient),
+  })
+}
+
+export const useSetBuildProviderEnabledMutation = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ name, enabled }: { name: string; enabled: boolean }) =>
+      setBuildProviderEnabled(name, enabled),
     onSuccess: () => invalidateProviderSurfaces(queryClient),
   })
 }

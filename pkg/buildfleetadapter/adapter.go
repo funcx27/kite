@@ -95,9 +95,9 @@ func New(ctx context.Context, cm *cluster.ClusterManager, cfgNode *yaml.Node, cr
 }
 
 // applyRuntimeSettingOverrides overlays the persisted runtime settings row
-// onto the default profile before app.Setup, so a restart serves the same
-// hosts/registry wiring the runtime-settings API applied. A read failure
-// logs and keeps the config-file values.
+// onto the runtime profiles before app.Setup, so a restart serves the same
+// hosts/registry wiring and build images the runtime-settings API applied.
+// A read failure logs and keeps the config-file values.
 func applyRuntimeSettingOverrides(cfg *config.Config) {
 	row, err := model.GetBuildRuntimeSetting()
 	if err != nil {
@@ -108,7 +108,7 @@ func applyRuntimeSettingOverrides(cfg *config.Config) {
 		return
 	}
 	def := cfg.DefaultRuntime()
-	// The row is the source of truth once saved: the three fields replace the
+	// The row is the source of truth once saved: these fields replace the
 	// config-file values wholesale, matching what PUT persists.
 	def.Hosts = nil
 	for _, h := range row.Hosts {
@@ -117,6 +117,7 @@ func applyRuntimeSettingOverrides(cfg *config.Config) {
 	def.InsecureRegistries = row.InsecureRegistries
 	def.Mirrors = row.Mirrors
 	cfg.SetDefaultRuntime(def)
+	cfg.SetRuntimeImages(row.RootfulImage, row.RootlessImage)
 }
 
 // ProviderNames merges the config-file providers with the managed build

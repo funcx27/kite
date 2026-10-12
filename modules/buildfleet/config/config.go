@@ -591,6 +591,23 @@ func (c *Config) SetDefaultRuntime(r Runtime) {
 	c.Runtimes["default"] = r
 }
 
+// SetRuntimeImages overlays the two build images onto the runtime profiles:
+// "default" (rootful) and "rootless". An empty ref resets the profile to its
+// per-mode built-in default; a profile absent from the config is skipped.
+// Profiles are replaced wholesale like SetDefaultRuntime.
+func (c *Config) SetRuntimeImages(rootfulRef, rootlessRef string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if r, ok := c.Runtimes["default"]; ok {
+		r.ImageRef = rootfulRef
+		c.Runtimes["default"] = r
+	}
+	if r, ok := c.Runtimes["rootless"]; ok {
+		r.ImageRef = rootlessRef
+		c.Runtimes["rootless"] = r
+	}
+}
+
 // RuntimeProfiles returns a copy of the full profile table.
 func (c *Config) RuntimeProfiles() map[string]Runtime {
 	c.mu.RLock()

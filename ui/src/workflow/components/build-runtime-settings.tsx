@@ -1,16 +1,15 @@
-// Build runtime settings: hosts / registry wiring of the buildfleet default
-// runtime profile. First load shows the currently effective values (the API
-// falls back to the config file when nothing is persisted); saving PUTs the
-// whole wiring — docker / config-file providers only pick it up after a
-// restart, hence the note on the card.
+// Build runtime settings: BuildKit images / hosts / registry wiring of the
+// buildfleet default runtime profile. The card shows the effective summary;
+// all fields are edited in a dialog. Saving PUTs the whole wiring — the
+// docker providers' shared buildkitd.toml is written once at startup and
+// config-file providers never remount, hence the restart note.
 import '@/workflow/i18n'
 
 import { useEffect, useState } from 'react'
-import { IconPlus, IconTrash } from '@tabler/icons-react'
+import { IconPencil, IconPlus, IconTrash } from '@tabler/icons-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -19,6 +18,13 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
@@ -38,14 +44,25 @@ interface MirrorRow {
 }
 
 interface RuntimeForm {
+  rootfulImage: string
+  rootlessImage: string
   hosts: HostRow[]
   insecure: string[]
   mirrors: MirrorRow[]
 }
 
-const emptyForm: RuntimeForm = { hosts: [], insecure: [], mirrors: [] }
+const emptyForm: RuntimeForm = {
+  rootfulImage: '',
+  rootlessImage: '',
+  hosts: [],
+  insecure: [],
+  mirrors: [],
+}
 
 const formOf = (s: RuntimeSettings): RuntimeForm => ({
+  // ?? '' tolerates a pre-upgrade backend that does not return the image fields.
+  rootfulImage: s.rootfulImage ?? '',
+  rootlessImage: s.rootlessImage ?? '',
   hosts: s.hosts.map((h) => ({ ip: h.ip, names: h.names.join(', ') })),
   insecure: [...s.insecureRegistries],
   mirrors: Object.entries(s.mirrors).map(([host, sources]) => ({
@@ -67,6 +84,7 @@ export function BuildRuntimeSettings() {
   const updateMutation = useUpdateRuntimeSettingsMutation()
 
   const [form, setForm] = useState<RuntimeForm>(emptyForm)
+  const [dialogOpen, setDialogOpen] = useState(false)
 
   // Sync the form whenever the query delivers a value we have not rendered
   // yet: first load, and refetched data after an external or own save.
@@ -111,12 +129,19 @@ export function BuildRuntimeSettings() {
       mirrors[host] = sources
     }
     updateMutation.mutate(
-      { hosts, insecureRegistries, mirrors },
+      {
+        rootfulImage: form.rootfulImage.trim(),
+        rootlessImage: form.rootlessImage.trim(),
+        hosts,
+        insecureRegistries,
+        mirrors,
+      },
       {
         onSuccess: (saved) => {
           toast.success(t('workflow.buildRuntime.saved'))
           setSynced(saved)
           setForm(formOf(saved))
+          setDialogOpen(false)
         },
         onError: (err) => toast.error(err.message),
       }
@@ -124,17 +149,27 @@ export function BuildRuntimeSettings() {
   }
 
   const pending = updateMutation.isPending
+  const builtin = t('workflow.buildRuntime.builtinDefault')
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          {t('workflow.buildRuntime.title')}
-          <Badge variant="secondary">{t('workflow.globalBadge')}</Badge>
-        </CardTitle>
-        <CardDescription>
-          {t('workflow.buildRuntime.description')}
-        </CardDescription>
+      <CardHeader className="flex flex-row items-start justify-between space-y-0">
+        <div className="space-y-1.5">
+          <CardTitle className="flex items-center gap-2">
+            {t('workflow.buildRuntime.title')}
+          </CardTitle>
+          <CardDescription>
+            {t('workflow.buildRuntime.description')}
+          </CardDescription>
+        </div>
+        <Button
+          size="icon"
+          disabled={isLoading || error !== null}
+          onClick={() => setDialogOpen(true)}
+          title={t('workflow.buildRuntime.editTitle')}
+        >
+          <IconPencil className="h-4 w-4" />
+        </Button>
       </CardHeader>
       <CardContent>
         {error ? (
@@ -142,7 +177,87 @@ export function BuildRuntimeSettings() {
             {t('workflow.buildRuntime.loadFailed')}
           </p>
         ) : (
-          <div className="space-y-4">
+          <div className="space-y-1 text-sm">
+            <p className="truncate">
+              <span className="text-muted-foreground">
+                {t('workflow.buildRuntime.rootfulImage')}:{' '}
+              </span>
+              <span className="font-mono text-xs">
+                {data?.rootfulImage || builtin}
+              </span>
+            </p>
+            <p className="truncate">
+              <span className="text-muted-foreground">
+                {t('workflow.buildRuntime.rootlessImage')}:{' '}
+              </span>
+              <span className="font-mono text-xs">
+                {data?.rootlessImage || builtin}
+              </span>
+            </p>
+            <p className="text-muted-foreground">
+              {t('workflow.buildRuntime.summaryCounts', {
+                hosts: data?.hosts.length ?? 0,
+                insecure: data?.insecureRegistries.length ?? 0,
+                mirrors: Object.keys(data?.mirrors ?? {}).length,
+              })}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {t('workflow.buildRuntime.restartNote')}
+            </p>
+            {isLoading && (
+              <p className="text-sm text-muted-foreground">
+                {t('common.messages.loading')}
+              </p>
+            )}
+          </div>
+        )}
+      </CardContent>
+
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{t('workflow.buildRuntime.editTitle')}</DialogTitle>
+          </DialogHeader>
+          <div className="max-h-[60vh] space-y-4 overflow-y-auto pr-1">
+            <div className="space-y-2">
+              <Label className="text-xs font-semibold">
+                {t('workflow.buildRuntime.imagesSection')}
+              </Label>
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-3">
+                  <Label className="w-32 shrink-0 text-xs">
+                    {t('workflow.buildRuntime.rootfulImage')}
+                  </Label>
+                  <Input
+                    value={form.rootfulImage}
+                    onChange={(e) =>
+                      setForm({ ...form, rootfulImage: e.target.value })
+                    }
+                    placeholder="moby/buildkit:master"
+                    className="font-mono text-xs"
+                  />
+                </div>
+                <div className="flex items-center gap-3">
+                  <Label className="w-32 shrink-0 text-xs">
+                    {t('workflow.buildRuntime.rootlessImage')}
+                  </Label>
+                  <Input
+                    value={form.rootlessImage}
+                    onChange={(e) =>
+                      setForm({ ...form, rootlessImage: e.target.value })
+                    }
+                    placeholder="moby/buildkit:master-rootless"
+                    className="font-mono text-xs"
+                  />
+                </div>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                {t('workflow.buildRuntime.imagesHint')}
+              </p>
+            </div>
+
+            <Separator />
+
             <div className="space-y-2">
               <Label className="text-xs font-semibold">
                 {t('workflow.buildRuntime.hostsSection')}
@@ -209,7 +324,8 @@ export function BuildRuntimeSettings() {
               ))}
               <Button
                 variant="outline"
-                size="sm"
+                size="icon"
+                title={t('workflow.buildRuntime.addHost')}
                 onClick={() =>
                   setForm({
                     ...form,
@@ -217,8 +333,7 @@ export function BuildRuntimeSettings() {
                   })
                 }
               >
-                <IconPlus className="mr-1 h-3.5 w-3.5" />
-                {t('workflow.buildRuntime.addHost')}
+                <IconPlus className="h-4 w-4" />
               </Button>
             </div>
 
@@ -228,6 +343,9 @@ export function BuildRuntimeSettings() {
               <Label className="text-xs font-semibold">
                 {t('workflow.buildRuntime.insecureSection')}
               </Label>
+              <p className="text-[11px] text-muted-foreground">
+                {t('workflow.buildRuntime.insecureHint')}
+              </p>
               {form.insecure.map((entry, index) => (
                 <div key={index} className="flex items-center gap-2">
                   <Input
@@ -258,21 +376,16 @@ export function BuildRuntimeSettings() {
                   </Button>
                 </div>
               ))}
-              <div className="flex items-center justify-between">
-                <p className="text-[11px] text-muted-foreground">
-                  {t('workflow.buildRuntime.insecureHint')}
-                </p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() =>
-                    setForm({ ...form, insecure: [...form.insecure, ''] })
-                  }
-                >
-                  <IconPlus className="mr-1 h-3.5 w-3.5" />
-                  {t('workflow.buildRuntime.addInsecure')}
-                </Button>
-              </div>
+              <Button
+                variant="outline"
+                size="icon"
+                title={t('workflow.buildRuntime.addInsecure')}
+                onClick={() =>
+                  setForm({ ...form, insecure: [...form.insecure, ''] })
+                }
+              >
+                <IconPlus className="h-4 w-4" />
+              </Button>
             </div>
 
             <Separator />
@@ -340,7 +453,8 @@ export function BuildRuntimeSettings() {
               ))}
               <Button
                 variant="outline"
-                size="sm"
+                size="icon"
+                title={t('workflow.buildRuntime.addMirror')}
                 onClick={() =>
                   setForm({
                     ...form,
@@ -348,29 +462,23 @@ export function BuildRuntimeSettings() {
                   })
                 }
               >
-                <IconPlus className="mr-1 h-3.5 w-3.5" />
-                {t('workflow.buildRuntime.addMirror')}
+                <IconPlus className="h-4 w-4" />
               </Button>
             </div>
-
-            <Separator />
-
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-xs text-muted-foreground">
-                {t('workflow.buildRuntime.restartNote')}
-              </p>
-              <Button size="sm" disabled={pending} onClick={save}>
-                {t('common.actions.save')}
-              </Button>
-            </div>
-            {isLoading && (
-              <p className="text-sm text-muted-foreground">
-                {t('common.messages.loading')}
-              </p>
-            )}
           </div>
-        )}
-      </CardContent>
+          <DialogFooter>
+            <p className="mr-auto max-w-[60%] text-xs text-muted-foreground">
+              {t('workflow.buildRuntime.restartNote')}
+            </p>
+            <Button variant="outline" onClick={() => setDialogOpen(false)}>
+              {t('common.actions.cancel')}
+            </Button>
+            <Button disabled={pending} onClick={save}>
+              {t('common.actions.save')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   )
 }

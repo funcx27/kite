@@ -1,7 +1,7 @@
-// Per-space build settings: the build provider default of one space. Saving
-// upserts the space's build-settings row; "follow global" deletes it,
-// letting the global default row apply again. The settings page passes the
-// space from its ?space= URL param and renders this section only with one.
+// Per-space build settings: the build provider of one space. The select lists
+// every provider with the global default marked; saving upserts the space's
+// build-settings row (a space without a row shows the global default). The
+// settings page passes the space from its ?space= URL param.
 import '@/workflow/i18n'
 
 import { useEffect, useMemo, useState } from 'react'
@@ -25,26 +25,22 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 
-import {
-  useBuildSettings,
-  useDeleteBuildSettingMutation,
-  useUpsertBuildSettingMutation,
-} from '../api'
-
-// Select sentinel for "follow the global default row".
-const FOLLOW_GLOBAL = '__global__'
+import { useBuildSettings, useUpsertBuildSettingMutation } from '../api'
 
 export function SpaceBuildSettings({ space }: { space: string | null }) {
   const { t } = useTranslation()
   const { data, isLoading } = useBuildSettings()
   const upsertMutation = useUpsertBuildSettingMutation()
-  const deleteMutation = useDeleteBuildSettingMutation()
 
   const settings = useMemo(() => data?.settings ?? [], [data])
   const spaceRow = useMemo(
     () => settings.find((s) => s.namespace === space),
     [settings, space]
   )
+  // Global default row ('' namespace); marks the default option and seeds the
+  // select when the space has no explicit row yet.
+  const globalProvider =
+    settings.find((s) => s.namespace === '')?.provider ?? ''
 
   // null = untouched, so the select tracks the stored row until the user
   // actively picks a provider; resets when the selected space changes.
@@ -61,29 +57,21 @@ export function SpaceBuildSettings({ space }: { space: string | null }) {
     )
   }
 
-  const value = selected ?? spaceRow?.provider ?? FOLLOW_GLOBAL
-  const unchanged = value === (spaceRow?.provider ?? FOLLOW_GLOBAL)
+  const value = selected ?? spaceRow?.provider ?? globalProvider
+  const unchanged = value === (spaceRow?.provider ?? globalProvider)
 
   const save = () => {
     if (!space || unchanged) return
-    const onError = (err: Error) => toast.error(err.message)
-    if (value === FOLLOW_GLOBAL) {
-      deleteMutation.mutate(space, {
-        onSuccess: () => toast.success(t('workflow.spaceSettings.saved')),
-        onError,
-      })
-      return
-    }
     upsertMutation.mutate(
       { namespace: space, provider: value },
       {
         onSuccess: () => toast.success(t('workflow.spaceSettings.saved')),
-        onError,
+        onError: (err: Error) => toast.error(err.message),
       }
     )
   }
 
-  const pending = upsertMutation.isPending || deleteMutation.isPending
+  const pending = upsertMutation.isPending
 
   return (
     <Card>
@@ -111,12 +99,13 @@ export function SpaceBuildSettings({ space }: { space: string | null }) {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={FOLLOW_GLOBAL}>
-                    {t('workflow.spaceSettings.followGlobal')}
-                  </SelectItem>
                   {(data?.providers ?? []).map((provider) => (
                     <SelectItem key={provider} value={provider}>
-                      {provider}
+                      {provider === globalProvider
+                        ? t('workflow.spaceSettings.providerWithDefault', {
+                            name: provider,
+                          })
+                        : provider}
                     </SelectItem>
                   ))}
                 </SelectContent>
