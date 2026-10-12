@@ -23,7 +23,7 @@ import {
   withSpaceParam,
 } from '@/platform/space-context'
 import { ColumnDef } from '@tanstack/react-table'
-import { Check, ChevronDown, Server } from 'lucide-react'
+import { Check, ChevronDown, Search, Server } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
@@ -183,18 +183,7 @@ export function ApplicationListPage() {
   const columns: ColumnDef<Application>[] = [
     {
       accessorKey: 'name',
-      header: () => (
-        <span className="flex items-center gap-2">
-          {t('applications.list.name')}
-          <Input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder={t('applications.list.search')}
-            aria-label={t('applications.list.search')}
-            className="h-7 w-36 font-normal"
-          />
-        </span>
-      ),
+      header: t('applications.list.name'),
       cell: ({ row }) => (
         <Link
           to={withSpaceParam(
@@ -308,6 +297,16 @@ export function ApplicationListPage() {
             )}
           </div>
           <div className="flex items-center gap-2">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder={t('applications.list.search')}
+                aria-label={t('applications.list.search')}
+                className="h-9 w-56 pl-9"
+              />
+            </div>
             <Button
               variant="outline"
               disabled={refreshing || filtered.length === 0}
@@ -316,14 +315,18 @@ export function ApplicationListPage() {
             >
               {t('applications.list.refreshStatus')}
             </Button>
-            <Button
-              onClick={() => {
-                setWizardMode('create')
-                setWizardOpen(true)
-              }}
-            >
-              ＋ {t('applications.list.create')}
-            </Button>
+            {/* 创建绑定当前空间：全部空间视图（currentSpace=null）不显示入口，
+                先在侧边栏/页头选择或创建空间 */}
+            {currentSpace && (
+              <Button
+                onClick={() => {
+                  setWizardMode('create')
+                  setWizardOpen(true)
+                }}
+              >
+                ＋ {t('applications.list.create')}
+              </Button>
+            )}
           </div>
         </div>
         {/* Cluster-layer legend, right under the selector whose chips/picker
