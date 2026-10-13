@@ -19,6 +19,10 @@ export interface WorkflowNodeData extends Record<string, unknown> {
   // Run-view overlay: undefined in the editor.
   status?: NodeRunStatus
   waitingApproval?: boolean
+  // Set by the read-only canvas: the card hides its handles visually; they
+  // must stay mounted — React Flow anchors edges on the measured handle
+  // elements, removing them drops every connected edge.
+  hideHandles?: boolean
 }
 
 export type WorkflowFlowNode = Node<WorkflowNodeData, typeof WORKFLOW_NODE_CARD>

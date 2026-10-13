@@ -66,7 +66,7 @@ func (e *Engine) execNode(parent context.Context, state *runState, node spec.Nod
 		Run: map[string]any{
 			"number": state.run.RunNumber,
 			"status": state.run.Status,
-			"url":    fmt.Sprintf("/workflows/%s/runs/%d", state.wf.Name, state.run.ID),
+			"url":    fmt.Sprintf("/workflows/%d/runs/%d", state.wf.ID, state.run.ID),
 		},
 	}
 	rendered, err := spec.Resolve(node.Props, env)
@@ -90,16 +90,12 @@ func (e *Engine) execNode(parent context.Context, state *runState, node spec.Nod
 		logs.write(p)
 		e.publish(state.run.ID, RunEvent{Type: EventLog, NodeID: node.ID, Data: p})
 	}
-	// The dispatch carries the owning workflow so runners can resolve
-	// namespace-scoped defaults (the build provider) without another load.
-	run := state.run
-	run.Workflow = &state.wf
 
 	var outputs map[string]any
 	if node.Type == "" {
 		err = fmt.Errorf("node %q has no type", node.ID)
 	} else if runner, ok := e.runners[node.Type]; ok {
-		outputs, err = runner.Run(ctx, rendered, run, onLog)
+		outputs, err = runner.Run(ctx, rendered, state.run, onLog)
 	} else {
 		err = fmt.Errorf("unknown node type %q", node.Type)
 	}

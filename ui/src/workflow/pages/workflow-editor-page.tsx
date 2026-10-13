@@ -2,7 +2,8 @@
 // palette (four built-in types, drag onto canvas), a right property drawer
 // per spec.go props fields, params/triggers dialogs, client-side cycle check
 // and save via POST/PUT (a save on an existing workflow appends a revision).
-// /workflows/new renders the create variant; /workflows/:name the editor.
+// /workflows/new renders the create variant; /workflows/:id the editor — the
+// workflow identity is the numeric ID, names are reusable labels.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useApplications } from '@/application/api'
 import { useSpaces } from '@/platform/space-context'
@@ -20,16 +21,8 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import { usePageTitle } from '@/hooks/use-page-title'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 
 import { useSaveWorkflowMutation, useWorkflow, WorkflowApiError } from '../api'
 import { ParamsDialog, TriggersDialog } from '../components/definition-dialogs'
@@ -54,6 +47,7 @@ import type {
   DAGSpec,
   ParamSpec,
   TriggerConfig,
+  Workflow,
   WorkflowNode,
   WorkflowNodeType,
 } from '../types'
@@ -65,6 +59,14 @@ function nextNodeId(type: WorkflowNodeType, taken: Set<string>): string {
     if (!taken.has(candidate)) return candidate
   }
   return `${prefix}-${Date.now()}`
+}
+
+// Route/query ids address workflows numerically; anything that is not a
+// positive integer is invalid (mirrors the backend's findWorkflow 400).
+function parseIdParam(value: string | null): number | undefined {
+  if (value === null || value === '') return undefined
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined
 }
 
 // Flow nodes/edges from a spec: legacy props.layout positions win, missing
@@ -127,8 +129,9 @@ function findDollarTemplates(spec: DAGSpec): string[] {
 }
 
 export function WorkflowEditorPage() {
-  const { name: routeName } = useParams()
-  const isCreate = routeName === undefined
+  const { id: routeId } = useParams()
+  const isCreate = routeId === undefined
+  const routeWorkflowId = isCreate ? undefined : parseIdParam(routeId ?? null)
   const navigate = useNavigate()
   const { t } = useTranslation()
   usePageTitle(
@@ -139,25 +142,32 @@ export function WorkflowEditorPage() {
     data: workflow,
     isLoading,
     error,
-  } = useWorkflow(isCreate ? undefined : routeName)
-  // ?copy=<name> (create route only): the source workflow to prefill a draft
-  // from. ?fromApp=<name>&cluster=<cluster> is the application-detail entry:
-  // copy wins when both are present.
+  } = useWorkflow(isCreate ? undefined : routeWorkflowId)
+  // ?copy=<id> (create route only): the source workflow to prefill a draft
+  // from. ?fromApp=<name>&fromSpace=<space>&cluster=<cluster> is the
+  // application-detail entry: copy wins when both are present.
   const [searchParams] = useSearchParams()
-  const copySource = isCreate ? searchParams.get('copy') : null
+  const copySourceId = isCreate
+    ? parseIdParam(searchParams.get('copy'))
+    : undefined
   const fromApp = isCreate ? searchParams.get('fromApp') : null
+  const fromSpace = isCreate ? searchParams.get('fromSpace') : null
   const fromCluster = isCreate ? searchParams.get('cluster') : null
-  const { data: copyWorkflow } = useWorkflow(copySource ?? undefined)
-  const { data: applications } = useApplications({ disable: !fromApp })
-  const { spaces, currentSpace } = useSpaces()
+  const { data: copyWorkflow } = useWorkflow(copySourceId)
+  const { data: applications } = useApplications()
+  const { spaces, currentSpace, setCurrentSpace } = useSpaces()
   const saveMutation = useSaveWorkflowMutation()
 
   const [draftName, setDraftName] = useState('')
-  const [draftNamespace, setDraftNamespace] = useState('')
-  // Namespace forced by a ?copy= / ?fromApp= prefill; keeps the select
-  // visible when it differs from the active space.
-  const [nsPrefill, setNsPrefill] = useState<string | null>(null)
   const [draftDescription, setDraftDescription] = useState('')
+  const [boundSpaces, setBoundSpaces] = useState<string[]>([])
+  // The workflow's space follows the header switcher, which is locked to the
+  // draft's binding while editing (space-picker disables itself on editor
+  // routes): edit/copy sync it below, so saving can never silently rebind
+  // the workflow to whatever space the list happened to be under. A blank
+  // create keeps the entry context — creating under "all spaces" is the
+  // platform-workflow entry point. The backend still accepts multiple.
+  const effectiveSpaces = currentSpace ? [currentSpace] : boundSpaces
   const [params, setParams] = useState<ParamSpec[]>([])
   const [triggers, setTriggers] = useState<TriggerConfig>({})
   const [flowNodes, setFlowNodes] = useState<WorkflowFlowNode[]>([])
@@ -169,22 +179,22 @@ export function WorkflowEditorPage() {
   const [triggersOpen, setTriggersOpen] = useState(false)
   const [tokenOpen, setTokenOpen] = useState(false)
 
-  // ':name' is one route object, so parameter-to-parameter navigation (e.g.
-  // history from /workflows/a to /workflows/b) reuses this component; drop
-  // the whole draft whenever the target workflow changes.
+  // ':id' is one route object, so parameter-to-parameter navigation (e.g.
+  // history from /workflows/1 to /workflows/2) reuses this component; drop
+  // the whole draft whenever the target workflow changes. edit/copy/fromApp
+  // prefill below wins.
   useEffect(() => {
     setHydrated(false)
     setSelectedId(null)
     setDraftName('')
-    setDraftNamespace('')
-    setNsPrefill(null)
     setDraftDescription('')
+    setBoundSpaces([])
     setParams([])
     setTriggers({})
     setFlowNodes([])
     setFlowEdges([])
     setExpectedRev(0)
-  }, [routeName])
+  }, [routeId])
 
   // Load the definition once; edits live in local flow state afterwards.
   useEffect(() => {
@@ -195,43 +205,86 @@ export function WorkflowEditorPage() {
     setFlowNodes(nodes)
     setFlowEdges(edges)
     setDraftName(workflow.name)
-    setDraftNamespace(workflow.namespace)
     setDraftDescription(workflow.description)
+    setBoundSpaces(workflow.spaces ?? [])
     setParams(workflow.params ?? [])
     setTriggers(workflow.triggers ?? {})
     setExpectedRev(workflow.currentRev)
     setHydrated(true)
   }, [isCreate, workflow, hydrated])
 
-  // Prefill the create draft from ?copy=<name>, once per source. The result
-  // stays an unsaved draft (expectedRev 0) until the user renames and saves.
-  const copiedFrom = useRef<string | null>(null)
+  // Lock the header switcher's space to the draft's binding: save binds the
+  // workflow to the active space, so entering from the all-spaces view (or a
+  // different space) would otherwise rebind it on the next save. Edit uses
+  // the loaded workflow's first space (null = platform), copy the source's,
+  // fromApp the application's space; a blank create keeps the entry context.
+  // A binding to a space that no longer exists is left alone — the provider
+  // would keep resetting it to "all spaces" and this effect would keep
+  // writing it back.
   useEffect(() => {
-    if (!isCreate || !copySource || !copyWorkflow) return
-    if (copiedFrom.current === copySource) return
-    copiedFrom.current = copySource
+    if (isCreate && copySourceId === undefined && !fromApp) return
+    const source = isCreate ? copyWorkflow : workflow
+    if (!source) return
+    const target =
+      isCreate && fromApp && copySourceId === undefined
+        ? fromSpace
+        : (source.spaces?.[0] ?? null)
+    if (target !== null && spaces.length > 0 && !spaces.includes(target)) {
+      return
+    }
+    if (currentSpace !== target) setCurrentSpace(target)
+  }, [
+    isCreate,
+    copySourceId,
+    copyWorkflow,
+    workflow,
+    fromApp,
+    fromSpace,
+    currentSpace,
+    setCurrentSpace,
+    spaces,
+  ])
+
+  // Prefill the create draft from ?copy=<id>, once per source. The result
+  // stays an unsaved draft (expectedRev 0) until the user renames and saves.
+  const copiedFrom = useRef<number | null>(null)
+  useEffect(() => {
+    if (!isCreate || copySourceId === undefined || !copyWorkflow) return
+    if (copiedFrom.current === copySourceId) return
+    copiedFrom.current = copySourceId
     const { nodes, edges } = specToFlow(
       copyWorkflow.spec ?? { nodes: [], edges: [] }
     )
     setFlowNodes(nodes)
     setFlowEdges(edges)
     setDraftName(`${copyWorkflow.name}-copy`)
-    setNsPrefill(copyWorkflow.namespace)
-    setDraftNamespace(copyWorkflow.namespace)
     setDraftDescription(copyWorkflow.description)
+    setBoundSpaces(copyWorkflow.spaces ?? [])
     setParams(copyWorkflow.params ?? [])
     setTriggers(copyWorkflow.triggers ?? {})
-  }, [isCreate, copySource, copyWorkflow])
+  }, [isCreate, copySourceId, copyWorkflow])
 
-  // Prefill from ?fromApp=<name>&cluster=<cluster> (copy takes precedence):
-  // stage a deploy-app node targeting the app and prefill the name; leave
-  // everything else for the user.
+  // Prefill from ?fromApp=<name>&fromSpace=<space>&cluster=<cluster> (copy
+  // takes precedence): once the application list resolves the composite
+  // target, stage a deploy-app node pointing at it and prefill the name;
+  // leave everything else for the user.
   const prefilledFrom = useRef<string | null>(null)
   useEffect(() => {
-    if (!isCreate || !fromApp || copySource) return
-    if (prefilledFrom.current === fromApp) return
-    prefilledFrom.current = fromApp
-    const props: Record<string, unknown> = { app: fromApp }
+    if (!isCreate || !fromApp || !fromSpace || copySourceId !== undefined)
+      return
+    const target = `${fromSpace}/${fromApp}`
+    if (prefilledFrom.current === target) return
+    if (applications === undefined) return
+    const app = applications.find(
+      (candidate) =>
+        candidate.namespace === fromSpace && candidate.name === fromApp
+    )
+    if (!app) return
+    prefilledFrom.current = target
+    const props: Record<string, unknown> = {
+      space: fromSpace,
+      app: fromApp,
+    }
     if (fromCluster) props.cluster = fromCluster
     setFlowNodes([
       {
@@ -247,60 +300,16 @@ export function WorkflowEditorPage() {
     ])
     setFlowEdges([])
     setDraftName(`${fromApp}-workflow`)
-  }, [isCreate, fromApp, fromCluster, copySource, t])
-
-  // The namespace comes from the applications query (fromApp's owning space);
-  // until it resolves — or when the app is unknown — the default stays.
-  const nsPrefilledFor = useRef<string | null>(null)
-  useEffect(() => {
-    if (!isCreate || !fromApp || copySource) return
-    if (nsPrefilledFor.current === fromApp || applications === undefined) return
-    const app = applications.find((a) => a.name === fromApp)
-    if (app) {
-      nsPrefilledFor.current = fromApp
-      setNsPrefill(app.namespace)
-      setDraftNamespace(app.namespace)
-    }
-  }, [isCreate, fromApp, copySource, applications])
-
-  // Namespace target: with an active space the workflow is created there and
-  // the picker renders as a read-only badge; the select only appears in
-  // all-spaces mode, or when a copy / app prefill points at a different
-  // space (the prefill wins and stays editable). With no spaces at all the
-  // hint tells the user to create one first.
-  useEffect(() => {
-    if (!isCreate) return
-    if (nsPrefill !== null && nsPrefill !== currentSpace) return
-    if (currentSpace !== null) {
-      setDraftNamespace(currentSpace)
-      return
-    }
-    if (draftNamespace === '') {
-      const seed = spaces[0]
-      if (seed) setDraftNamespace(seed)
-    }
-  }, [isCreate, currentSpace, nsPrefill, draftNamespace, spaces])
-
-  const showNamespaceSelect =
-    currentSpace === null || (nsPrefill !== null && nsPrefill !== currentSpace)
-
-  // Keep a prefilled namespace selectable even when it is not a labeled
-  // space on the current cluster (e.g. copied from another cluster).
-  const namespaceOptions = useMemo(() => {
-    if (draftNamespace !== '' && !spaces.includes(draftNamespace)) {
-      return [...spaces, draftNamespace].sort()
-    }
-    return spaces
-  }, [spaces, draftNamespace])
+    setBoundSpaces([fromSpace])
+  }, [isCreate, fromApp, fromSpace, fromCluster, copySourceId, applications, t])
 
   // Why the create-page save button is disabled; validate() reports the same
   // blocker so "validation passed" always means "savable".
-  const saveBlocker: 'name' | 'namespace' | null = useMemo(() => {
+  const saveBlocker: 'name' | null = useMemo(() => {
     if (!isCreate) return null
     if (draftName.trim() === '') return 'name'
-    if (draftNamespace.trim() === '') return 'namespace'
     return null
-  }, [isCreate, draftName, draftNamespace])
+  }, [isCreate, draftName])
 
   const selectedNode = useMemo(
     () => flowNodes.find((n) => n.id === selectedId) ?? null,
@@ -327,11 +336,15 @@ export function WorkflowEditorPage() {
   }, [flowNodes, flowEdges])
 
   const validate = (): string | null => {
-    if (saveBlocker === 'name') {
+    const trimmedName = draftName.trim()
+    if (trimmedName === '') {
       return t('workflow.editor.nameRequired')
     }
-    if (saveBlocker === 'namespace') {
-      return t('workflow.editor.namespaceRequired')
+    // 1–63 chars, no leading/trailing whitespace — same rule as the server;
+    // any unicode (Chinese included) is allowed since the name is a
+    // DB-only display label.
+    if (trimmedName.length > 63 || trimmedName !== draftName) {
+      return t('workflow.editor.nameInvalid')
     }
     if (flowNodes.length === 0) {
       return t('workflow.editor.emptyGraph')
@@ -348,6 +361,13 @@ export function WorkflowEditorPage() {
       if (n.data.label.trim() === '') {
         return t('workflow.editor.nodeNameEmpty', { id: n.id })
       }
+    }
+    // Platform (unbound) workflows do not support deploy-app nodes yet.
+    if (
+      effectiveSpaces.length === 0 &&
+      flowNodes.some((n) => n.data.nodeType === 'deploy-app')
+    ) {
+      return t('workflow.editor.deployNodeNeedsSpace')
     }
     const cycle = findCycle(specFromFlow())
     if (cycle) {
@@ -382,10 +402,10 @@ export function WorkflowEditorPage() {
         })
       )
     }
-    const onSuccess = (saved: { name: string; currentRev: number }) => {
+    const onSuccess = (saved: Workflow) => {
       toast.success(t('workflow.editor.saved', { rev: saved.currentRev }))
       if (isCreate) {
-        navigate(`/workflows/${saved.name}`, { replace: true })
+        navigate(`/workflows/${saved.id}`, { replace: true })
       } else {
         setExpectedRev(saved.currentRev)
       }
@@ -404,11 +424,11 @@ export function WorkflowEditorPage() {
         {
           req: {
             name: draftName.trim(),
-            namespace: draftNamespace.trim(),
             description: draftDescription,
             spec,
             params,
             triggers,
+            spaces: effectiveSpaces,
           },
         },
         { onSuccess, onError }
@@ -417,13 +437,19 @@ export function WorkflowEditorPage() {
     }
     saveMutation.mutate(
       {
-        name: routeName,
+        id: routeWorkflowId,
         req: {
+          // Sent only when the name actually changed; absent keeps the
+          // stored name untouched.
+          ...(workflow && draftName.trim() !== workflow.name
+            ? { name: draftName.trim() }
+            : {}),
           description: draftDescription,
           spec,
           params,
           triggers,
           expectedRev,
+          spaces: effectiveSpaces,
         },
       },
       { onSuccess, onError }
@@ -500,7 +526,6 @@ export function WorkflowEditorPage() {
     if (previousId && updated.id !== previousId) {
       setFlowEdges((prev) =>
         prev.map((e) => ({
-          ...e,
           id: `${e.source === previousId ? updated.id : e.source}->${e.target === previousId ? updated.id : e.target}`,
           source: e.source === previousId ? updated.id : e.source,
           target: e.target === previousId ? updated.id : e.target,
@@ -518,6 +543,13 @@ export function WorkflowEditorPage() {
     if (selectedId === id) setSelectedId(null)
   }
 
+  if (!isCreate && routeWorkflowId === undefined) {
+    return (
+      <div className="py-10 text-center text-sm text-destructive">
+        Invalid workflow id
+      </div>
+    )
+  }
   if (!isCreate && error) {
     return (
       <div className="py-10 text-center text-sm text-destructive">
@@ -549,39 +581,6 @@ export function WorkflowEditorPage() {
               aria-required
               className="w-48 font-mono"
             />
-            {showNamespaceSelect ? (
-              <Select
-                value={draftNamespace}
-                onValueChange={setDraftNamespace}
-                disabled={spaces.length === 0}
-              >
-                <SelectTrigger className="w-36 font-mono" aria-required>
-                  <SelectValue
-                    placeholder={`${t('workflow.editor.namespace')} *`}
-                  />
-                </SelectTrigger>
-                <SelectContent>
-                  {namespaceOptions.map((space) => (
-                    <SelectItem key={space} value={space}>
-                      {space}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            ) : (
-              <Badge
-                variant="secondary"
-                className="font-mono"
-                title={t('workflow.editor.namespaceBadgeHint')}
-              >
-                {draftNamespace || currentSpace}
-              </Badge>
-            )}
-            {showNamespaceSelect && spaces.length === 0 && (
-              <span className="text-xs text-destructive">
-                {t('workflow.editor.noSpaces')}
-              </span>
-            )}
             <Input
               value={draftDescription}
               onChange={(e) => setDraftDescription(e.target.value)}
@@ -590,13 +589,19 @@ export function WorkflowEditorPage() {
             />
           </div>
         ) : (
-          <div className="flex min-w-0 flex-1 items-center gap-3">
-            <span className="truncate text-sm font-semibold">{draftName}</span>
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
+            <Input
+              value={draftName}
+              onChange={(e) => setDraftName(e.target.value)}
+              aria-required
+              placeholder={`${t('workflow.editor.name')} *`}
+              className="w-48 font-mono text-sm font-semibold"
+            />
             <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">
               rev {expectedRev}
             </span>
             <span className="hidden truncate text-xs text-muted-foreground md:inline">
-              {draftNamespace} · {flowNodes.length} {t('workflow.editor.nodes')}
+              {flowNodes.length} {t('workflow.editor.nodes')}
             </span>
             <Input
               value={draftDescription}
@@ -630,9 +635,7 @@ export function WorkflowEditorPage() {
             title={
               saveBlocker === 'name'
                 ? t('workflow.editor.nameRequired')
-                : saveBlocker === 'namespace'
-                  ? t('workflow.editor.namespaceRequired')
-                  : undefined
+                : undefined
             }
             onClick={handleSave}
           >
@@ -648,7 +651,11 @@ export function WorkflowEditorPage() {
           <div className="px-1 text-xs font-medium text-muted-foreground">
             {t('workflow.editor.nodes')} · {t('workflow.editor.nodesHint')}
           </div>
-          {WORKFLOW_NODE_TYPES.map((type) => (
+          {/* Platform (unbound) workflows cannot deploy apps yet: the
+              deploy-app node stays hidden until a space is bound. */}
+          {WORKFLOW_NODE_TYPES.filter(
+            (type) => effectiveSpaces.length > 0 || type !== 'deploy-app'
+          ).map((type) => (
             <div
               key={type}
               draggable
@@ -665,7 +672,9 @@ export function WorkflowEditorPage() {
             </div>
           ))}
           <div className="mt-2 rounded-lg bg-card p-2.5 text-[11px] leading-4 text-muted-foreground">
-            {t('workflow.editor.paletteHint')}
+            {effectiveSpaces.length === 0
+              ? t('workflow.editor.palettePlatformHint')
+              : t('workflow.editor.paletteHint')}
           </div>
         </aside>
 
@@ -720,7 +729,7 @@ export function WorkflowEditorPage() {
         }
       />
       <WebhookTokenDialog
-        name={routeName ?? ''}
+        id={routeWorkflowId ?? 0}
         open={tokenOpen}
         onOpenChange={setTokenOpen}
       />

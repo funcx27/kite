@@ -40,7 +40,7 @@ func (h *Handler) TriggerRun(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.authorize(c, "exec", c.GetString(clusterNameContextKey), wf.Namespace) {
+	if !h.authorize(c, "exec", c.GetString(clusterNameContextKey), "") {
 		return
 	}
 	var req struct {
@@ -61,8 +61,8 @@ func (h *Handler) TriggerRun(c *gin.Context) {
 	h.recordAudit(c, store.HistoryEntry{
 		Cluster: c.GetString(clusterNameContextKey), ResourceType: authzResource,
 		ResourceName: fmt.Sprintf("%s#%d", wf.Name, res.RunNumber),
-		Namespace:    wf.Namespace, Operation: "trigger",
-		YAML: string(res.Params),
+		Operation:    "trigger",
+		YAML:         string(res.Params),
 	})
 	c.JSON(http.StatusCreated, gin.H{
 		"id": res.RunID, "runNumber": res.RunNumber, "status": store.RunQueued, "revisionRev": wf.CurrentRev,
@@ -89,7 +89,7 @@ func (h *Handler) ListRuns(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.authorize(c, "get", c.GetString(clusterNameContextKey), wf.Namespace) {
+	if !h.authorize(c, "get", c.GetString(clusterNameContextKey), "") {
 		return
 	}
 	limit := 20
@@ -175,19 +175,18 @@ func (h *Handler) GetRun(c *gin.Context) {
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"id":                run.ID,
-		"runNumber":         run.RunNumber,
-		"workflow":          wf.Name,
-		"workflowNamespace": wf.Namespace,
-		"revisionRev":       run.RevisionRev,
-		"status":            run.Status,
-		"triggerType":       run.TriggerType,
-		"triggeredBy":       run.TriggeredBy,
-		"triggeredByName":   names[run.TriggeredBy],
-		"triggerRef":        run.TriggerRef,
-		"params":            json.RawMessage(run.Params),
-		"startedAt":         run.StartedAt,
-		"finishedAt":        run.FinishedAt,
+		"id":              run.ID,
+		"runNumber":       run.RunNumber,
+		"workflow":        wf.Name,
+		"revisionRev":     run.RevisionRev,
+		"status":          run.Status,
+		"triggerType":     run.TriggerType,
+		"triggeredBy":     run.TriggeredBy,
+		"triggeredByName": names[run.TriggeredBy],
+		"triggerRef":      run.TriggerRef,
+		"params":          json.RawMessage(run.Params),
+		"startedAt":       run.StartedAt,
+		"finishedAt":      run.FinishedAt,
 		"graph": gin.H{
 			"nodes": dag.Nodes,
 			"edges": dag.Edges,
@@ -218,7 +217,7 @@ func (h *Handler) loadRunGraph(c *gin.Context) (store.WorkflowRun, store.Workflo
 		h.fail(c, http.StatusInternalServerError, err, "")
 		return store.WorkflowRun{}, store.Workflow{}, spec.DAGSpec{}, nil, false
 	}
-	if !h.authorize(c, "get", c.GetString(clusterNameContextKey), wf.Namespace) {
+	if !h.authorize(c, "get", c.GetString(clusterNameContextKey), "") {
 		return store.WorkflowRun{}, store.Workflow{}, spec.DAGSpec{}, nil, false
 	}
 	var rev store.WorkflowRevision
@@ -245,7 +244,7 @@ func (h *Handler) CancelRun(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.authorize(c, "exec", c.GetString(clusterNameContextKey), wf.Namespace) {
+	if !h.authorize(c, "exec", c.GetString(clusterNameContextKey), "") {
 		return
 	}
 	if err := h.engine.Cancel(runID); err != nil {
@@ -255,7 +254,7 @@ func (h *Handler) CancelRun(c *gin.Context) {
 	h.recordAudit(c, store.HistoryEntry{
 		Cluster: c.GetString(clusterNameContextKey), ResourceType: authzResource,
 		ResourceName: fmt.Sprintf("%s#%d", wf.Name, runNumber),
-		Namespace:    wf.Namespace, Operation: "cancel",
+		Operation:    "cancel",
 	})
 	c.JSON(http.StatusOK, gin.H{"message": "run cancelled"})
 }
@@ -267,7 +266,7 @@ func (h *Handler) RetryRun(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.authorize(c, "exec", c.GetString(clusterNameContextKey), wf.Namespace) {
+	if !h.authorize(c, "exec", c.GetString(clusterNameContextKey), "") {
 		return
 	}
 	if err := h.engine.Retry(runID); err != nil {
@@ -277,7 +276,7 @@ func (h *Handler) RetryRun(c *gin.Context) {
 	h.recordAudit(c, store.HistoryEntry{
 		Cluster: c.GetString(clusterNameContextKey), ResourceType: authzResource,
 		ResourceName: fmt.Sprintf("%s#%d", wf.Name, runNumber),
-		Namespace:    wf.Namespace, Operation: "retry",
+		Operation:    "retry",
 	})
 	c.JSON(http.StatusOK, gin.H{"message": "run requeued"})
 }
@@ -321,7 +320,7 @@ func (h *Handler) Decide(approve bool) gin.HandlerFunc {
 		h.recordAudit(c, store.HistoryEntry{
 			Cluster: c.GetString(clusterNameContextKey), ResourceType: authzResource,
 			ResourceName: fmt.Sprintf("%s#%d", wf.Name, runNumber),
-			Namespace:    wf.Namespace, Operation: operation, YAML: string(detail),
+			Operation:    operation, YAML: string(detail),
 		})
 		c.JSON(http.StatusOK, gin.H{"message": "approval recorded"})
 	}

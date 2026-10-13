@@ -74,16 +74,23 @@ export const useApplications = (options?: { disable?: boolean }) => {
   })
 }
 
-export const fetchApplication = (name: string) =>
-  applicationRequest<Application>(`/${encodeURIComponent(name)}`, {
+// App identity path segment: /applications/{space}/{name}/...
+const appPath = (space: string, name: string) =>
+  `/${encodeURIComponent(space)}/${encodeURIComponent(name)}`
+
+export const fetchApplication = (space: string, name: string) =>
+  applicationRequest<Application>(appPath(space, name), {
     method: 'GET',
   })
 
-export const useApplication = (name: string | undefined) => {
+export const useApplication = (
+  space: string | undefined,
+  name: string | undefined
+) => {
   return useQuery({
-    queryKey: ['applications', name],
-    queryFn: () => fetchApplication(name as string),
-    enabled: !!name,
+    queryKey: ['applications', space, name],
+    queryFn: () => fetchApplication(space as string, name as string),
+    enabled: !!space && !!name,
     placeholderData: (prevData) => prevData,
   })
 }
@@ -95,35 +102,46 @@ export const createApplication = (req: CreateApplicationRequest) =>
   })
 
 export const updateApplication = (
+  space: string,
   name: string,
   req: UpdateApplicationRequest
 ) =>
-  applicationRequest<Application>(`/${encodeURIComponent(name)}`, {
+  applicationRequest<Application>(appPath(space, name), {
     method: 'PUT',
     body: JSON.stringify(req),
   })
 
-export const deleteApplication = (name: string) =>
-  applicationRequest<{ message: string }>(`/${encodeURIComponent(name)}`, {
+export const deleteApplication = (space: string, name: string) =>
+  applicationRequest<{ message: string }>(appPath(space, name), {
     method: 'DELETE',
   })
 
 // ── Per-cluster configs ──
 
-export const fetchApplicationConfig = (name: string, cluster: string) =>
+export const fetchApplicationConfig = (
+  space: string,
+  name: string,
+  cluster: string
+) =>
   applicationRequest<ApplicationConfig>(
-    `/${encodeURIComponent(name)}/configs/${encodeURIComponent(cluster)}`,
+    `${appPath(space, name)}/configs/${encodeURIComponent(cluster)}`,
     { method: 'GET' }
   )
 
 export const useApplicationConfig = (
+  space: string | undefined,
   name: string | undefined,
   cluster: string | undefined
 ) => {
   return useQuery({
-    queryKey: ['applications', name, 'config', cluster],
-    queryFn: () => fetchApplicationConfig(name as string, cluster as string),
-    enabled: !!name && !!cluster,
+    queryKey: ['applications', space, name, 'config', cluster],
+    queryFn: () =>
+      fetchApplicationConfig(
+        space as string,
+        name as string,
+        cluster as string
+      ),
+    enabled: !!space && !!name && !!cluster,
     placeholderData: (prevData) => prevData,
   })
 }
@@ -135,21 +153,26 @@ export const useApplicationConfig = (
 // target config does not exist yet, {copyFrom} deep-copies a source cluster's
 // manifests as the base; without it the base is rendered from App.Spec.
 export const deployApplicationConfig = (
+  space: string,
   name: string,
   cluster: string,
   req: ApplicationDeployRequest = {}
 ) =>
   applicationRequest<ApplicationDeployResponse>(
-    `/${encodeURIComponent(name)}/configs/${encodeURIComponent(cluster)}/deploy`,
+    `${appPath(space, name)}/configs/${encodeURIComponent(cluster)}/deploy`,
     { method: 'POST', body: JSON.stringify(req) }
   )
 
 // Offline always deletes the cluster objects AND the config row with its
 // revision chain (irreversible); a partial cluster-side failure keeps the
 // config for retry (HTTP 409).
-export const offlineApplicationConfig = (name: string, cluster: string) =>
+export const offlineApplicationConfig = (
+  space: string,
+  name: string,
+  cluster: string
+) =>
   applicationRequest<ApplicationOfflineResponse>(
-    `/${encodeURIComponent(name)}/configs/${encodeURIComponent(cluster)}/offline`,
+    `${appPath(space, name)}/configs/${encodeURIComponent(cluster)}/offline`,
     { method: 'POST' }
   )
 
@@ -158,32 +181,43 @@ export const offlineApplicationConfig = (name: string, cluster: string) =>
 // Adopts the selected live subtrees into the stored manifests (path-level,
 // two-sided documents only) and re-anchors; answers the config's fresh status.
 export const resolveApplicationConfig = (
+  space: string,
   name: string,
   cluster: string,
   req: ApplicationResolveRequest
 ) =>
   applicationRequest<ApplicationStatusReport>(
-    `/${encodeURIComponent(name)}/configs/${encodeURIComponent(cluster)}/resolve`,
+    `${appPath(space, name)}/configs/${encodeURIComponent(cluster)}/resolve`,
     { method: 'POST', body: JSON.stringify(req) }
   )
 
 // ── Status (drift report) ──
 
-export const fetchApplicationStatus = (name: string, cluster: string) =>
+export const fetchApplicationStatus = (
+  space: string,
+  name: string,
+  cluster: string
+) =>
   applicationRequest<ApplicationStatusReport>(
-    `/${encodeURIComponent(name)}/configs/${encodeURIComponent(cluster)}/status`,
+    `${appPath(space, name)}/configs/${encodeURIComponent(cluster)}/status`,
     { method: 'GET' }
   )
 
 export const useApplicationStatus = (
+  space: string | undefined,
   name: string | undefined,
   cluster: string | undefined,
   options?: { disable?: boolean; refreshInterval?: number }
 ) => {
   return useQuery({
-    queryKey: ['applications', name, 'status', cluster],
-    queryFn: () => fetchApplicationStatus(name as string, cluster as string),
-    enabled: !!name && !!cluster && !options?.disable,
+    queryKey: ['applications', space, name, 'status', cluster],
+    queryFn: () =>
+      fetchApplicationStatus(
+        space as string,
+        name as string,
+        cluster as string
+      ),
+    enabled: !!space && !!name && !!cluster && !options?.disable,
     refetchInterval: options?.refreshInterval || 0,
     placeholderData: (prevData) => prevData,
   })
@@ -191,92 +225,120 @@ export const useApplicationStatus = (
 
 // ── Runtime view / restart ──
 
-export const fetchApplicationResources = (name: string, cluster: string) =>
+export const fetchApplicationResources = (
+  space: string,
+  name: string,
+  cluster: string
+) =>
   applicationRequest<ApplicationRuntimeView>(
-    `/${encodeURIComponent(name)}/configs/${encodeURIComponent(cluster)}/resources`,
+    `${appPath(space, name)}/configs/${encodeURIComponent(cluster)}/resources`,
     { method: 'GET' }
   )
 
 export const useApplicationResources = (
+  space: string | undefined,
   name: string | undefined,
   cluster: string | undefined,
   options?: { disable?: boolean; refreshInterval?: number }
 ) => {
   return useQuery({
-    queryKey: ['applications', name, 'resources', cluster],
-    queryFn: () => fetchApplicationResources(name as string, cluster as string),
-    enabled: !!name && !!cluster && !options?.disable,
+    queryKey: ['applications', space, name, 'resources', cluster],
+    queryFn: () =>
+      fetchApplicationResources(
+        space as string,
+        name as string,
+        cluster as string
+      ),
+    enabled: !!space && !!name && !!cluster && !options?.disable,
     refetchInterval: options?.refreshInterval || 0,
     placeholderData: (prevData) => prevData,
   })
 }
 
-export const restartApplicationConfig = (name: string, cluster: string) =>
+export const restartApplicationConfig = (
+  space: string,
+  name: string,
+  cluster: string
+) =>
   applicationRequest<{ success: boolean; kind: string; name: string }>(
-    `/${encodeURIComponent(name)}/configs/${encodeURIComponent(cluster)}/restart`,
+    `${appPath(space, name)}/configs/${encodeURIComponent(cluster)}/restart`,
     { method: 'POST' }
   )
 
 export const restartApplicationPod = (
+  space: string,
   name: string,
   cluster: string,
   pod: string
 ) =>
   applicationRequest<{ success: boolean; pod: string }>(
-    `/${encodeURIComponent(name)}/configs/${encodeURIComponent(cluster)}/pods/${encodeURIComponent(pod)}/restart`,
+    `${appPath(space, name)}/configs/${encodeURIComponent(cluster)}/pods/${encodeURIComponent(pod)}/restart`,
     { method: 'POST' }
   )
 
 export const forceDeleteApplicationPod = (
+  space: string,
   name: string,
   cluster: string,
   pod: string
 ) =>
   applicationRequest<{ success: boolean; pod: string }>(
-    `/${encodeURIComponent(name)}/configs/${encodeURIComponent(cluster)}/pods/${encodeURIComponent(pod)}/force-delete`,
+    `${appPath(space, name)}/configs/${encodeURIComponent(cluster)}/pods/${encodeURIComponent(pod)}/force-delete`,
     { method: 'POST' }
   )
 
 // ── Revisions ──
 
-export const fetchApplicationRevisions = (name: string, cluster: string) =>
+export const fetchApplicationRevisions = (
+  space: string,
+  name: string,
+  cluster: string
+) =>
   applicationRequest<ApplicationRevisionListResponse>(
-    `/${encodeURIComponent(name)}/configs/${encodeURIComponent(cluster)}/revisions`,
+    `${appPath(space, name)}/configs/${encodeURIComponent(cluster)}/revisions`,
     { method: 'GET' }
   )
 
 export const useApplicationRevisions = (
+  space: string | undefined,
   name: string | undefined,
   cluster: string | undefined,
   options?: { disable?: boolean }
 ) => {
   return useQuery({
-    queryKey: ['applications', name, 'revisions', cluster],
-    queryFn: () => fetchApplicationRevisions(name as string, cluster as string),
-    enabled: !!name && !!cluster && !options?.disable,
+    queryKey: ['applications', space, name, 'revisions', cluster],
+    queryFn: () =>
+      fetchApplicationRevisions(
+        space as string,
+        name as string,
+        cluster as string
+      ),
+    enabled: !!space && !!name && !!cluster && !options?.disable,
     placeholderData: (prevData) => prevData,
   })
 }
 
 export const fetchApplicationRevision = (
+  space: string,
   name: string,
   cluster: string,
   rev: number
 ) =>
   applicationRequest<ApplicationRevisionDetail>(
-    `/${encodeURIComponent(name)}/configs/${encodeURIComponent(cluster)}/revisions/${rev}`,
+    `${appPath(space, name)}/configs/${encodeURIComponent(cluster)}/revisions/${rev}`,
     { method: 'GET' }
   )
 
 // {rev, deploy:true} rolls back and publishes in one request; without deploy
 // the revision manifests only become the pending config.
 export const rollbackApplicationConfig = (
+  space: string,
   name: string,
   cluster: string,
   req: ApplicationRollbackRequest
 ) =>
   applicationRequest<ApplicationRollbackResponse>(
-    `/${encodeURIComponent(name)}/configs/${encodeURIComponent(cluster)}/rollback`,
+    `${appPath(space, name)}/configs/${encodeURIComponent(cluster)}/rollback`,
     { method: 'POST', body: JSON.stringify(req) }
   )
 

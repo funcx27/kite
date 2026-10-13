@@ -17,11 +17,7 @@ import {
   type ApplicationDotState,
 } from '@/application/lib'
 import type { Application } from '@/application/types'
-import {
-  useSpaces,
-  useSyncSpaceParam,
-  withSpaceParam,
-} from '@/platform/space-context'
+import { useSpaces, useSyncSpaceParam } from '@/platform/space-context'
 import { ColumnDef } from '@tanstack/react-table'
 import { Check, ChevronDown, Search, Server } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -139,7 +135,9 @@ export function ApplicationListPage() {
     try {
       const checks = filtered.flatMap((app) =>
         app.configs.map((config) =>
-          fetchApplicationStatus(app.name, config.cluster).catch(() => null)
+          fetchApplicationStatus(app.namespace, app.name, config.cluster).catch(
+            () => null
+          )
         )
       )
       await Promise.all(checks)
@@ -154,7 +152,7 @@ export function ApplicationListPage() {
     if (!deleteTarget) return
     setDeleting(true)
     try {
-      await deleteApplication(deleteTarget.name)
+      await deleteApplication(deleteTarget.namespace, deleteTarget.name)
       toast.success(t('applications.list.deleted', { name: deleteTarget.name }))
       setDeleteTarget(null)
       await refetch()
@@ -169,7 +167,9 @@ export function ApplicationListPage() {
     if (!describeTarget) return
     setSavingDescription(true)
     try {
-      await updateApplication(describeTarget.name, { description })
+      await updateApplication(describeTarget.namespace, describeTarget.name, {
+        description,
+      })
       toast.success(t('applications.list.descriptionSaved'))
       setDescribeTarget(null)
       await refetch()
@@ -186,10 +186,7 @@ export function ApplicationListPage() {
       header: t('applications.list.name'),
       cell: ({ row }) => (
         <Link
-          to={withSpaceParam(
-            `/applications/${row.original.name}`,
-            currentSpace
-          )}
+          to={`/applications/${row.original.namespace}/${row.original.name}`}
           className="font-mono font-medium hover:underline"
         >
           {row.original.name}
@@ -353,9 +350,7 @@ export function ApplicationListPage() {
           {
             label: t('applications.list.view'),
             onClick: (app) =>
-              navigate(
-                withSpaceParam(`/applications/${app.name}`, currentSpace)
-              ),
+              navigate(`/applications/${app.namespace}/${app.name}`),
           },
           {
             label: t('applications.detail.firstPublish'),
@@ -410,7 +405,7 @@ export function ApplicationListPage() {
           // picks the target cluster); the draft edit goes to the detail
           // page for the first publish too.
           void refetch()
-          navigate(withSpaceParam(`/applications/${app.name}`, currentSpace))
+          navigate(`/applications/${app.namespace}/${app.name}`)
         }}
       />
 

@@ -162,11 +162,17 @@ export function DeployDialog({
 
   const activeCluster = targetCluster ?? cluster
   // No status report in create mode: the target config does not exist yet.
-  const { data: statusReport } = useApplicationStatus(app.name, activeCluster, {
-    disable: !open || !activeCluster || isCreateMode,
-  })
+  const { data: statusReport } = useApplicationStatus(
+    app.namespace,
+    app.name,
+    activeCluster,
+    {
+      disable: !open || !activeCluster || isCreateMode,
+    }
+  )
   const configNeeded = open && !!activeCluster && !isCreateMode
   const { data: fetchedConfig } = useApplicationConfig(
+    configNeeded ? app.namespace : undefined,
     configNeeded ? app.name : undefined,
     configNeeded ? activeCluster : undefined
   )
@@ -174,6 +180,7 @@ export function DeployDialog({
   // prefill and the summary; the target config does not exist until the
   // publish lands.
   const { data: copySourceConfig } = useApplicationConfig(
+    open && copyMode ? app.namespace : undefined,
     open && copyMode ? app.name : undefined,
     open && copyMode ? createCopyFrom : undefined
   )
@@ -269,13 +276,18 @@ export function DeployDialog({
     if (!activeCluster) return
     setDryRun((prev) => ({ ...prev, loading: true, error: null }))
     try {
-      const result = await deployApplicationConfig(app.name, activeCluster, {
-        dryRun: true,
-        image: imageChanged ? image.trim() : undefined,
-        credentialRef: pullCredentialRef,
-        copyFrom: createCopyFrom,
-        ...pendingRequest,
-      })
+      const result = await deployApplicationConfig(
+        app.namespace,
+        app.name,
+        activeCluster,
+        {
+          dryRun: true,
+          image: imageChanged ? image.trim() : undefined,
+          credentialRef: pullCredentialRef,
+          copyFrom: createCopyFrom,
+          ...pendingRequest,
+        }
+      )
       const creates = result.results
         .filter((docResult) => docResult.action === 'create')
         .map((docResult) => ({ kind: docResult.kind, name: docResult.name }))
@@ -310,6 +322,7 @@ export function DeployDialog({
     }
   }, [
     activeCluster,
+    app.namespace,
     app.name,
     createCopyFrom,
     t,
@@ -345,13 +358,18 @@ export function DeployDialog({
     if (!activeCluster) return
     setDeploying(true)
     try {
-      const result = await deployApplicationConfig(app.name, activeCluster, {
-        image: imageChanged ? image.trim() : undefined,
-        credentialRef: pullCredentialRef,
-        copyFrom: copyMode ? createCopyFrom : undefined,
-        previewToken: dryRun.previewToken,
-        ...pendingRequest,
-      })
+      const result = await deployApplicationConfig(
+        app.namespace,
+        app.name,
+        activeCluster,
+        {
+          image: imageChanged ? image.trim() : undefined,
+          credentialRef: pullCredentialRef,
+          copyFrom: copyMode ? createCopyFrom : undefined,
+          previewToken: dryRun.previewToken,
+          ...pendingRequest,
+        }
+      )
       if (result.success) {
         toast.success(
           t('applications.deploy.success', { cluster: activeCluster })

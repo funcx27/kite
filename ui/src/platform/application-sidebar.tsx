@@ -53,7 +53,7 @@ export function ApplicationSidebar(
               <SidebarMenuButton
                 tooltip={t('nav.applications')}
                 asChild
-                isActive={isActive('/applications')}
+                isActive={location.pathname.startsWith('/applications')}
                 className="transition-all duration-200 hover:bg-accent/60 active:scale-95 data-[active=true]:bg-primary/10 data-[active=true]:text-primary data-[active=true]:shadow-sm"
               >
                 <Link
@@ -72,10 +72,7 @@ export function ApplicationSidebar(
                 isActive={location.pathname.startsWith('/workflows')}
                 className="transition-all duration-200 hover:bg-accent/60 active:scale-95 data-[active=true]:bg-primary/10 data-[active=true]:text-primary data-[active=true]:shadow-sm"
               >
-                <Link
-                  to={withSpaceParam('/workflows', currentSpace)}
-                  onClick={handleMenuItemClick}
-                >
+                <Link to="/workflows" onClick={handleMenuItemClick}>
                   <IconGitMerge className="text-sidebar-primary" />
                   <span className="font-medium">{t('workflow.title')}</span>
                 </Link>

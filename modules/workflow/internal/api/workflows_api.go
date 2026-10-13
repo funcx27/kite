@@ -9,7 +9,9 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -24,45 +26,94 @@ import (
 type workflowResponse struct {
 	ID          uint            `json:"id"`
 	Name        string          `json:"name"`
-	Namespace   string          `json:"namespace"`
 	Description string          `json:"description"`
 	CurrentRev  int             `json:"currentRev"`
 	Spec        json.RawMessage `json:"spec,omitempty"`
 	Params      json.RawMessage `json:"params,omitempty"`
 	Triggers    json.RawMessage `json:"triggers,omitempty"`
 	// Apps/Clusters aggregate the deploy-app targets of the current spec so
-	// the list view can filter by application; absent when there are none.
-	Apps      []string  `json:"apps,omitempty"`
-	Clusters  []string  `json:"clusters,omitempty"`
+	// the list view can filter by application; apps are "space/name"
+	// composites. Absent when there are none.
+	Apps []string `json:"apps,omitempty"`
+	// Clusters are the deploy-app cluster targets of the current spec.
+	Clusters []string `json:"clusters,omitempty"`
+	// Spaces are the bound spaces (visibility metadata); deploy-referenced
+	// spaces are derivable from Apps. Absent when nothing is bound.
+	Spaces    []string  `json:"spaces,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 type createWorkflowRequest struct {
 	Name        string          `json:"name" binding:"required"`
-	Namespace   string          `json:"namespace"`
 	Description string          `json:"description"`
 	Spec        json.RawMessage `json:"spec"`
 	Params      json.RawMessage `json:"params"`
 	Triggers    json.RawMessage `json:"triggers"`
+	// Spaces optionally binds the workflow to spaces for list visibility;
+	// omitted or empty leaves it platform-level.
+	Spaces []string `json:"spaces"`
 }
 
 // updateWorkflowRequest replaces the definition under an optimistic lock:
 // expectedRev must equal the workflow's current revision, otherwise the
-// definition is reported as modified (409, design §10).
+// definition is reported as modified (409, design §10). Absent fields keep
+// their stored values — only what the request carries is replaced.
 type updateWorkflowRequest struct {
-	Description string          `json:"description"`
+	// Description clears when explicitly set to ""; nil keeps the stored one.
+	Description *string         `json:"description"`
 	Spec        json.RawMessage `json:"spec"`
 	Params      json.RawMessage `json:"params"`
 	Triggers    json.RawMessage `json:"triggers"`
 	ExpectedRev *int            `json:"expectedRev"`
+	// Name renames the workflow when present; nil keeps the stored name.
+	Name *string `json:"name"`
+	// Spaces replaces the space bindings when present (an empty array clears
+	// them); nil leaves them untouched.
+	Spaces *[]string `json:"spaces"`
+}
+
+// validateWorkflowName guards a display-only label: any unicode is allowed
+// (Chinese included), but the value must be trimmed, 1-63 characters and
+// free of control characters so it stays canonical and renderable.
+func validateWorkflowName(name string) error {
+	if name == "" || name != strings.TrimSpace(name) {
+		return fmt.Errorf("name must be 1-63 characters with no leading or trailing spaces")
+	}
+	if len([]rune(name)) > 63 {
+		return fmt.Errorf("name must be at most 63 characters")
+	}
+	for _, r := range name {
+		if unicode.IsControl(r) {
+			return fmt.Errorf("name must not contain control characters")
+		}
+	}
+	return nil
+}
+
+// normalizeSpaces validates and canonicalizes a space-binding list: every
+// entry must be a DNS-1123 label; the result is deduplicated and sorted.
+func normalizeSpaces(spaces []string) ([]string, error) {
+	seen := make(map[string]struct{}, len(spaces))
+	out := make([]string, 0, len(spaces))
+	for _, space := range spaces {
+		if !spec.ValidateDNS1123Label(space, 63) {
+			return nil, fmt.Errorf("space %q must be a DNS-1123 label of at most 63 characters", space)
+		}
+		if _, dup := seen[space]; dup {
+			continue
+		}
+		seen[space] = struct{}{}
+		out = append(out, space)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 func (h *Handler) toWorkflowResponse(wf *store.Workflow, withSpec bool) workflowResponse {
 	resp := workflowResponse{
 		ID:          wf.ID,
 		Name:        wf.Name,
-		Namespace:   wf.Namespace,
 		Description: wf.Description,
 		CurrentRev:  wf.CurrentRev,
 		CreatedAt:   wf.CreatedAt,
@@ -81,31 +132,46 @@ func (h *Handler) toWorkflowResponse(wf *store.Workflow, withSpec bool) workflow
 	return resp
 }
 
-// ListWorkflows returns the workflows the caller can access in the request's
-// current cluster context, filtered per workflow by namespace. Each entry
-// carries the deploy-app targets of its current revision for list filtering.
+// ListWorkflows returns every workflow to callers holding a wildcard-cluster
+// get grant on the pseudo-resource; definitions are global, so the entry check
+// replaces the former per-namespace filtering. Each entry carries the
+// deploy-app targets of its current revision for list filtering.
 func (h *Handler) ListWorkflows(c *gin.Context) {
+	if !h.authorize(c, "get", c.GetString(clusterNameContextKey), "") {
+		return
+	}
 	var workflows []store.Workflow
 	if err := h.store.DB().Order("name").Find(&workflows).Error; err != nil {
 		h.fail(c, http.StatusInternalServerError, err, "")
 		return
 	}
-	cluster := c.GetString(clusterNameContextKey)
-	authorized := make([]*store.Workflow, 0, len(workflows))
+	all := make([]*store.Workflow, 0, len(workflows))
 	for i := range workflows {
-		if !h.deps.Authorize(c, authzResource, "get", cluster, workflows[i].Namespace) {
-			continue
-		}
-		authorized = append(authorized, &workflows[i])
+		all = append(all, &workflows[i])
 	}
-	specs := h.currentSpecs(authorized)
-	visible := make([]workflowResponse, 0, len(authorized))
-	for _, wf := range authorized {
+	specs := h.currentSpecs(all)
+	spaceBindings, err := store.LoadBindings(h.store.DB(), workflowIDs(all), store.BindingKindSpace)
+	if err != nil {
+		h.fail(c, http.StatusInternalServerError, err, "")
+		return
+	}
+	visible := make([]workflowResponse, 0, len(all))
+	for _, wf := range all {
 		resp := h.toWorkflowResponse(wf, false)
 		resp.Apps, resp.Clusters = extractDeployTargets(specs[wf.ID])
+		resp.Spaces = spaceBindings[wf.ID]
 		visible = append(visible, resp)
 	}
 	c.JSON(http.StatusOK, gin.H{"workflows": visible, "total": len(visible)})
+}
+
+// workflowIDs collects the IDs of a workflow batch for binding lookups.
+func workflowIDs(workflows []*store.Workflow) []uint {
+	ids := make([]uint, 0, len(workflows))
+	for _, wf := range workflows {
+		ids = append(ids, wf.ID)
+	}
+	return ids
 }
 
 // currentSpecs loads the spec of each workflow's current revision in one
@@ -144,8 +210,10 @@ func (h *Handler) currentSpecs(workflows []*store.Workflow) map[uint][]byte {
 }
 
 // extractDeployTargets collects the deduplicated, sorted app and cluster
-// targets of a spec's deploy-app nodes. A malformed spec yields empty slices
-// rather than failing the list.
+// targets of a spec's deploy-app nodes; apps aggregate as "space/name"
+// composites because application identity is the (space, name) pair. Targets
+// missing either half cannot deploy and are skipped. A malformed spec yields
+// empty slices rather than failing the list.
 func extractDeployTargets(specRaw []byte) (apps, clusters []string) {
 	var dag spec.DAGSpec
 	if err := json.Unmarshal(specRaw, &dag); err != nil {
@@ -157,8 +225,10 @@ func extractDeployTargets(specRaw []byte) (apps, clusters []string) {
 		if node.Type != spec.NodeDeployApp {
 			continue
 		}
-		if app := propsString(node.Props, "app"); app != "" {
-			appSet[app] = struct{}{}
+		space := propsString(node.Props, "space")
+		app := propsString(node.Props, "app")
+		if space != "" && app != "" {
+			appSet[space+"/"+app] = struct{}{}
 		}
 		if cluster := propsString(node.Props, "cluster"); cluster != "" {
 			clusterSet[cluster] = struct{}{}
@@ -244,27 +314,20 @@ func (v *validationProblems) Error() string {
 }
 
 // CreateWorkflow validates the definition, creates the workflow with a fresh
-// webhook token and appends revision 1 (design §10).
+// webhook token and appends revision 1 (design §10). Names are reusable
+// display labels, so there is no uniqueness check; the ID disambiguates.
 func (h *Handler) CreateWorkflow(c *gin.Context) {
 	var req createWorkflowRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.fail(c, http.StatusBadRequest, err, "")
 		return
 	}
-	if !spec.ValidateDNS1123Label(req.Name, 63) {
-		h.fail(c, http.StatusBadRequest, nil, "name must be a DNS-1123 label of at most 63 characters")
-		return
-	}
-	if req.Namespace == "" {
-		h.fail(c, http.StatusBadRequest, nil, "namespace is required")
-		return
-	}
-	if !spec.ValidateDNS1123Label(req.Namespace, 63) {
-		h.fail(c, http.StatusBadRequest, nil, "namespace must be a DNS-1123 label")
+	if err := validateWorkflowName(req.Name); err != nil {
+		h.fail(c, http.StatusBadRequest, err, "")
 		return
 	}
 	cluster := c.GetString(clusterNameContextKey)
-	if !h.authorize(c, "create", cluster, req.Namespace) {
+	if !h.authorize(c, "create", cluster, "") {
 		return
 	}
 	specJSON, paramsJSON, triggersJSON, err := decodeDefinition(req.Spec, req.Params, req.Triggers)
@@ -272,22 +335,18 @@ func (h *Handler) CreateWorkflow(c *gin.Context) {
 		h.fail(c, http.StatusBadRequest, err, "")
 		return
 	}
+	spaces, err := normalizeSpaces(req.Spaces)
+	if err != nil {
+		h.fail(c, http.StatusBadRequest, err, "")
+		return
+	}
 	db := h.store.DB()
-	var count int64
-	if err := db.Model(&store.Workflow{}).Where("name = ?", req.Name).Count(&count).Error; err != nil {
-		h.fail(c, http.StatusInternalServerError, err, "")
-		return
-	}
-	if count > 0 {
-		h.fail(c, http.StatusConflict, nil, "workflow already exists")
-		return
-	}
 	token, err := generateToken()
 	if err != nil {
 		h.fail(c, http.StatusInternalServerError, err, "")
 		return
 	}
-	wf := store.Workflow{Name: req.Name, Namespace: req.Namespace, Description: req.Description, WebhookToken: store.SecretString(token)}
+	wf := store.Workflow{Name: req.Name, Description: req.Description, WebhookToken: store.SecretString(token)}
 	err = db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&wf).Error; err != nil {
 			return err
@@ -297,17 +356,25 @@ func (h *Handler) CreateWorkflow(c *gin.Context) {
 			return err
 		}
 		wf.CurrentRev = rev
-		return nil
+		return store.ReplaceBindingsTx(tx, wf.ID, store.BindingKindSpace, spaces)
 	})
 	if err != nil {
 		h.fail(c, http.StatusInternalServerError, err, "")
 		return
 	}
 	h.recordAudit(c, store.HistoryEntry{
-		Cluster: cluster, ResourceType: authzResource, ResourceName: wf.Name,
-		Namespace: wf.Namespace, Operation: "create", YAML: string(specJSON),
+		Cluster: cluster, ResourceType: authzResource, ResourceName: workflowAuditName(&wf),
+		Operation: "create", YAML: string(specJSON),
 	})
-	c.JSON(http.StatusCreated, h.toWorkflowResponse(&wf, true))
+	resp := h.toWorkflowResponse(&wf, true)
+	resp.Spaces = spaces
+	c.JSON(http.StatusCreated, resp)
+}
+
+// workflowAuditName disambiguates reusable workflow names in audit entries as
+// name#id, mirroring the run entries' name#runNumber pattern.
+func workflowAuditName(wf *store.Workflow) string {
+	return fmt.Sprintf("%s#%d", wf.Name, wf.ID)
 }
 
 // webhookTokenHexLen is the encoded length of the 128-bit hex webhook tokens
@@ -330,10 +397,17 @@ func (h *Handler) GetWorkflow(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.authorize(c, "get", c.GetString(clusterNameContextKey), wf.Namespace) {
+	if !h.authorize(c, "get", c.GetString(clusterNameContextKey), "") {
 		return
 	}
-	c.JSON(http.StatusOK, h.toWorkflowResponse(wf, true))
+	resp := h.toWorkflowResponse(wf, true)
+	spaces, err := store.LoadBindings(h.store.DB(), []uint{wf.ID}, store.BindingKindSpace)
+	if err != nil {
+		h.fail(c, http.StatusInternalServerError, err, "")
+		return
+	}
+	resp.Spaces = spaces[wf.ID]
+	c.JSON(http.StatusOK, resp)
 }
 
 // UpdateWorkflow replaces the definition under the expectedRev optimistic
@@ -345,7 +419,7 @@ func (h *Handler) UpdateWorkflow(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.authorize(c, "update", c.GetString(clusterNameContextKey), wf.Namespace) {
+	if !h.authorize(c, "update", c.GetString(clusterNameContextKey), "") {
 		return
 	}
 	var req updateWorkflowRequest
@@ -357,10 +431,46 @@ func (h *Handler) UpdateWorkflow(c *gin.Context) {
 		h.fail(c, http.StatusBadRequest, nil, "expectedRev is required")
 		return
 	}
+	// A partial update (e.g. a rename) must not wipe the stored definition:
+	// absent spec/params/triggers fall back to the current revision's values
+	// before the triple is validated and appended. wf.CurrentRev pairs with
+	// the expectedRev check below — a concurrent save bumps it and fails
+	// this update with 409 before anything is written.
+	if len(req.Spec) == 0 || len(req.Params) == 0 || len(req.Triggers) == 0 {
+		var cur store.WorkflowRevision
+		if err := h.store.DB().
+			Where("workflow_id = ? AND rev = ?", wf.ID, wf.CurrentRev).
+			First(&cur).Error; err != nil {
+			h.fail(c, http.StatusInternalServerError, err, "")
+			return
+		}
+		if len(req.Spec) == 0 {
+			req.Spec = json.RawMessage(cur.Spec)
+		}
+		if len(req.Params) == 0 {
+			req.Params = json.RawMessage(cur.Params)
+		}
+		if len(req.Triggers) == 0 {
+			req.Triggers = json.RawMessage(cur.Triggers)
+		}
+	}
 	specJSON, paramsJSON, triggersJSON, err := decodeDefinition(req.Spec, req.Params, req.Triggers)
 	if err != nil {
 		h.fail(c, http.StatusBadRequest, err, "")
 		return
+	}
+	var spaces []string
+	if req.Spaces != nil {
+		if spaces, err = normalizeSpaces(*req.Spaces); err != nil {
+			h.fail(c, http.StatusBadRequest, err, "")
+			return
+		}
+	}
+	if req.Name != nil {
+		if err := validateWorkflowName(*req.Name); err != nil {
+			h.fail(c, http.StatusBadRequest, err, "")
+			return
+		}
 	}
 	var newRev int
 	err = h.store.DB().Transaction(func(tx *gorm.DB) error {
@@ -380,8 +490,22 @@ func (h *Handler) UpdateWorkflow(c *gin.Context) {
 			return err
 		}
 		newRev = rev
-		return tx.Model(&store.Workflow{}).Where("id = ?", wf.ID).
-			Update("description", req.Description).Error
+		if req.Description != nil {
+			if err := tx.Model(&store.Workflow{}).Where("id = ?", wf.ID).
+				Update("description", *req.Description).Error; err != nil {
+				return err
+			}
+		}
+		if req.Name != nil {
+			if err := tx.Model(&store.Workflow{}).Where("id = ?", wf.ID).
+				Update("name", *req.Name).Error; err != nil {
+				return err
+			}
+		}
+		if req.Spaces != nil {
+			return store.ReplaceBindingsTx(tx, wf.ID, store.BindingKindSpace, spaces)
+		}
+		return nil
 	})
 	if errors.Is(err, errWorkflowModified) {
 		h.fail(c, http.StatusConflict, nil, "workflow was modified, expectedRev mismatch")
@@ -393,14 +517,25 @@ func (h *Handler) UpdateWorkflow(c *gin.Context) {
 	}
 	previous := h.currentSpecJSON(wf.ID, wf.CurrentRev)
 	wf.CurrentRev = newRev
-	wf.Description = req.Description
+	if req.Description != nil {
+		wf.Description = *req.Description
+	}
+	if req.Name != nil {
+		wf.Name = *req.Name
+	}
 	h.recordAudit(c, store.HistoryEntry{
-		Cluster: c.GetString(clusterNameContextKey), ResourceType: authzResource, ResourceName: wf.Name,
-		Namespace: wf.Namespace, Operation: "update",
+		Cluster: c.GetString(clusterNameContextKey), ResourceType: authzResource, ResourceName: workflowAuditName(wf),
+		Operation:    "update",
 		YAML:         string(specJSON),
 		PreviousYAML: previous,
 	})
-	c.JSON(http.StatusOK, h.toWorkflowResponse(wf, true))
+	resp := h.toWorkflowResponse(wf, true)
+	if req.Spaces != nil {
+		resp.Spaces = spaces
+	} else if bound, err := store.LoadBindings(h.store.DB(), []uint{wf.ID}, store.BindingKindSpace); err == nil {
+		resp.Spaces = bound[wf.ID]
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // currentSpecJSON reads the spec snapshot of a revision for the audit trail;
@@ -421,7 +556,7 @@ func (h *Handler) DeleteWorkflow(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.authorize(c, "delete", c.GetString(clusterNameContextKey), wf.Namespace) {
+	if !h.authorize(c, "delete", c.GetString(clusterNameContextKey), "") {
 		return
 	}
 	var active int64
@@ -444,9 +579,9 @@ func (h *Handler) DeleteWorkflow(c *gin.Context) {
 		return
 	}
 	h.recordAudit(c, store.HistoryEntry{
-		Cluster: c.GetString(clusterNameContextKey), ResourceType: authzResource, ResourceName: wf.Name,
-		Namespace: wf.Namespace, Operation: "delete",
-		YAML: specSnapshot,
+		Cluster: c.GetString(clusterNameContextKey), ResourceType: authzResource, ResourceName: workflowAuditName(wf),
+		Operation: "delete",
+		YAML:      specSnapshot,
 	})
 	c.JSON(http.StatusOK, gin.H{"message": "workflow deleted"})
 }
@@ -458,7 +593,7 @@ func (h *Handler) ListRevisions(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.authorize(c, "get", c.GetString(clusterNameContextKey), wf.Namespace) {
+	if !h.authorize(c, "get", c.GetString(clusterNameContextKey), "") {
 		return
 	}
 	var revs []store.WorkflowRevision
@@ -486,7 +621,7 @@ func (h *Handler) GetRevision(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.authorize(c, "get", c.GetString(clusterNameContextKey), wf.Namespace) {
+	if !h.authorize(c, "get", c.GetString(clusterNameContextKey), "") {
 		return
 	}
 	rev, err := strconv.Atoi(c.Param("rev"))
@@ -521,7 +656,7 @@ func (h *Handler) GetWebhookToken(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.authorize(c, "update", c.GetString(clusterNameContextKey), wf.Namespace) {
+	if !h.authorize(c, "update", c.GetString(clusterNameContextKey), "") {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"token": string(wf.WebhookToken)})
@@ -534,7 +669,7 @@ func (h *Handler) ResetWebhookToken(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.authorize(c, "update", c.GetString(clusterNameContextKey), wf.Namespace) {
+	if !h.authorize(c, "update", c.GetString(clusterNameContextKey), "") {
 		return
 	}
 	token, err := generateToken()
@@ -548,8 +683,8 @@ func (h *Handler) ResetWebhookToken(c *gin.Context) {
 		return
 	}
 	h.recordAudit(c, store.HistoryEntry{
-		Cluster: c.GetString(clusterNameContextKey), ResourceType: authzResource, ResourceName: wf.Name,
-		Namespace: wf.Namespace, Operation: "reset-webhook-token",
+		Cluster: c.GetString(clusterNameContextKey), ResourceType: authzResource, ResourceName: workflowAuditName(wf),
+		Operation: "reset-webhook-token",
 	})
 	c.JSON(http.StatusOK, gin.H{"token": token})
 }

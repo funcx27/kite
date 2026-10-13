@@ -58,12 +58,16 @@ export function HistoryDialog({
 }: HistoryDialogProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
-  const { data } = useApplicationRevisions(app.name, cluster, {
+  const { data } = useApplicationRevisions(app.namespace, app.name, cluster, {
     disable: !open,
   })
   // latestRev gates the rollback buttons: rolling back to the current
   // revision is a no-op and stays disabled.
-  const { data: config } = useApplicationConfig(app.name, cluster)
+  const { data: config } = useApplicationConfig(
+    app.namespace,
+    app.name,
+    cluster
+  )
   const latestRev = config?.latestRev ?? 0
   const [selected, setSelected] = useState<number[]>([])
   const [diff, setDiff] = useState<{
@@ -103,8 +107,8 @@ export function HistoryDialog({
     const [a, b] = [...selected].sort((x, y) => x - y)
     try {
       const [older, newer] = await Promise.all([
-        fetchApplicationRevision(app.name, cluster, a),
-        fetchApplicationRevision(app.name, cluster, b),
+        fetchApplicationRevision(app.namespace, app.name, cluster, a),
+        fetchApplicationRevision(app.namespace, app.name, cluster, b),
       ])
       setDiff({
         open: true,
@@ -121,7 +125,12 @@ export function HistoryDialog({
   // already masked (*** — see the row's redacted badge).
   const viewRevision = async (rev: number) => {
     try {
-      const revision = await fetchApplicationRevision(app.name, cluster, rev)
+      const revision = await fetchApplicationRevision(
+        app.namespace,
+        app.name,
+        cluster,
+        rev
+      )
       setView({
         open: true,
         content: yaml.dump(revision.manifests),
@@ -138,8 +147,8 @@ export function HistoryDialog({
     setRollingBack(true)
     try {
       const [config, revision] = await Promise.all([
-        fetchApplicationConfig(app.name, cluster),
-        fetchApplicationRevision(app.name, cluster, rev),
+        fetchApplicationConfig(app.namespace, app.name, cluster),
+        fetchApplicationRevision(app.namespace, app.name, cluster, rev),
       ])
       setRollbackDiff({
         open: true,
@@ -159,10 +168,15 @@ export function HistoryDialog({
     const rev = rollbackDiff.rev
     setRollingBack(true)
     try {
-      const result = await rollbackApplicationConfig(app.name, cluster, {
-        rev,
-        deploy: true,
-      })
+      const result = await rollbackApplicationConfig(
+        app.namespace,
+        app.name,
+        cluster,
+        {
+          rev,
+          deploy: true,
+        }
+      )
       await queryClient.invalidateQueries({ queryKey: ['applications'] })
       const failed = (result.results ?? []).filter((r) => !r.success).length
       if (result.success === false) {

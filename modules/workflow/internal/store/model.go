@@ -45,11 +45,12 @@ const (
 const MaxRunsPerWorkflow = 50
 
 // Workflow is a workflow definition: a globally-unique logical entity whose
-// current shape is the revision at CurrentRev.
+// current shape is the revision at CurrentRev. The numeric ID is the identity;
+// Name is a reusable display label (any unicode, 1-63 chars), disambiguated
+// as name#id wherever a unique reference is needed.
 type Workflow struct {
 	Model
-	Name        string `json:"name" gorm:"type:varchar(63);uniqueIndex;not null"` // DNS-1123
-	Namespace   string `json:"namespace" gorm:"type:varchar(255);not null"`       // owning space, aligned with the application module
+	Name        string `json:"name" gorm:"type:varchar(63);not null;index"`
 	Description string `json:"description" gorm:"type:text"`
 	CurrentRev  int    `json:"currentRev" gorm:"not null;default:0"`
 	// NextRunNumber is the display sequence of the next run (#1, #2, ...);
@@ -62,6 +63,9 @@ type Workflow struct {
 	// workflow removes its revision chain and run history (design §3).
 	Revisions []WorkflowRevision `json:"-" gorm:"foreignKey:WorkflowID;constraint:OnDelete:CASCADE"`
 	Runs      []WorkflowRun      `json:"-" gorm:"foreignKey:WorkflowID;constraint:OnDelete:CASCADE"`
+	// Bindings association exists for the FK cascade: deleting a workflow
+	// clears its resource bindings.
+	Bindings []WorkflowBinding `json:"-" gorm:"foreignKey:WorkflowID;constraint:OnDelete:CASCADE"`
 }
 
 func (Workflow) TableName() string {
@@ -161,4 +165,30 @@ type BuildSetting struct {
 
 func (BuildSetting) TableName() string {
 	return "build_settings"
+}
+
+// Binding kinds of WorkflowBinding rows; the kind decides how Target is
+// encoded. Kinds are code constants, never client-supplied strings.
+const (
+	// BindingKindSpace targets a space name (a labeled cluster namespace,
+	// DNS-1123); the binding is visibility metadata for list filtering and
+	// neither changes identity nor permissions.
+	BindingKindSpace = "space"
+)
+
+// WorkflowBinding is one optional workflow→resource binding row. The target
+// side is intentionally a soft reference: spaces exist only cluster-side and
+// future kinds belong to other modules, so there is no local row to key on —
+// validity is enforced at the API entry per kind, and a target that vanishes
+// cluster-side simply stops matching filters. Unbound workflows are
+// platform-level. Rows die with their workflow through the FK cascade.
+type WorkflowBinding struct {
+	Model
+	WorkflowID uint   `json:"workflowId" gorm:"not null;uniqueIndex:idx_workflow_bindings_wf_kind_target,priority:1"`
+	Kind       string `json:"kind" gorm:"type:varchar(20);not null;uniqueIndex:idx_workflow_bindings_wf_kind_target,priority:2;index:idx_workflow_bindings_kind_target,priority:1"`
+	Target     string `json:"target" gorm:"type:varchar(255);not null;uniqueIndex:idx_workflow_bindings_wf_kind_target,priority:3;index:idx_workflow_bindings_kind_target,priority:2"`
+}
+
+func (WorkflowBinding) TableName() string {
+	return "workflow_bindings"
 }

@@ -92,7 +92,7 @@ func (h *Handler) publishGate(ctx context.Context, cli client.Client, cfg *store
 // as *DriftError; the caller's context cancellation aborts in-flight
 // applies. onLog receives the publish header, one line per drifted document
 // on a gated publish and one line per applied document; nil disables it.
-func DeployWithImage(ctx context.Context, deps Deps, st *store.Store, appName, cluster, image, registryCredentialRef string, operatorID uint, dryRun bool, onLog func(string)) (*DeployOutcome, error) {
+func DeployWithImage(ctx context.Context, deps Deps, st *store.Store, space, appName, cluster, image, registryCredentialRef string, operatorID uint, dryRun bool, onLog func(string)) (*DeployOutcome, error) {
 	if onLog == nil {
 		onLog = func(string) {}
 	}
@@ -107,12 +107,12 @@ func DeployWithImage(ctx context.Context, deps Deps, st *store.Store, appName, c
 		},
 	}
 
-	app, err := h.findApp(appName)
+	app, err := h.findApp(space, appName)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("application not found: %s", appName)
+			return nil, fmt.Errorf("application not found: %s/%s", space, appName)
 		}
-		return nil, fmt.Errorf("load application %s: %w", appName, err)
+		return nil, fmt.Errorf("load application %s/%s: %w", space, appName, err)
 	}
 	cli, err := deps.ResolveCluster(ctx, cluster)
 	if err != nil {

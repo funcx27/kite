@@ -119,7 +119,7 @@ func (e *Engine) expireApproval(run store.WorkflowRun, nodeID string, row store.
 // system (operator 0) is the acting party.
 func (e *Engine) auditApprovalTimeout(run store.WorkflowRun, nodeID, decision string) {
 	var wf store.Workflow
-	if err := e.db.Select("name", "namespace").First(&wf, run.WorkflowID).Error; err != nil {
+	if err := e.db.Select("name").First(&wf, run.WorkflowID).Error; err != nil {
 		slog.Error("workflow: approval timeout audit load workflow", "run", run.ID, "err", err)
 		return
 	}
@@ -132,7 +132,6 @@ func (e *Engine) auditApprovalTimeout(run store.WorkflowRun, nodeID, decision st
 	e.deps.RecordHistory(store.HistoryEntry{
 		ResourceType: authzResource,
 		ResourceName: fmt.Sprintf("%s#%d", wf.Name, run.RunNumber),
-		Namespace:    wf.Namespace,
 		Operation:    "approval-timeout",
 		YAML:         string(detail),
 		Success:      true,

@@ -67,7 +67,7 @@ func (e *Engine) scheduleLoop(stop <-chan struct{}) {
 // into one run — the next window's points fire on their own tick.
 func (e *Engine) fireCron(window, nowT time.Time) {
 	var workflows []store.Workflow
-	if err := e.db.Select("id", "name", "namespace", "current_rev").Find(&workflows).Error; err != nil {
+	if err := e.db.Select("id", "name", "current_rev").Find(&workflows).Error; err != nil {
 		slog.Error("workflow: cron scheduler load workflows", "err", err)
 		return
 	}
@@ -123,7 +123,6 @@ func (e *Engine) auditTrigger(wf *store.Workflow, res TriggerResult, operation s
 	e.deps.RecordHistory(store.HistoryEntry{
 		ResourceType: authzResource,
 		ResourceName: fmt.Sprintf("%s#%d", wf.Name, res.RunNumber),
-		Namespace:    wf.Namespace,
 		Operation:    operation,
 		YAML:         string(detail),
 		Success:      true,

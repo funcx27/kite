@@ -53,11 +53,11 @@ func runTerminal(status string) bool {
 // keep-alives; a terminal run ends the stream after the done event.
 // Authorization matches the run lifecycle actions (exec, design §8).
 func (h *Handler) RunEvents(c *gin.Context) {
-	runID, _, wf, ok := h.runIDAndWorkflow(c)
+	runID, _, _, ok := h.runIDAndWorkflow(c)
 	if !ok {
 		return
 	}
-	if !h.authorize(c, "exec", c.GetString(clusterNameContextKey), wf.Namespace) {
+	if !h.authorize(c, "exec", c.GetString(clusterNameContextKey), "") {
 		return
 	}
 	var run store.WorkflowRun

@@ -317,8 +317,10 @@ func (h *Handler) clusterSpaceQuota(ctx context.Context, id identity, cluster, s
 	row := spaceQuotaRow{Cluster: cluster}
 	row.CPU, _, _ = unstructured.NestedString(quota.Object, "spec", "hard", "cpu")
 	row.Memory, _, _ = unstructured.NestedString(quota.Object, "spec", "hard", "memory")
-	row.UsedCPU, _, _ = unstructured.NestedString(quota.Object, "spec", "used", "cpu")
-	row.UsedMemory, _, _ = unstructured.NestedString(quota.Object, "spec", "used", "memory")
+	// Observed usage lives in status.used (maintained by the resource-quota
+	// controller); spec only carries hard.
+	row.UsedCPU, _, _ = unstructured.NestedString(quota.Object, "status", "used", "cpu")
+	row.UsedMemory, _, _ = unstructured.NestedString(quota.Object, "status", "used", "memory")
 	return row, true
 }
 

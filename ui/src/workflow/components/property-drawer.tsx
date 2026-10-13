@@ -5,6 +5,7 @@
 // back to free text when the list cannot serve a pick.
 import { useMemo, useRef, useState } from 'react'
 import { useApplications } from '@/application/api'
+import { useSpaces } from '@/platform/space-context'
 import {
   IconCheck,
   IconChevronDown,
@@ -218,6 +219,15 @@ export function PropertyDrawer({
   const patchProps = (key: string, value: unknown) =>
     onChange({ ...node, props: { ...(node.props ?? {}), [key]: value } })
 
+  // Selecting a deploy target writes the space+app pair in one change: two
+  // separate patchProps calls would race on the same stale node snapshot and
+  // drop the first field.
+  const patchAppTarget = (space: string, app: string) =>
+    onChange({
+      ...node,
+      props: { ...(node.props ?? {}), space, app },
+    })
+
   const templateInputVars = { params, nodes, currentNodeId: node.id }
 
   return (
@@ -309,6 +319,7 @@ export function PropertyDrawer({
             key={node.id}
             node={node}
             patchProps={patchProps}
+            onSelectApp={patchAppTarget}
             onFocusField={(f) => (focusedField.current = f)}
             templateVars={templateInputVars}
           />
@@ -633,14 +644,26 @@ function BuildPropsForm({
   )
 }
 
+// Deploy targets address an application by its (space, name) identity. The
+// space is fixed to the workflow's own space (the editor locks the workflow
+// to one space) — only the app is picked, from that space's app list.
+interface AppOption {
+  value: string
+  label: string
+}
+
 function DeployPropsForm({
   node,
   patchProps,
+  onSelectApp,
   onFocusField,
   templateVars,
-}: PropsFormShared) {
+}: PropsFormShared & {
+  onSelectApp: (space: string, app: string) => void
+}) {
   const { t } = useTranslation()
   const { clusters } = useCluster()
+  const { currentSpace } = useSpaces()
   const { data: applications } = useApplications()
   // Registry credentials feed the pull-secret pick; the Select degrades to a
   // plain input when the list failed to load or is empty (same contract as
@@ -650,27 +673,44 @@ function DeployPropsForm({
   const registryCredentialNames = credentialList
     .filter((c) => c.registryHosts.length > 0)
     .map((c) => c.name)
+  const savedSpace = readStringProp(node, 'space')
   const savedApp = readStringProp(node, 'app')
   const savedCluster = readStringProp(node, 'cluster')
+  // A node that never saved a space defaults to the workflow's (locked)
+  // space, so picking an app immediately records the intended (space, app)
+  // pair; a saved space always wins so legacy nodes keep deploying where
+  // their spec says.
+  const selectedSpace = savedSpace || currentSpace || ''
 
-  const appNames = (applications ?? []).map((app) => app.name)
+  const appOptions: AppOption[] = (applications ?? [])
+    .filter((app) => app.namespace === selectedSpace)
+    .map((app) => ({ value: app.name, label: app.name }))
+  // A saved app missing from the space's list still echoes so the spec never
+  // silently loses its reference.
   const appEcho =
-    savedApp && !appNames.includes(savedApp) ? savedApp : undefined
-  const appOptions = appEcho ? [appEcho, ...appNames] : appNames
+    savedApp !== '' &&
+    selectedSpace !== '' &&
+    !appOptions.some((option) => option.value === savedApp)
+      ? { value: savedApp, label: savedApp }
+      : undefined
+  const options = appEcho ? [appEcho, ...appOptions] : appOptions
 
   // Clusters the selected app already has configs on sort first; the rest
   // stay selectable so a brand-new binding can be created.
   const clusterOptions = useMemo(() => {
     const usable = clusters.filter((cluster) => !cluster.error)
-    if (!savedApp) return usable
-    const app = applications?.find((candidate) => candidate.name === savedApp)
+    if (savedSpace === '' || savedApp === '') return usable
+    const app = applications?.find(
+      (candidate) =>
+        candidate.namespace === savedSpace && candidate.name === savedApp
+    )
     if (!app) return usable
     const bound = new Set(app.configs.map((config) => config.cluster))
     return [
       ...usable.filter((cluster) => bound.has(cluster.name)),
       ...usable.filter((cluster) => !bound.has(cluster.name)),
     ]
-  }, [clusters, applications, savedApp])
+  }, [clusters, applications, savedSpace, savedApp])
   const clusterEcho =
     savedCluster && !clusterOptions.some((c) => c.name === savedCluster)
       ? savedCluster
@@ -679,13 +719,25 @@ function DeployPropsForm({
 
   return (
     <div className="space-y-4">
+      <Field
+        label={t('workflow.props.space')}
+        hint={t('workflow.props.spaceFixedHint')}
+      >
+        <Input value={selectedSpace} disabled />
+      </Field>
       <Field label={t('workflow.props.app')}>
         <AppCombobox
           value={savedApp}
-          options={appOptions}
+          label={savedApp}
+          options={options}
           echoValue={appEcho}
-          onSelect={(name) => patchProps('app', name)}
-          placeholder={t('workflow.props.appPlaceholder')}
+          disabled={selectedSpace === ''}
+          onSelect={(option) => onSelectApp(selectedSpace, option.value)}
+          placeholder={
+            selectedSpace === ''
+              ? t('workflow.props.appPickSpaceHint')
+              : t('workflow.props.appPlaceholder')
+          }
           searchPlaceholder={t('workflow.props.appSearch')}
           emptyText={t('workflow.props.appEmpty')}
           currentLabel={t('workflow.props.currentValue')}
@@ -760,8 +812,10 @@ function DeployPropsForm({
 // as the current value.
 function AppCombobox({
   value,
+  label,
   options,
   echoValue,
+  disabled,
   onSelect,
   placeholder,
   searchPlaceholder,
@@ -769,9 +823,11 @@ function AppCombobox({
   currentLabel,
 }: {
   value: string
-  options: string[]
-  echoValue: string | undefined
-  onSelect: (name: string) => void
+  label: string
+  options: AppOption[]
+  echoValue: AppOption | undefined
+  disabled?: boolean
+  onSelect: (option: AppOption) => void
   placeholder: string
   searchPlaceholder: string
   emptyText: string
@@ -786,10 +842,11 @@ function AppCombobox({
           variant="outline"
           role="combobox"
           aria-expanded={open}
+          disabled={disabled}
           className="w-full justify-between font-normal"
         >
           <span className={cn('truncate', !value && 'text-muted-foreground')}>
-            {value || placeholder}
+            {value ? label : placeholder}
           </span>
           <IconChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
         </Button>
@@ -803,27 +860,28 @@ function AppCombobox({
           <CommandList>
             <CommandEmpty>{emptyText}</CommandEmpty>
             <CommandGroup>
-              {options.map((name) => (
+              {options.map((option) => (
                 <CommandItem
-                  key={name}
-                  value={name}
+                  key={option.value}
+                  value={option.value}
                   onSelect={() => {
-                    onSelect(name)
+                    onSelect(option)
                     setOpen(false)
                   }}
                 >
                   <IconCheck
                     className={cn(
                       'mr-2 h-4 w-4 shrink-0',
-                      name === value ? 'opacity-100' : 'opacity-0'
+                      option.value === value ? 'opacity-100' : 'opacity-0'
                     )}
                   />
-                  <span className="truncate">{name}</span>
-                  {name === echoValue && (
-                    <span className="ml-auto shrink-0 pl-2 text-xs text-muted-foreground">
-                      {currentLabel}
-                    </span>
-                  )}
+                  <span className="truncate">{option.label}</span>
+                  {echoValue !== undefined &&
+                    option.value === echoValue.value && (
+                      <span className="ml-auto shrink-0 pl-2 text-xs text-muted-foreground">
+                        {currentLabel}
+                      </span>
+                    )}
                 </CommandItem>
               ))}
             </CommandGroup>

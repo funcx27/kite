@@ -5,11 +5,18 @@
 // config-file providers never remount, hence the restart note.
 import '@/workflow/i18n'
 
-import { useEffect, useState } from 'react'
-import { IconPencil, IconPlus, IconTrash } from '@tabler/icons-react'
+import { useEffect, useState, type ReactNode } from 'react'
+import {
+  IconCopy,
+  IconInfoCircle,
+  IconPencil,
+  IconPlus,
+  IconTrash,
+} from '@tabler/icons-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -76,6 +83,11 @@ const splitList = (raw: string) =>
     .split(',')
     .map((entry) => entry.trim())
     .filter((entry) => entry !== '')
+
+// Mirror the backend's built-in buildkitd images (buildfleet config.Image)
+// so the summary shows the effective reference when nothing is configured.
+const BUILTIN_ROOTFUL_IMAGE = 'moby/buildkit:master'
+const BUILTIN_ROOTLESS_IMAGE = 'moby/buildkit:master-rootless'
 
 export function BuildRuntimeSettings() {
   const { t } = useTranslation()
@@ -149,7 +161,6 @@ export function BuildRuntimeSettings() {
   }
 
   const pending = updateMutation.isPending
-  const builtin = t('workflow.buildRuntime.builtinDefault')
 
   return (
     <Card>
@@ -176,39 +187,54 @@ export function BuildRuntimeSettings() {
           <p className="text-sm text-muted-foreground">
             {t('workflow.buildRuntime.loadFailed')}
           </p>
+        ) : isLoading && !data ? (
+          <p className="text-sm text-muted-foreground">
+            {t('common.messages.loading')}
+          </p>
         ) : (
-          <div className="space-y-1 text-sm">
-            <p className="truncate">
-              <span className="text-muted-foreground">
-                {t('workflow.buildRuntime.rootfulImage')}:{' '}
-              </span>
-              <span className="font-mono text-xs">
-                {data?.rootfulImage || builtin}
-              </span>
-            </p>
-            <p className="truncate">
-              <span className="text-muted-foreground">
-                {t('workflow.buildRuntime.rootlessImage')}:{' '}
-              </span>
-              <span className="font-mono text-xs">
-                {data?.rootlessImage || builtin}
-              </span>
-            </p>
-            <p className="text-muted-foreground">
-              {t('workflow.buildRuntime.summaryCounts', {
-                hosts: data?.hosts.length ?? 0,
-                insecure: data?.insecureRegistries.length ?? 0,
-                mirrors: Object.keys(data?.mirrors ?? {}).length,
-              })}
-            </p>
-            <p className="text-xs text-muted-foreground">
+          <div className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <ImageCard
+                title={t('workflow.buildRuntime.rootfulTitle')}
+                dotClassName="bg-primary"
+                image={data?.rootfulImage || BUILTIN_ROOTFUL_IMAGE}
+                custom={Boolean(data?.rootfulImage)}
+                mode={t('workflow.buildRuntime.chipPrivileged')}
+                scenario={t('workflow.buildRuntime.chipCompat')}
+              />
+              <ImageCard
+                title={t('workflow.buildRuntime.rootlessTitle')}
+                dotClassName="bg-emerald-500"
+                image={data?.rootlessImage || BUILTIN_ROOTLESS_IMAGE}
+                custom={Boolean(data?.rootlessImage)}
+                mode={t('workflow.buildRuntime.chipUnprivileged')}
+                scenario={t('workflow.buildRuntime.chipIsolation')}
+              />
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              <MetaChip
+                label={t('workflow.buildRuntime.hostsSection')}
+                value={t('workflow.buildRuntime.hostsCountValue', {
+                  count: data?.hosts.length ?? 0,
+                })}
+              />
+              <MetaChip
+                label={t('workflow.buildRuntime.insecureSection')}
+                value={t('workflow.buildRuntime.insecureCountValue', {
+                  count: data?.insecureRegistries.length ?? 0,
+                })}
+              />
+              <MetaChip
+                label={t('workflow.buildRuntime.mirrorsSection')}
+                value={t('workflow.buildRuntime.mirrorsCountValue', {
+                  count: Object.keys(data?.mirrors ?? {}).length,
+                })}
+              />
+            </div>
+            <div className="flex items-start gap-1.5 text-xs text-muted-foreground">
+              <IconInfoCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               {t('workflow.buildRuntime.restartNote')}
-            </p>
-            {isLoading && (
-              <p className="text-sm text-muted-foreground">
-                {t('common.messages.loading')}
-              </p>
-            )}
+            </div>
           </div>
         )}
       </CardContent>
@@ -480,5 +506,82 @@ export function BuildRuntimeSettings() {
         </DialogContent>
       </Dialog>
     </Card>
+  )
+}
+
+// ImageCard summarizes one build mode's effective buildkitd image with a
+// copy affordance and the mode's run/scenario chips.
+function ImageCard({
+  title,
+  dotClassName,
+  image,
+  custom,
+  mode,
+  scenario,
+}: {
+  title: string
+  dotClassName: string
+  image: string
+  custom: boolean
+  mode: string
+  scenario: string
+}) {
+  const { t } = useTranslation()
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(image)
+      toast.success(t('workflow.buildRuntime.copied'))
+    } catch {
+      // Clipboard unavailable (insecure context): surface the reference so
+      // it can still be selected and copied by hand.
+      toast.info(image)
+    }
+  }
+
+  return (
+    <div className="rounded-lg border p-3.5">
+      <div className="mb-2.5 flex items-center justify-between gap-2">
+        <span className="flex items-center gap-2 text-sm font-semibold">
+          <span className={`size-1.5 shrink-0 rounded-full ${dotClassName}`} />
+          {title}
+        </span>
+        {!custom && (
+          <Badge variant="secondary" className="font-normal">
+            {t('workflow.buildRuntime.builtinDefault')}
+          </Badge>
+        )}
+      </div>
+      <div className="flex items-start gap-1.5">
+        <code className="min-w-0 flex-1 break-all text-xs leading-5">
+          {image}
+        </code>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-6 w-6 shrink-0 text-muted-foreground"
+          onClick={copy}
+          title={t('workflow.buildRuntime.copy')}
+        >
+          <IconCopy className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        <MetaChip label={t('workflow.buildRuntime.chipMode')} value={mode} />
+        <MetaChip
+          label={t('workflow.buildRuntime.chipScenario')}
+          value={scenario}
+        />
+      </div>
+    </div>
+  )
+}
+
+function MetaChip({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-md border bg-background px-2 py-1 text-[11px] text-muted-foreground">
+      {label}
+      <b className="font-semibold text-foreground">{value}</b>
+    </span>
   )
 }

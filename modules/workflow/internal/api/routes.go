@@ -7,6 +7,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -59,15 +60,15 @@ func RegisterRoutes(api *gin.RouterGroup, deps Deps, st *store.Store, eng *engin
 	g := api.Group("/workflows")
 	g.GET("", h.ListWorkflows)
 	g.POST("", h.CreateWorkflow)
-	g.GET("/:name", h.GetWorkflow)
-	g.PUT("/:name", h.UpdateWorkflow)
-	g.DELETE("/:name", h.DeleteWorkflow)
-	g.GET("/:name/revisions", h.ListRevisions)
-	g.GET("/:name/revisions/:rev", h.GetRevision)
-	g.GET("/:name/webhook-token", h.GetWebhookToken)
-	g.POST("/:name/webhook-token/reset", h.ResetWebhookToken)
-	g.POST("/:name/runs", h.TriggerRun)
-	g.GET("/:name/runs", h.ListRuns)
+	g.GET("/:id", h.GetWorkflow)
+	g.PUT("/:id", h.UpdateWorkflow)
+	g.DELETE("/:id", h.DeleteWorkflow)
+	g.GET("/:id/revisions", h.ListRevisions)
+	g.GET("/:id/revisions/:rev", h.GetRevision)
+	g.GET("/:id/webhook-token", h.GetWebhookToken)
+	g.POST("/:id/webhook-token/reset", h.ResetWebhookToken)
+	g.POST("/:id/runs", h.TriggerRun)
+	g.GET("/:id/runs", h.ListRuns)
 
 	runs := api.Group("/runs")
 	runs.GET("/:id", h.GetRun)
@@ -116,11 +117,17 @@ func (h *Handler) failEngine(c *gin.Context, err error) {
 	}
 }
 
-// findWorkflow loads a workflow by name, writing the 404 response when
+// findWorkflow loads a workflow by its numeric ID (the definition identity;
+// names are reusable labels), writing 400 for a malformed id and 404 when
 // missing.
 func (h *Handler) findWorkflow(c *gin.Context) (*store.Workflow, bool) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || id == 0 {
+		h.fail(c, http.StatusBadRequest, nil, "invalid workflow id")
+		return nil, false
+	}
 	var wf store.Workflow
-	if err := h.store.DB().Where("name = ?", c.Param("name")).First(&wf).Error; err != nil {
+	if err := h.store.DB().First(&wf, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			h.fail(c, http.StatusNotFound, nil, "workflow not found")
 			return nil, false

@@ -1,10 +1,14 @@
 // React Flow canvas shared by the editor (editable) and the run view (read
 // only, status colored). The custom node card renders the four built-in
-// types with type accent + status dot.
-import { memo, useCallback } from 'react'
+// types with type accent + status dot; the editor's default edge adds a
+// discoverable delete button on selection.
+import { memo, useCallback, useMemo } from 'react'
 import {
   Background,
+  BaseEdge,
   Controls,
+  EdgeLabelRenderer,
+  getBezierPath,
   Handle,
   MiniMap,
   Position,
@@ -13,6 +17,8 @@ import {
   useReactFlow,
   type Edge,
   type EdgeChange,
+  type EdgeProps,
+  type EdgeTypes,
   type NodeProps,
   type NodeTypes,
   type OnConnect,
@@ -38,6 +44,26 @@ const typeIcons: Record<WorkflowNodeType, typeof Wrench> = {
   'deploy-app': Rocket,
   approval: ShieldCheck,
   notify: Bell,
+}
+
+// v12 derives edge endpoints from the measured Handle elements, so handles
+// must stay mounted in the read-only view — not rendering them (or hiding
+// via display:none) drops every connected edge. It also anchors each edge
+// at the handle's outer edge on the connection side, and edge strokes use
+// butt caps (no backward extension), so every residual handle pixel shows
+// as a gap between the line and the node border: the hidden handle must be
+// a true zero box — no size classes (they are !important), no min-size
+// (default CSS carries 5px), no border (1px borders still render on a
+// zero-size box and shift the anchor off the border). Inline styles instead
+// of Tailwind classes: they survive production builds unconditionally.
+const hiddenHandleStyle: React.CSSProperties = {
+  minWidth: 0,
+  minHeight: 0,
+  width: 0,
+  height: 0,
+  border: 'none',
+  opacity: 0,
+  pointerEvents: 'none',
 }
 
 // MiniMap paints SVG fills, so it needs concrete colors instead of the
@@ -83,7 +109,15 @@ const WorkflowNodeCard = memo(
         <Handle
           type="target"
           position={Position.Left}
-          className="!h-2.5 !w-2.5"
+          // The hollow-dot sizing classes carry !important, which would
+          // override the hidden style's inline width/height — hidden handles
+          // go classless instead.
+          className={
+            data.hideHandles
+              ? undefined
+              : '!h-2.5 !w-2.5 !border-2 !border-primary/60 !bg-background'
+          }
+          style={data.hideHandles ? hiddenHandleStyle : undefined}
         />
         <div className="flex items-center gap-2">
           <span
@@ -108,7 +142,12 @@ const WorkflowNodeCard = memo(
         <Handle
           type="source"
           position={Position.Right}
-          className="!h-2.5 !w-2.5"
+          className={
+            data.hideHandles
+              ? undefined
+              : '!h-2.5 !w-2.5 !border-2 !border-primary/60 !bg-background'
+          }
+          style={data.hideHandles ? hiddenHandleStyle : undefined}
         />
       </div>
     )
@@ -120,6 +159,65 @@ WorkflowNodeCard.displayName = 'WorkflowNodeCard'
 const nodeTypes: NodeTypes = {
   [WORKFLOW_NODE_CARD]: WorkflowNodeCard,
 }
+
+// Editor's default edge: when selected, a small delete button appears at the
+// midpoint — edge deletion must be discoverable, not keyboard-only. It
+// deletes via useReactFlow().setEdges, which reaches the controlled parent
+// state through the onEdgesChange handler.
+function WorkflowEdge({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  markerEnd,
+  style,
+  selected,
+}: EdgeProps) {
+  const { t } = useTranslation()
+  const { setEdges } = useReactFlow()
+  const [path, labelX, labelY] = getBezierPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+  })
+  return (
+    <>
+      <BaseEdge path={path} markerEnd={markerEnd} style={style} />
+      {selected && (
+        <EdgeLabelRenderer>
+          <button
+            type="button"
+            className="nodrag nopan absolute flex h-5 w-5 items-center justify-center rounded-full border bg-background text-xs leading-none text-muted-foreground shadow-sm transition-colors hover:bg-accent hover:text-foreground"
+            style={{
+              // The EdgeLabelRenderer overlay is pointer-events:none so
+              // labels don't block the canvas; interactive children must
+              // opt back in.
+              pointerEvents: 'all',
+              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+            }}
+            aria-label={t('workflow.editor.deleteEdge')}
+            title={t('workflow.editor.deleteEdge')}
+            onClick={() =>
+              setEdges((edges) => edges.filter((edge) => edge.id !== id))
+            }
+          >
+            ×
+          </button>
+        </EdgeLabelRenderer>
+      )}
+    </>
+  )
+}
+
+// Only the editor canvas uses the delete-button edge; the read-only run view
+// keeps the built-in default edge.
+const editorEdgeTypes: EdgeTypes = { default: WorkflowEdge }
 
 interface FlowCanvasProps {
   nodes: WorkflowFlowNode[]
@@ -151,6 +249,16 @@ function CanvasInner({
 }: FlowCanvasProps) {
   const { screenToFlowPosition } = useReactFlow()
 
+  // Read-only canvas: mark nodes so the card hides its connection handles
+  // (invisible + non-interactive, still mounted as edge anchors).
+  const viewNodes = useMemo(
+    () =>
+      readOnly
+        ? nodes.map((n) => ({ ...n, data: { ...n.data, hideHandles: true } }))
+        : nodes,
+    [nodes, readOnly]
+  )
+
   const onDragOver = useCallback(
     (event: React.DragEvent) => {
       if (!onDropNode) return
@@ -178,7 +286,7 @@ function CanvasInner({
 
   return (
     <ReactFlow
-      nodes={nodes}
+      nodes={viewNodes}
       edges={edges}
       nodeTypes={nodeTypes}
       onNodesChange={onNodesChange}
@@ -193,6 +301,14 @@ function CanvasInner({
       nodesDraggable={!readOnly}
       nodesConnectable={!readOnly}
       elementsSelectable
+      edgeTypes={readOnly ? undefined : editorEdgeTypes}
+      // A self-connection is a length-1 cycle: reject it at drag time rather
+      // than failing the save-time cycle check afterwards.
+      isValidConnection={
+        readOnly
+          ? undefined
+          : (connection) => connection.source !== connection.target
+      }
       deleteKeyCode={readOnly ? null : ['Backspace', 'Delete']}
       fitView
       proOptions={{ hideAttribution: true }}

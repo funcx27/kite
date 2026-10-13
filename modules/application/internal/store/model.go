@@ -46,11 +46,11 @@ type RegistryAuth struct {
 }
 
 // App is a logical application: a grouping plus the draft spec produced by
-// the creation wizard. It is cluster-independent and unique by name.
+// the creation wizard. It is cluster-independent and unique per (space, name).
 type App struct {
 	Model
-	Name        string    `json:"name" gorm:"type:varchar(63);uniqueIndex;not null"` // DNS-1123
-	Namespace   string    `json:"namespace" gorm:"type:varchar(255);not null"`       // default space of the app's configs
+	Name        string    `json:"name" gorm:"type:varchar(63);not null;uniqueIndex:idx_apps_namespace_name,priority:2"` // DNS-1123
+	Namespace   string    `json:"namespace" gorm:"type:varchar(255);not null;uniqueIndex:idx_apps_namespace_name,priority:1"`
 	Description string    `json:"description" gorm:"type:text"`
 	Spec        JSONField `json:"spec" gorm:"type:text"` // AppSpec draft; birth snapshot once deployed
 
@@ -66,8 +66,10 @@ func (App) TableName() string {
 // row per (AppID, Cluster).
 type AppConfig struct {
 	Model
-	AppID     uint   `json:"appId" gorm:"not null;uniqueIndex:idx_app_configs_app_cluster,priority:1"`
-	Cluster   string `json:"cluster" gorm:"type:varchar(100);not null;uniqueIndex:idx_app_configs_app_cluster,priority:2"`
+	AppID   uint   `json:"appId" gorm:"not null;uniqueIndex:idx_app_configs_app_cluster,priority:1"`
+	Cluster string `json:"cluster" gorm:"type:varchar(100);not null;uniqueIndex:idx_app_configs_app_cluster,priority:2"`
+	// Namespace always equals App.Namespace (every writer copies it from the
+	// app); lifting that invariant would need a space label on configs.
 	Namespace string `json:"namespace" gorm:"type:varchar(255);not null"`
 
 	// Manifests and LastApplied hold Secret data/stringData values, so both

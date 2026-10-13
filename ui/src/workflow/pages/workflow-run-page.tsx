@@ -4,7 +4,7 @@
 // and a run-level event feed from the same stream.
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import { formatDate } from '@/lib/utils'
@@ -12,6 +12,13 @@ import { usePageTitle } from '@/hooks/use-page-title'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import {
   Sheet,
   SheetContent,
@@ -24,6 +31,7 @@ import {
   useInvalidateWorkflow,
   useRun,
   useRunActionMutation,
+  useRuns,
 } from '../api'
 import { FlowCanvas } from '../components/flow'
 import { LogPane } from '../components/log-pane'
@@ -40,8 +48,9 @@ import {
 import type { NodeRunStatus, RunNodeView } from '../types'
 
 export function WorkflowRunPage() {
-  const { name = '', runId } = useParams()
+  const { id = '', runId } = useParams()
   const runIdNumber = Number(runId)
+  const navigate = useNavigate()
   const { t } = useTranslation()
   const invalidate = useInvalidateWorkflow()
   const {
@@ -49,6 +58,13 @@ export function WorkflowRunPage() {
     isLoading,
     error,
   } = useRun(Number.isFinite(runIdNumber) ? runIdNumber : undefined)
+  // Sibling runs for the header switcher; falls back to the plain "#n" text
+  // while loading.
+  const workflowId = Number(id)
+  const { data: runsPage } = useRuns(
+    Number.isFinite(workflowId) ? workflowId : undefined
+  )
+  const siblingRuns = runsPage?.runs ?? []
 
   usePageTitle(t('workflow.run.title', { n: run?.runNumber ?? runId ?? '' }))
 
@@ -151,14 +167,40 @@ export function WorkflowRunPage() {
       {/* Run header */}
       <div className="flex flex-wrap items-center gap-2.5">
         <Link
-          to={`/workflows/${name}/runs`}
+          to={`/workflows/${id}/runs`}
           className="text-sm font-semibold hover:underline"
         >
-          {name}
+          {run.workflow}
         </Link>
         <RunStatusChip status={runStatus ?? run.status} />
+        {siblingRuns.length > 0 ? (
+          <Select
+            value={String(run.id)}
+            onValueChange={(value) =>
+              navigate(`/workflows/${id}/runs/${value}`)
+            }
+          >
+            <SelectTrigger
+              className="h-7 w-36 font-mono text-xs"
+              aria-label={t('workflow.run.switchRun')}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {siblingRuns.map((r) => (
+                <SelectItem key={r.id} value={String(r.id)} className="text-xs">
+                  #{r.runNumber} · {t(`workflow.statuses.${r.status}`)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : (
+          <span className="font-mono text-xs text-muted-foreground">
+            #{run.runNumber}
+          </span>
+        )}
         <span className="font-mono text-xs text-muted-foreground">
-          #{run.runNumber} · rev {run.revisionRev}
+          rev {run.revisionRev}
         </span>
         <span className="text-xs text-muted-foreground">
           {t('workflow.list.trigger' + capitalize(run.triggerType))}
@@ -180,6 +222,13 @@ export function WorkflowRunPage() {
           </Badge>
         ))}
         <div className="ml-auto flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => navigate(`/workflows/${id}`)}
+          >
+            {t('workflow.run.openEditor')}
+          </Button>
           <Button
             variant="outline"
             size="sm"

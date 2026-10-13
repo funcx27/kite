@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 // Store is the module's handle on the host database.
@@ -23,10 +24,107 @@ func (s *Store) DB() *gorm.DB {
 
 // Migrate creates or updates the module tables on the host database.
 func Migrate(db *gorm.DB) error {
-	if err := db.AutoMigrate(&Workflow{}, &WorkflowRevision{}, &WorkflowRun{}, &NodeRun{}, &BuildSetting{}); err != nil {
+	// Workflows used to be namespaced with a unique name index; the global
+	// ID-identity model dropped both. The legacy cleanup must run before
+	// AutoMigrate: the new plain name index generates the same index name, so
+	// AutoMigrate skips creating it while the unique one is still there, and
+	// the leftover NOT NULL namespace column would reject inserts of new
+	// namespace-less rows.
+	if err := dropLegacyWorkflowSchema(db); err != nil {
+		return err
+	}
+	if err := db.AutoMigrate(&Workflow{}, &WorkflowRevision{}, &WorkflowRun{}, &NodeRun{}, &BuildSetting{}, &WorkflowBinding{}); err != nil {
 		return fmt.Errorf("migrate workflow models: %w", err)
 	}
 	return nil
+}
+
+// ReplaceBindingsTx swaps all bindings of one workflow under the given kind
+// for targets (whole-set replace: delete + batch insert). Callers validate
+// targets per kind; the slice may be empty to clear the kind.
+func ReplaceBindingsTx(tx *gorm.DB, workflowID uint, kind string, targets []string) error {
+	if err := tx.Where("workflow_id = ? AND kind = ?", workflowID, kind).
+		Delete(&WorkflowBinding{}).Error; err != nil {
+		return fmt.Errorf("replace %s bindings: delete: %w", kind, err)
+	}
+	if len(targets) == 0 {
+		return nil
+	}
+	rows := make([]WorkflowBinding, 0, len(targets))
+	for _, target := range targets {
+		rows = append(rows, WorkflowBinding{WorkflowID: workflowID, Kind: kind, Target: target})
+	}
+	if err := tx.Create(&rows).Error; err != nil {
+		return fmt.Errorf("replace %s bindings: create: %w", kind, err)
+	}
+	return nil
+}
+
+// LoadBindings reads the targets of one kind for a batch of workflows in a
+// single query; the map omits workflows without bindings.
+func LoadBindings(db *gorm.DB, workflowIDs []uint, kind string) (map[uint][]string, error) {
+	out := make(map[uint][]string, len(workflowIDs))
+	if len(workflowIDs) == 0 {
+		return out, nil
+	}
+	var rows []WorkflowBinding
+	if err := db.Select("workflow_id", "target").
+		Where("workflow_id IN ? AND kind = ?", workflowIDs, kind).
+		Order("target").Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("load %s bindings: %w", kind, err)
+	}
+	for _, row := range rows {
+		out[row.WorkflowID] = append(out[row.WorkflowID], row.Target)
+	}
+	return out, nil
+}
+
+// legacyWorkflowNameIndex is the pre-globalization unique index on
+// workflows(name); the regenerated plain index reuses the same name.
+const legacyWorkflowNameIndex = "idx_workflows_name"
+
+// dropLegacyWorkflowSchema removes the pre-globalization unique name index
+// and namespace column from an existing workflows table. The index is dropped
+// only while still unique — after AutoMigrate the replacement plain index
+// carries the same name and must survive. Fresh databases have neither and
+// skip both steps.
+func dropLegacyWorkflowSchema(db *gorm.DB) error {
+	if db.Migrator().HasIndex(&Workflow{}, legacyWorkflowNameIndex) {
+		unique, err := indexIsUnique(db, &Workflow{}, legacyWorkflowNameIndex)
+		if err != nil {
+			return fmt.Errorf("migrate workflows: inspect index %s: %w", legacyWorkflowNameIndex, err)
+		}
+		if unique {
+			if err := db.Migrator().DropIndex(&Workflow{}, legacyWorkflowNameIndex); err != nil {
+				return fmt.Errorf("migrate workflows: drop index %s: %w", legacyWorkflowNameIndex, err)
+			}
+		}
+	}
+	// The model no longer declares the field, so the raw column name is used.
+	if db.Migrator().HasColumn(&Workflow{}, "namespace") {
+		if err := db.Migrator().DropColumn(&Workflow{}, "namespace"); err != nil {
+			return fmt.Errorf("migrate workflows: drop legacy namespace column: %w", err)
+		}
+	}
+	return nil
+}
+
+// indexIsUnique reports whether the named index on dst's table carries a
+// uniqueness constraint, via the driver's index introspection. The discard
+// logger session keeps the sqlite driver's hardwired Debug() call in
+// GetIndexes from printing a PRAGMA trace on every boot.
+func indexIsUnique(db *gorm.DB, dst any, name string) (bool, error) {
+	indexes, err := db.Session(&gorm.Session{Logger: logger.Discard}).Migrator().GetIndexes(dst)
+	if err != nil {
+		return false, err
+	}
+	for _, idx := range indexes {
+		if idx.Name() == name {
+			unique, ok := idx.Unique()
+			return unique && ok, nil
+		}
+	}
+	return false, nil
 }
 
 // BuildProviderFor resolves the build provider of a namespace: the exact

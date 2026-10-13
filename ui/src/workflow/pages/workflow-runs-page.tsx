@@ -9,15 +9,20 @@ import { usePageTitle } from '@/hooks/use-page-title'
 import { Badge } from '@/components/ui/badge'
 import { ActionTable } from '@/components/action-table'
 
-import { useRuns } from '../api'
+import { useRuns, useWorkflow } from '../api'
 import { RunStatusChip } from '../components/status-chip'
 import { formatDuration } from '../lib'
 
 export function WorkflowRunsPage() {
   const { t } = useTranslation()
-  const { name = '' } = useParams()
-  const { data, isLoading } = useRuns(name)
-  usePageTitle(t('workflow.list.runsTitle', { name }))
+  const { id = '' } = useParams()
+  const workflowId = Number(id)
+  const valid = Number.isInteger(workflowId) && workflowId > 0
+  const { data: workflow } = useWorkflow(valid ? workflowId : undefined)
+  const { data, isLoading } = useRuns(valid ? workflowId : undefined)
+  // Names are reusable labels; the display name rides the detail query.
+  const displayName = workflow?.name ?? `#${workflowId}`
+  usePageTitle(t('workflow.list.runsTitle', { name: displayName }))
 
   const runs = data?.runs ?? []
 
@@ -26,11 +31,11 @@ export function WorkflowRunsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">
-            {t('workflow.list.runsTitle', { name })}
+            {t('workflow.list.runsTitle', { name: displayName })}
           </h1>
           <p className="text-sm text-muted-foreground">
-            <Link to={`/workflows/${name}`} className="hover:underline">
-              ← {name}
+            <Link to={`/workflows/${id}`} className="hover:underline">
+              ← {displayName}
             </Link>
           </p>
         </div>
@@ -44,7 +49,7 @@ export function WorkflowRunsPage() {
             header: t('workflow.list.runCol'),
             cell: ({ row }) => (
               <Link
-                to={`/workflows/${name}/runs/${row.original.id}`}
+                to={`/workflows/${id}/runs/${row.original.id}`}
                 className="font-mono font-medium hover:underline"
               >
                 #{row.original.runNumber}

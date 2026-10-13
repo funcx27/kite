@@ -83,11 +83,11 @@ func (r buildRunner) Run(ctx context.Context, rendered spec.Props, run store.Wor
 		dockerfile = "Dockerfile"
 	}
 	// The node-level provider keeps priority; an empty one falls back to the
-	// workflow namespace's build-cluster default (exact match, then the
-	// global default row).
+	// node space's build-cluster default (exact match, then the global
+	// default row).
 	provider := p.Provider
-	if provider == "" && run.Workflow != nil {
-		if def, ok := r.deps.ProviderFor(run.Workflow.Namespace); ok {
+	if provider == "" {
+		if def, ok := r.deps.ProviderFor(p.Space); ok {
 			provider = def
 		}
 	}
@@ -144,10 +144,11 @@ func (r deployRunner) Run(ctx context.Context, rendered spec.Props, run store.Wo
 	if err := decodeProps(rendered, &p); err != nil {
 		return nil, fmt.Errorf("decode deploy props: %w", err)
 	}
-	if p.App == "" || p.Cluster == "" {
-		return nil, fmt.Errorf("deploy node needs app and cluster")
+	if p.Space == "" || p.App == "" || p.Cluster == "" {
+		return nil, fmt.Errorf("deploy node needs space, app and cluster")
 	}
 	res, err := r.deps.DeployApp(ctx, exec.DeployRequest{
+		Space:                 p.Space,
 		App:                   p.App,
 		Cluster:               p.Cluster,
 		Image:                 p.Image,

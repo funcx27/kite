@@ -12,6 +12,7 @@ import type { SpaceQuotaStatus } from '@/application/types'
 import { useSpaces } from '@/platform/space-context'
 import { ChevronDown, Layers, Plus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import { getCurrentCluster } from '@/lib/current-cluster'
@@ -343,6 +344,8 @@ export function CreateSpaceDialog({
 export function SpacePicker({ defaultCluster }: { defaultCluster?: string }) {
   const { t } = useTranslation()
   const { spaces, currentSpace, setCurrentSpace } = useSpaces()
+  const navigate = useNavigate()
+  const location = useLocation()
   const [pickerOpen, setPickerOpen] = useState(false)
   const [search, setSearch] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
@@ -354,15 +357,48 @@ export function SpacePicker({ defaultCluster }: { defaultCluster?: string }) {
     return spaces.filter((space) => space.includes(q))
   }, [spaces, search])
 
-  // Keep the current space visible in the scroll list.
+  // On an application detail/pod page the space is part of the URL identity,
+  // so the picker shows that space instead of the global filter (which does
+  // not scope a single app's page) and switching the scope must leave the
+  // page instead of patching ?space= into it: jump to the newly selected
+  // space's application list.
+  const detailMatch = location.pathname.match(/^\/applications\/([^/]+)\/[^/]+/)
+  const onDetailPage = !!detailMatch
+  const activeSpace = detailMatch
+    ? decodeURIComponent(detailMatch[1])
+    : currentSpace
+
+  // Workflow editor routes (create /workflows/new and edit /workflows/:id):
+  // the editor locks the space to the workflow's binding — switching mid-edit
+  // would rebind it on save — so the picker is disabled there. The other
+  // workflow subpages (run list/view) are scoped to one workflow, so like
+  // application detail pages, switching jumps to the workflow list instead of
+  // patching ?space= into the scoped URL.
+  const onWorkflowEditor = /^\/workflows\/(?:new|\d+)\/?$/.test(
+    location.pathname
+  )
+  const onWorkflowSubpage =
+    !onWorkflowEditor && /^\/workflows\/.+/.test(location.pathname)
+
+  // Keep the active space visible in the scroll list.
   useEffect(() => {
     listRef.current
       ?.querySelector('[data-active="true"]')
       ?.scrollIntoView({ block: 'nearest' })
-  }, [currentSpace, filteredSpaces.length])
+  }, [activeSpace, filteredSpaces.length])
 
   const selectSpace = (space: string | null) => {
     setCurrentSpace(space)
+    // Scoped pages (application detail, workflow subpages) must leave the
+    // page on switch: jump to that section's list instead of patching
+    // ?space= into a URL the filter does not scope.
+    if (onDetailPage || onWorkflowSubpage) {
+      const base = onDetailPage ? '/applications' : '/workflows'
+      navigate(
+        space === null ? base : `${base}?space=${encodeURIComponent(space)}`,
+        { replace: true }
+      )
+    }
     setPickerOpen(false)
   }
 
@@ -378,14 +414,19 @@ export function SpacePicker({ defaultCluster }: { defaultCluster?: string }) {
           <Button
             variant="outline"
             className="h-9 max-w-56 gap-1.5 px-3"
-            title={t('sidebar.spaces.label')}
+            disabled={onWorkflowEditor}
+            title={
+              onWorkflowEditor
+                ? t('sidebar.spaces.lockedOnWorkflowEditor')
+                : t('sidebar.spaces.label')
+            }
           >
             <Layers className="h-4 w-4 text-primary" />
             <span className="text-sm text-muted-foreground">
               {t('sidebar.spaces.label')}
             </span>
             <span className="max-w-32 truncate text-sm font-medium">
-              {currentSpace ?? t('sidebar.spaces.all')}
+              {activeSpace ?? t('sidebar.spaces.all')}
             </span>
             <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
           </Button>
@@ -401,7 +442,7 @@ export function SpacePicker({ defaultCluster }: { defaultCluster?: string }) {
             <button
               type="button"
               onClick={() => selectSpace(null)}
-              className={spaceRowClass(currentSpace === null)}
+              className={spaceRowClass(activeSpace === null)}
             >
               {t('sidebar.spaces.all')}
             </button>
@@ -409,10 +450,10 @@ export function SpacePicker({ defaultCluster }: { defaultCluster?: string }) {
               <button
                 key={space}
                 type="button"
-                data-active={space === currentSpace}
+                data-active={space === activeSpace}
                 onClick={() => selectSpace(space)}
                 className={`flex w-full items-center truncate rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent ${
-                  space === currentSpace
+                  space === activeSpace
                     ? 'bg-accent font-medium text-foreground'
                     : 'text-muted-foreground'
                 }`}

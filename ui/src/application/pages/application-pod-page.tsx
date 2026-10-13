@@ -34,11 +34,11 @@ const VIEWS: View[] = ['monitoring', 'terminal', 'logs', 'files', 'yaml']
 
 // Pod detail page of the application module (design §10/§11): the pod is a
 // navigable entity like the application itself — its identity
-// (app / cluster / pod) lives in the URL so views are shareable, and the
-// tabs reuse the professional-mode components with the app's cluster
+// (space / app / cluster / pod) lives in the URL so views are shareable, and
+// the tabs reuse the professional-mode components with the app's cluster
 // addressed explicitly on every request.
 export function ApplicationPodPage() {
-  const { name = '', cluster = '', pod: podName = '' } = useParams()
+  const { space = '', name = '', cluster = '', pod: podName = '' } = useParams()
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
   const { t } = useTranslation()
@@ -61,9 +61,10 @@ export function ApplicationPodPage() {
     data: app,
     isLoading: appLoading,
     error: appError,
-  } = useApplication(name)
+  } = useApplication(space, name)
   const namespace = app?.namespace ?? ''
   const { data: runtime, isLoading: runtimeLoading } = useApplicationResources(
+    space,
     name,
     cluster,
     { disable: !app }
@@ -110,12 +111,12 @@ export function ApplicationPodPage() {
     setArmed(false)
     setDeleting(true)
     try {
-      await forceDeleteApplicationPod(name, cluster, podName)
+      await forceDeleteApplicationPod(space, name, cluster, podName)
       toast.success(t('applications.detail.podForceDeleted', { pod: podName }))
       await queryClient.invalidateQueries({
-        queryKey: ['applications', name, 'resources', cluster],
+        queryKey: ['applications', space, name, 'resources', cluster],
       })
-      navigate(`/applications/${name}/clusters/${cluster}`)
+      navigate(`/applications/${space}/${name}/clusters/${cluster}`)
     } catch (err) {
       toast.error(translateError(err, t))
     } finally {
@@ -123,7 +124,7 @@ export function ApplicationPodPage() {
     }
   }
 
-  const backTo = `/applications/${name}/clusters/${cluster}`
+  const backTo = `/applications/${space}/${name}/clusters/${cluster}`
 
   // Sibling pods of the same app/cluster: the header pod name is the
   // switcher, so moving between pods never round-trips through the detail
@@ -132,7 +133,7 @@ export function ApplicationPodPage() {
   const switchPod = (next: string) => {
     if (next === podName) return
     navigate({
-      pathname: `/applications/${name}/clusters/${cluster}/pods/${next}`,
+      pathname: `/applications/${space}/${name}/clusters/${cluster}/pods/${next}`,
       search: searchParams.toString(),
     })
   }

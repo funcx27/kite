@@ -162,18 +162,25 @@ export function ClusterTab({
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const { data: detail } = useApplicationConfig(
+    active ? app.namespace : undefined,
     active ? app.name : undefined,
     active ? config.cluster : undefined
   )
   const { data: statusReport, refetch: refetchStatus } = useApplicationStatus(
+    app.namespace,
     app.name,
     config.cluster,
     { disable: !active }
   )
-  const { data: runtime } = useApplicationResources(app.name, config.cluster, {
-    disable: !active,
-    refreshInterval: active ? 5000 : 0,
-  })
+  const { data: runtime } = useApplicationResources(
+    app.namespace,
+    app.name,
+    config.cluster,
+    {
+      disable: !active,
+      refreshInterval: active ? 5000 : 0,
+    }
+  )
   const navigate = useNavigate()
   const [restarting, setRestarting] = useState(false)
   // Two-step restart confirm: the target ('config' or a pod name) arms on
@@ -297,7 +304,7 @@ export function ClusterTab({
     if (!statusReport?.previewToken || !detail) return
     setResolving(true)
     try {
-      await resolveApplicationConfig(app.name, config.cluster, {
+      await resolveApplicationConfig(app.namespace, app.name, config.cluster, {
         expectedRev: detail.latestRev,
         previewToken: statusReport.previewToken,
         adoptions,
@@ -306,7 +313,13 @@ export function ClusterTab({
       setChoices({})
       setViewDoc(null)
       await queryClient.invalidateQueries({
-        queryKey: ['applications', app.name, 'config', config.cluster],
+        queryKey: [
+          'applications',
+          app.namespace,
+          app.name,
+          'config',
+          config.cluster,
+        ],
       })
       await refetchStatus()
     } catch (err) {
@@ -323,12 +336,18 @@ export function ClusterTab({
   const handleRestart = async () => {
     setRestarting(true)
     try {
-      await restartApplicationConfig(app.name, config.cluster)
+      await restartApplicationConfig(app.namespace, app.name, config.cluster)
       toast.success(
         t('applications.detail.restartStarted', { cluster: config.cluster })
       )
       await queryClient.invalidateQueries({
-        queryKey: ['applications', app.name, 'resources', config.cluster],
+        queryKey: [
+          'applications',
+          app.namespace,
+          app.name,
+          'resources',
+          config.cluster,
+        ],
       })
     } catch (err) {
       toast.error(translateError(err, t))
@@ -340,10 +359,21 @@ export function ClusterTab({
   const handleRestartPod = async (podName: string) => {
     setRestarting(true)
     try {
-      await restartApplicationPod(app.name, config.cluster, podName)
+      await restartApplicationPod(
+        app.namespace,
+        app.name,
+        config.cluster,
+        podName
+      )
       toast.success(t('applications.detail.podRestarted', { pod: podName }))
       await queryClient.invalidateQueries({
-        queryKey: ['applications', app.name, 'resources', config.cluster],
+        queryKey: [
+          'applications',
+          app.namespace,
+          app.name,
+          'resources',
+          config.cluster,
+        ],
       })
     } catch (err) {
       toast.error(translateError(err, t))
@@ -495,7 +525,7 @@ export function ClusterTab({
                         title={(pod.images ?? []).join('\n')}
                         onClick={() =>
                           navigate(
-                            `/applications/${app.name}/clusters/${config.cluster}/pods/${pod.name}`
+                            `/applications/${app.namespace}/${app.name}/clusters/${config.cluster}/pods/${pod.name}`
                           )
                         }
                       >

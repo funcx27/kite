@@ -46,16 +46,21 @@ export interface TriggerConfig {
   maxConcurrent?: number
 }
 
+// The numeric ID is the definition identity; names are reusable display
+// labels (same name may exist on several workflows).
 export interface WorkflowListItem {
   id: number
   name: string
-  namespace: string
   description: string
   currentRev: number
-  // Deploy-app targets aggregated from the current revision's spec (present
-  // only when the workflow has deploy-app nodes); used for list filtering.
+  // Deploy-app targets of the current revision's spec, aggregated as
+  // "space/name" composites (present only when the workflow has deploy-app
+  // nodes); used for list filtering.
   apps?: string[]
   clusters?: string[]
+  // Bound spaces: optional visibility metadata for list filtering (present
+  // only when something is bound); deploy-referenced spaces derive from apps.
+  spaces?: string[]
   createdAt: string
   updatedAt: string
 }
@@ -68,11 +73,13 @@ export interface Workflow extends WorkflowListItem {
 
 export interface CreateWorkflowRequest {
   name: string
-  namespace: string
   description: string
   spec: DAGSpec
   params: ParamSpec[]
   triggers: TriggerConfig
+  // Optional space bindings; omitted or empty leaves the workflow
+  // platform-level.
+  spaces?: string[]
 }
 
 export interface UpdateWorkflowRequest {
@@ -81,6 +88,11 @@ export interface UpdateWorkflowRequest {
   params: ParamSpec[]
   triggers: TriggerConfig
   expectedRev: number
+  // Renames the workflow when present (1–63 chars, any unicode); absent
+  // keeps the stored name.
+  name?: string
+  // Replaces the space bindings when present (an empty array clears them).
+  spaces?: string[]
 }
 
 export interface RevisionSummary {
@@ -135,7 +147,6 @@ export interface RunDetail {
   id: number
   runNumber: number
   workflow: string
-  workflowNamespace: string
   revisionRev: number
   status: RunStatus
   triggerType: RunSummary['triggerType']

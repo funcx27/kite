@@ -69,9 +69,9 @@ func RegisterRoutes(api *gin.RouterGroup, deps Deps, st *store.Store) {
 	g.GET("", h.ListApps)
 	g.POST("", h.CreateApp)
 	g.POST("/preview", h.PreviewRender)
-	g.GET("/:name", h.GetApp)
-	g.PUT("/:name", h.UpdateApp)
-	g.DELETE("/:name", h.DeleteApp)
+	g.GET("/:space/:name", h.GetApp)
+	g.PUT("/:space/:name", h.UpdateApp)
+	g.DELETE("/:space/:name", h.DeleteApp)
 	g.PUT("/spaces/:name/quotas", h.UpsertSpaceQuotas)
 	g.GET("/spaces/:name/quotas", h.GetSpaceQuotas)
 	// Dissociating removes only the space marker; the namespace itself is
@@ -81,20 +81,20 @@ func RegisterRoutes(api *gin.RouterGroup, deps Deps, st *store.Store) {
 	// ClusterMiddleware resolves any :cluster param and 404s when that cluster
 	// is gone from the platform, but a config slot may outlive its cluster —
 	// offline must still reach the handler to retire it.
-	g.GET("/:name/configs/:cfgCluster", h.GetConfig)
-	g.PUT("/:name/configs/:cfgCluster", h.UpdateConfig)
-	g.POST("/:name/configs/:cfgCluster/deploy", h.DeployConfig)
-	g.POST("/:name/configs/:cfgCluster/sync", h.SyncConfig)
-	g.POST("/:name/configs/:cfgCluster/offline", h.OfflineConfig)
-	g.POST("/:name/configs/:cfgCluster/resolve", h.ResolveConfig)
-	g.GET("/:name/configs/:cfgCluster/status", h.GetStatus)
-	g.GET("/:name/configs/:cfgCluster/resources", h.GetResources)
-	g.POST("/:name/configs/:cfgCluster/restart", h.RestartConfig)
-	g.POST("/:name/configs/:cfgCluster/pods/:pod/restart", h.RestartPod)
-	g.POST("/:name/configs/:cfgCluster/pods/:pod/force-delete", h.ForceDeletePod)
-	g.GET("/:name/configs/:cfgCluster/revisions", h.ListRevisions)
-	g.GET("/:name/configs/:cfgCluster/revisions/:rev", h.GetRevision)
-	g.POST("/:name/configs/:cfgCluster/rollback", h.RollbackConfig)
+	g.GET("/:space/:name/configs/:cfgCluster", h.GetConfig)
+	g.PUT("/:space/:name/configs/:cfgCluster", h.UpdateConfig)
+	g.POST("/:space/:name/configs/:cfgCluster/deploy", h.DeployConfig)
+	g.POST("/:space/:name/configs/:cfgCluster/sync", h.SyncConfig)
+	g.POST("/:space/:name/configs/:cfgCluster/offline", h.OfflineConfig)
+	g.POST("/:space/:name/configs/:cfgCluster/resolve", h.ResolveConfig)
+	g.GET("/:space/:name/configs/:cfgCluster/status", h.GetStatus)
+	g.GET("/:space/:name/configs/:cfgCluster/resources", h.GetResources)
+	g.POST("/:space/:name/configs/:cfgCluster/restart", h.RestartConfig)
+	g.POST("/:space/:name/configs/:cfgCluster/pods/:pod/restart", h.RestartPod)
+	g.POST("/:space/:name/configs/:cfgCluster/pods/:pod/force-delete", h.ForceDeletePod)
+	g.GET("/:space/:name/configs/:cfgCluster/revisions", h.ListRevisions)
+	g.GET("/:space/:name/configs/:cfgCluster/revisions/:rev", h.GetRevision)
+	g.POST("/:space/:name/configs/:cfgCluster/rollback", h.RollbackConfig)
 }
 
 // authorize runs the module-side permission check and writes the 403 response
@@ -114,17 +114,17 @@ func (h *Handler) fail(c *gin.Context, status int, err error, message string) {
 	c.JSON(status, gin.H{"error": message})
 }
 
-// findApp loads the app by name with its configs preloaded.
-func (h *Handler) findApp(name string) (*store.App, error) {
+// findApp loads the app by (space, name) with its configs preloaded.
+func (h *Handler) findApp(space, name string) (*store.App, error) {
 	var app store.App
-	if err := h.store.DB().Preload("Configs").Where("name = ?", name).First(&app).Error; err != nil {
+	if err := h.store.DB().Preload("Configs").Where("namespace = ? AND name = ?", space, name).First(&app).Error; err != nil {
 		return nil, err
 	}
 	return &app, nil
 }
 
 func (h *Handler) findAppOr404(c *gin.Context) *store.App {
-	app, err := h.findApp(c.Param("name"))
+	app, err := h.findApp(c.Param("space"), c.Param("name"))
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		h.fail(c, http.StatusNotFound, nil, "application not found")
 		return nil

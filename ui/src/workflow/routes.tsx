@@ -16,21 +16,21 @@ export const workflowRoutes: RouteObject[] = [
     element: <WorkflowListPage />,
   },
   {
-    // Static segment must win over 'workflows/:name'; react-router ranks it
+    // Static segment must win over 'workflows/:id'; react-router ranks it
     // higher, but keep the declaration order explicit as well.
     path: 'workflows/new',
     element: <WorkflowEditorPage />,
   },
   {
-    path: 'workflows/:name',
+    path: 'workflows/:id',
     element: <WorkflowEditorPage />,
   },
   {
-    path: 'workflows/:name/runs',
+    path: 'workflows/:id/runs',
     element: <WorkflowRunsPage />,
   },
   {
-    path: 'workflows/:name/runs/:runId',
+    path: 'workflows/:id/runs/:runId',
     element: <WorkflowRunPage />,
   },
 ]

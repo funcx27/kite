@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
+  ApplicationApiError,
   createApplication,
   previewApplicationRender,
   updateApplication,
@@ -179,6 +180,7 @@ export function ApplicationWizard({
   // Cluster mode pulls the config itself: form prefill from the extracted
   // spec, YAML mode from the manifests, saves under the latestRev lock.
   const { data: config } = useApplicationConfig(
+    mode === 'cluster' && open ? app?.namespace : undefined,
     mode === 'cluster' && open ? app?.name : undefined,
     mode === 'cluster' && open ? cluster : undefined
   )
@@ -382,7 +384,7 @@ export function ApplicationWizard({
     setError('')
     try {
       if (mode === 'draft' && app) {
-        const updated = await updateApplication(app.name, {
+        const updated = await updateApplication(app.namespace, app.name, {
           description: state.description,
           spec,
         })
@@ -425,7 +427,13 @@ export function ApplicationWizard({
         onSaved?.(created)
       }
     } catch (err) {
-      setError(translateError(err, t))
+      // 409 = a same-named app already exists in the target space; the raw
+      // backend message is English-only, so map it to a translated hint.
+      setError(
+        err instanceof ApplicationApiError && err.status === 409
+          ? t('applications.wizard.nameExists')
+          : translateError(err, t)
+      )
     } finally {
       setSaving(false)
     }

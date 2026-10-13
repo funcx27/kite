@@ -1,9 +1,13 @@
 // Workflow list (design §11): name/description column, latest-run column with
-// status chip, row actions (run with param form / runs list / webhook token /
-// edit / delete). The list API carries no trigger config, so trigger badges
-// live in the editor only.
+// status chip, high-frequency row actions inline (run / runs list / copy)
+// plus a dropdown for the rest (webhook token / edit / delete). The list API
+// carries no trigger config, so trigger badges live in the editor only. The
+// header space picker scopes the list: a selected space shows workflows that
+// belong to it (bound or deploy-referenced); "all spaces" aggregates
+// everything, including unbound platform workflows.
 import { useMemo, useState } from 'react'
 import { useSpaces, useSyncSpaceParam } from '@/platform/space-context'
+import { Copy, History, Play } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
@@ -47,6 +51,30 @@ function aggregateUnique(
   return [...new Set(workflows.flatMap((wf) => pick(wf) ?? []))].sort()
 }
 
+// Spaces a workflow belongs to: bound spaces (visibility metadata) first,
+// then the spaces of its deploy targets ("space/name" composites → the space
+// half), deduped.
+function workflowSpaces(wf: WorkflowListItem): string[] {
+  return [
+    ...new Set([
+      ...(wf.spaces ?? []),
+      ...(wf.apps ?? []).map((composite) => composite.split('/')[0]),
+    ]),
+  ]
+}
+
+// "All spaces" aggregates workflows from every space: prefix space-bound
+// rows with their space to keep them distinguishable; a specific-space view
+// and platform workflows show the bare name.
+function displayName(
+  wf: WorkflowListItem,
+  currentSpace: string | null
+): string {
+  if (currentSpace !== null) return wf.name
+  const space = workflowSpaces(wf)[0]
+  return space ? `${space}/${wf.name}` : wf.name
+}
+
 export function WorkflowListPage() {
   const { t } = useTranslation()
   usePageTitle(t('workflow.title'))
@@ -68,6 +96,7 @@ function WorkflowList() {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const { currentSpace } = useSpaces()
+  // Mirror the active space into ?space= so a scoped list view is shareable.
   useSyncSpaceParam()
   const { data: workflows, isLoading } = useWorkflows()
   const [search, setSearch] = useState('')
@@ -77,64 +106,59 @@ function WorkflowList() {
   // Run-status filter matches the latest run; 'none' = no run yet.
   const [statusFilter, setStatusFilter] = useState('all')
   const [runTarget, setRunTarget] = useState<WorkflowListItem | null>(null)
-  const [tokenTarget, setTokenTarget] = useState<string | null>(null)
+  const [tokenTarget, setTokenTarget] = useState<number | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<WorkflowListItem | null>(
     null
   )
   const deleteMutation = useDeleteWorkflowMutation()
 
-  const spaceFiltered = useMemo(
-    () =>
-      (workflows ?? []).filter(
-        (wf) => currentSpace === null || wf.namespace === currentSpace
-      ),
-    [workflows, currentSpace]
-  )
+  const workflowList = useMemo(() => workflows ?? [], [workflows])
   // Filter options aggregate the current list's deploy targets (deduped and
   // sorted), so entries never appear that no visible workflow matches.
   const appOptions = useMemo(
-    () => aggregateUnique(spaceFiltered, (wf) => wf.apps),
-    [spaceFiltered]
+    () => aggregateUnique(workflowList, (wf) => wf.apps),
+    [workflowList]
   )
   const clusterOptions = useMemo(
-    () => aggregateUnique(spaceFiltered, (wf) => wf.clusters),
-    [spaceFiltered]
+    () => aggregateUnique(workflowList, (wf) => wf.clusters),
+    [workflowList]
   )
 
   // Latest runs fetched once per visible workflow (parent-level map) so the
   // status filter and the 最近运行 column share the same requests.
-  const runNames = useMemo(
-    () => spaceFiltered.map((wf) => wf.name),
-    [spaceFiltered]
-  )
-  const { latestByName, pendingNames } = useLatestRuns(runNames)
+  const runIds = useMemo(() => workflowList.map((wf) => wf.id), [workflowList])
+  const { latestById, pendingIds } = useLatestRuns(runIds)
 
+  // A selected header space scopes the list to workflows that belong to it
+  // (bound or deploy-referenced); "all spaces" shows everything.
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
-    return spaceFiltered.filter(
+    return workflowList.filter(
       (wf) =>
         (appFilter === 'all' || (wf.apps ?? []).includes(appFilter)) &&
         (clusterFilter === 'all' ||
           (wf.clusters ?? []).includes(clusterFilter)) &&
+        (currentSpace === null || workflowSpaces(wf).includes(currentSpace)) &&
         (statusFilter === 'all' ||
-          (statusFilter === 'none' && !latestByName[wf.name]) ||
-          latestByName[wf.name]?.status === statusFilter) &&
+          (statusFilter === 'none' && !latestById[wf.id]) ||
+          latestById[wf.id]?.status === statusFilter) &&
         (q === '' ||
           wf.name.toLowerCase().includes(q) ||
           wf.description.toLowerCase().includes(q))
     )
   }, [
-    spaceFiltered,
+    workflowList,
     search,
     appFilter,
     clusterFilter,
+    currentSpace,
     statusFilter,
-    latestByName,
+    latestById,
   ])
 
   const onTriggered = (run: TriggerRunResponse) => {
     if (runTarget) {
-      navigate(`/workflows/${runTarget.name}/runs/${run.id}`)
+      navigate(`/workflows/${runTarget.id}/runs/${run.id}`)
     }
   }
 
@@ -213,19 +237,16 @@ function WorkflowList() {
             cell: ({ row }) => (
               <div className="min-w-0">
                 <Link
-                  to={`/workflows/${row.original.name}`}
+                  to={`/workflows/${row.original.id}`}
                   className="font-mono font-medium hover:underline"
                 >
-                  {row.original.name}
+                  {displayName(row.original, currentSpace)}
                 </Link>
-                <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <span className="inline-flex items-center rounded-full border bg-muted/40 px-1.5 py-0.5">
-                    {row.original.namespace}
-                  </span>
-                  <span className="truncate">
-                    {row.original.description || '—'}
-                  </span>
-                </div>
+                {row.original.description && (
+                  <div className="mt-0.5 truncate text-xs text-muted-foreground">
+                    {row.original.description}
+                  </div>
+                )}
               </div>
             ),
           },
@@ -234,9 +255,9 @@ function WorkflowList() {
             header: t('workflow.list.latestRun'),
             cell: ({ row }) => (
               <LatestRunCell
-                name={row.original.name}
-                run={latestByName[row.original.name]}
-                loading={pendingNames.includes(row.original.name)}
+                id={row.original.id}
+                run={latestById[row.original.id]}
+                loading={pendingIds.includes(row.original.id)}
               />
             ),
           },
@@ -259,32 +280,54 @@ function WorkflowList() {
             ),
           },
         ]}
+        actionCellPrefix={(wf) => (
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              aria-label={t('workflow.list.run')}
+              title={t('workflow.list.run')}
+              onClick={() => setRunTarget(wf)}
+            >
+              <Play className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              aria-label={t('workflow.list.viewRuns')}
+              title={t('workflow.list.viewRuns')}
+              onClick={() => navigate(`/workflows/${wf.id}/runs`)}
+            >
+              <History className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              aria-label={t('workflow.list.copyWorkflow')}
+              title={t('workflow.list.copyWorkflow')}
+              onClick={() => navigate(`/workflows/new?copy=${wf.id}`)}
+            >
+              <Copy className="h-4 w-4" />
+            </Button>
+          </div>
+        )}
         actions={
           [
             {
-              label: t('workflow.list.run'),
-              onClick: (wf) => setRunTarget(wf),
-            },
-            {
-              label: t('workflow.list.viewRuns'),
-              onClick: (wf) => navigate(`/workflows/${wf.name}/runs`),
-            },
-            {
               label: t('workflow.list.webhookToken'),
-              onClick: (wf) => setTokenTarget(wf.name),
+              onClick: (wf: WorkflowListItem) => setTokenTarget(wf.id),
             },
             {
               label: t('workflow.list.edit'),
-              onClick: (wf) => navigate(`/workflows/${wf.name}`),
-            },
-            {
-              label: t('workflow.list.copyWorkflow'),
-              onClick: (wf) =>
-                navigate(`/workflows/new?copy=${encodeURIComponent(wf.name)}`),
+              onClick: (wf: WorkflowListItem) =>
+                navigate(`/workflows/${wf.id}`),
             },
             {
               label: t('common.actions.delete'),
-              onClick: (wf) => setDeleteTarget(wf),
+              onClick: (wf: WorkflowListItem) => setDeleteTarget(wf),
             },
           ] as Action<WorkflowListItem>[]
         }
@@ -303,13 +346,14 @@ function WorkflowList() {
 
       {runTarget && (
         <RunParamsDialogHost
+          id={runTarget.id}
           name={runTarget.name}
           onOpenChange={() => setRunTarget(null)}
           onTriggered={onTriggered}
         />
       )}
       <WebhookTokenDialog
-        name={tokenTarget ?? ''}
+        id={tokenTarget ?? 0}
         open={tokenTarget !== null}
         onOpenChange={(open) => !open && setTokenTarget(null)}
       />
@@ -338,7 +382,7 @@ function WorkflowList() {
               disabled={deleteMutation.isPending}
               onClick={() => {
                 if (!deleteTarget) return
-                deleteMutation.mutate(deleteTarget.name, {
+                deleteMutation.mutate(deleteTarget.id, {
                   onSuccess: () => {
                     toast.success(t('workflow.list.deleted'))
                     setDeleteTarget(null)
@@ -359,17 +403,20 @@ function WorkflowList() {
 // Manual trigger needs the params schema, which the list API omits; the
 // dialog host loads the detail for the picked workflow.
 function RunParamsDialogHost({
+  id,
   name,
   onOpenChange,
   onTriggered,
 }: {
+  id: number
   name: string
   onOpenChange: (open: boolean) => void
   onTriggered: (run: TriggerRunResponse) => void
 }) {
-  const { data: workflow } = useWorkflow(name)
+  const { data: workflow } = useWorkflow(id)
   return (
     <RunParamsDialog
+      id={id}
       name={name}
       params={workflow?.params ?? []}
       open={workflow !== undefined}
@@ -381,11 +428,11 @@ function RunParamsDialogHost({
 
 // Renders from the parent's latest-run map (useLatestRuns); no query of its own.
 function LatestRunCell({
-  name,
+  id,
   run,
   loading,
 }: {
-  name: string
+  id: number
   run: RunSummary | undefined
   loading: boolean
 }) {
@@ -404,7 +451,7 @@ function LatestRunCell({
   return (
     <div className="flex flex-col gap-0.5">
       <Link
-        to={`/workflows/${name}/runs/${run.id}`}
+        to={`/workflows/${id}/runs/${run.id}`}
         className="inline-flex items-center gap-1.5 text-sm hover:underline"
       >
         <RunStatusChip status={run.status} />

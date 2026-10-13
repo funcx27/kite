@@ -182,18 +182,55 @@ function UsageCells({ quota }: { quota: SpaceQuotaStatus }) {
     unit: string,
     format: (n: number) => string,
     over: boolean
-  ) => (
-    <TableCell
-      className={
-        over ? 'font-mono text-amber-600 dark:text-amber-400' : 'font-mono'
-      }
-      title={over ? t('applications.spaceQuota.overCapacity') : undefined}
-    >
-      {allocated === undefined
-        ? '—'
-        : `${format(used ?? 0)}/${format(allocated)} ${unit}`}
-    </TableCell>
-  )
+  ) => {
+    if (allocated === undefined) {
+      return (
+        <TableCell
+          className={
+            over ? 'font-mono text-amber-600 dark:text-amber-400' : 'font-mono'
+          }
+          title={over ? t('applications.spaceQuota.overCapacity') : undefined}
+        >
+          —
+        </TableCell>
+      )
+    }
+    // No percent/bar until the controller reports usage (e.g. a brand-new
+    // quota); >100% is a hard-limit overrun and tints amber.
+    const pct =
+      used !== undefined && allocated > 0
+        ? Math.round((used / allocated) * 100)
+        : null
+    return (
+      <TableCell
+        className={
+          over ? 'font-mono text-amber-600 dark:text-amber-400' : 'font-mono'
+        }
+        title={over ? t('applications.spaceQuota.overCapacity') : undefined}
+      >
+        <div className="flex flex-col gap-1">
+          <span>
+            {format(used ?? 0)}/{format(allocated)} {unit}
+            {pct !== null && (
+              <span className="ml-1.5 text-xs text-muted-foreground">
+                ({pct}%)
+              </span>
+            )}
+          </span>
+          {pct !== null && (
+            <div className="h-1 w-24 overflow-hidden rounded-full bg-muted">
+              <div
+                className={`h-full rounded-full ${
+                  pct > 100 ? 'bg-amber-500' : 'bg-primary'
+                }`}
+                style={{ width: `${Math.min(pct, 100)}%` }}
+              />
+            </div>
+          )}
+        </div>
+      </TableCell>
+    )
+  }
   const cores = cpuQuantityToCores(quota.cpu)
   const gib = memoryQuantityToGiB(quota.memory)
   return (

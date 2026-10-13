@@ -67,6 +67,9 @@ type BuildProps struct {
 	// registry push auth; empty = anonymous.
 	RegistryCredentialRef string `json:"registryCredentialRef,omitempty"`
 	Provider              string `json:"provider,omitempty"`
+	// Space selects the build-cluster default row (build_settings) when
+	// Provider is empty; the empty string resolves to the global default row.
+	Space string `json:"space,omitempty"`
 }
 
 // GitSource points the build at a git checkout.
@@ -83,6 +86,9 @@ type HTTPSource struct {
 
 // DeployProps is the deploy-app payload (design §5.2).
 type DeployProps struct {
+	// Space is the owning space of App; application identity is the
+	// (space, name) pair, so it is required.
+	Space   string `json:"space"`
 	App     string `json:"app"`
 	Cluster string `json:"cluster"`
 	Image   string `json:"image,omitempty"` // empty = deploy the current config

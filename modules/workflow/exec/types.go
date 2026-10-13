@@ -51,6 +51,8 @@ type HTTPSource struct {
 // application (design §5.2). OperatorID is the run's RBAC identity — the
 // deploy executor enforces per-document permissions with it (design §7).
 type DeployRequest struct {
+	// Space is the owning space of App; with App it names the target.
+	Space   string `json:"space"`
 	App     string `json:"app"`
 	Cluster string `json:"cluster"`
 	Image   string `json:"image,omitempty"` // empty = deploy the current config

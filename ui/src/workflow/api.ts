@@ -83,8 +83,10 @@ export const fetchWorkflows = () =>
     '/workflows'
   )
 
-export const fetchWorkflow = (name: string) =>
-  workflowRequest<Workflow>(`/workflows/${encodeURIComponent(name)}`)
+// The workflow identity is the numeric ID (names are reusable display
+// labels), so every per-workflow path addresses it by /workflows/:id.
+export const fetchWorkflow = (id: number) =>
+  workflowRequest<Workflow>(`/workflows/${id}`)
 
 export const createWorkflow = (req: CreateWorkflowRequest) =>
   workflowRequest<Workflow>('/workflows', {
@@ -92,47 +94,41 @@ export const createWorkflow = (req: CreateWorkflowRequest) =>
     body: JSON.stringify(req),
   })
 
-export const updateWorkflow = (name: string, req: UpdateWorkflowRequest) =>
-  workflowRequest<Workflow>(`/workflows/${encodeURIComponent(name)}`, {
+export const updateWorkflow = (id: number, req: UpdateWorkflowRequest) =>
+  workflowRequest<Workflow>(`/workflows/${id}`, {
     method: 'PUT',
     body: JSON.stringify(req),
   })
 
-export const deleteWorkflow = (name: string) =>
-  workflowRequest<{ message: string }>(
-    `/workflows/${encodeURIComponent(name)}`,
-    {
-      method: 'DELETE',
-    }
-  )
+export const deleteWorkflow = (id: number) =>
+  workflowRequest<{ message: string }>(`/workflows/${id}`, {
+    method: 'DELETE',
+  })
 
-export const fetchWorkflowRevisions = (name: string) =>
+export const fetchWorkflowRevisions = (id: number) =>
   workflowRequest<{ revisions: RevisionSummary[] }>(
-    `/workflows/${encodeURIComponent(name)}/revisions`
+    `/workflows/${id}/revisions`
   )
 
-export const fetchWebhookToken = (name: string) =>
-  workflowRequest<{ token: string }>(
-    `/workflows/${encodeURIComponent(name)}/webhook-token`
-  )
+export const fetchWebhookToken = (id: number) =>
+  workflowRequest<{ token: string }>(`/workflows/${id}/webhook-token`)
 
-export const resetWebhookToken = (name: string) =>
-  workflowRequest<{ token: string }>(
-    `/workflows/${encodeURIComponent(name)}/webhook-token/reset`,
-    { method: 'POST' }
-  )
+export const resetWebhookToken = (id: number) =>
+  workflowRequest<{ token: string }>(`/workflows/${id}/webhook-token/reset`, {
+    method: 'POST',
+  })
 
 // ── Runs ──
 
-export const triggerRun = (name: string, params: Record<string, unknown>) =>
-  workflowRequest<TriggerRunResponse>(
-    `/workflows/${encodeURIComponent(name)}/runs`,
-    { method: 'POST', body: JSON.stringify({ params }) }
-  )
+export const triggerRun = (id: number, params: Record<string, unknown>) =>
+  workflowRequest<TriggerRunResponse>(`/workflows/${id}/runs`, {
+    method: 'POST',
+    body: JSON.stringify({ params }),
+  })
 
-export const fetchRuns = (name: string, limit = 50) =>
+export const fetchRuns = (id: number, limit = 50) =>
   workflowRequest<{ runs: RunSummary[]; total: number }>(
-    `/workflows/${encodeURIComponent(name)}/runs?limit=${limit}`
+    `/workflows/${id}/runs?limit=${limit}`
   )
 
 export const fetchRun = (runId: number | string) =>
@@ -287,11 +283,10 @@ export const setBuildProviderEnabled = (name: string, enabled: boolean) =>
 const workflowKeys = {
   all: ['workflow'] as const,
   list: () => [...workflowKeys.all, 'list'] as const,
-  detail: (name: string) => [...workflowKeys.all, 'detail', name] as const,
-  runs: (name: string) => [...workflowKeys.all, 'runs', name] as const,
+  detail: (id: number) => [...workflowKeys.all, 'detail', id] as const,
+  runs: (id: number) => [...workflowKeys.all, 'runs', id] as const,
   run: (id: number) => [...workflowKeys.all, 'run', id] as const,
-  revisions: (name: string) =>
-    [...workflowKeys.all, 'revisions', name] as const,
+  revisions: (id: number) => [...workflowKeys.all, 'revisions', id] as const,
   credentials: () => [...workflowKeys.all, 'credentials'] as const,
   directory: () => [...workflowKeys.all, 'user-directory'] as const,
   buildSettings: () => [...workflowKeys.all, 'build-settings'] as const,
@@ -306,48 +301,48 @@ export const useWorkflows = () =>
     select: (data) => data.workflows,
   })
 
-export const useWorkflow = (name: string | undefined) =>
+export const useWorkflow = (id: number | undefined) =>
   useQuery({
-    queryKey: workflowKeys.detail(name ?? ''),
-    queryFn: () => fetchWorkflow(name as string),
-    enabled: !!name,
+    queryKey: workflowKeys.detail(id ?? 0),
+    queryFn: () => fetchWorkflow(id as number),
+    enabled: id !== undefined,
   })
 
-export const useWorkflowRevisions = (name: string | undefined) =>
+export const useWorkflowRevisions = (id: number | undefined) =>
   useQuery({
-    queryKey: workflowKeys.revisions(name ?? ''),
-    queryFn: () => fetchWorkflowRevisions(name as string),
-    enabled: !!name,
+    queryKey: workflowKeys.revisions(id ?? 0),
+    queryFn: () => fetchWorkflowRevisions(id as number),
+    enabled: id !== undefined,
   })
 
-export const useRuns = (name: string | undefined, limit = 50) =>
+export const useRuns = (id: number | undefined, limit = 50) =>
   useQuery({
-    queryKey: [...workflowKeys.runs(name ?? ''), limit],
-    queryFn: () => fetchRuns(name as string, limit),
-    enabled: !!name,
+    queryKey: [...workflowKeys.runs(id ?? 0), limit],
+    queryFn: () => fetchRuns(id as number, limit),
+    enabled: id !== undefined,
   })
 
 // Latest run per workflow for the list page (最近运行 column and the
 // run-status filter), batched through useQueries instead of one query per
-// row. Names still loading appear in pendingNames so cells keep their
-// placeholder; a name without runs maps to undefined.
-export const useLatestRuns = (names: string[]) =>
+// row. IDs still loading appear in pendingIds so cells keep their
+// placeholder; a workflow without runs maps to undefined.
+export const useLatestRuns = (ids: number[]) =>
   useQueries({
-    queries: names.map((name) => ({
-      queryKey: [...workflowKeys.runs(name), 'latest'],
-      queryFn: () => fetchRuns(name, 1),
+    queries: ids.map((id) => ({
+      queryKey: [...workflowKeys.runs(id), 'latest'],
+      queryFn: () => fetchRuns(id, 1),
     })),
     combine: (results) => {
-      const latestByName: Record<string, RunSummary | undefined> = {}
-      const pendingNames: string[] = []
-      names.forEach((name, i) => {
+      const latestById: Record<number, RunSummary | undefined> = {}
+      const pendingIds: number[] = []
+      ids.forEach((id, i) => {
         if (results[i]?.isPending) {
-          pendingNames.push(name)
+          pendingIds.push(id)
         } else {
-          latestByName[name] = results[i]?.data?.runs[0]
+          latestById[id] = results[i]?.data?.runs[0]
         }
       })
-      return { latestByName, pendingNames }
+      return { latestById, pendingIds }
     },
   })
 
@@ -398,14 +393,14 @@ export const useSaveWorkflowMutation = () => {
   const invalidate = useInvalidateWorkflow()
   return useMutation({
     mutationFn: ({
-      name,
+      id,
       req,
     }: {
-      name?: string
+      id?: number
       req: CreateWorkflowRequest | UpdateWorkflowRequest
     }) =>
-      name
-        ? updateWorkflow(name, req as UpdateWorkflowRequest)
+      id !== undefined
+        ? updateWorkflow(id, req as UpdateWorkflowRequest)
         : createWorkflow(req as CreateWorkflowRequest),
     onSuccess: invalidate,
   })
@@ -419,12 +414,12 @@ export const useDeleteWorkflowMutation = () => {
   })
 }
 
-export const useTriggerRunMutation = (name: string) => {
+export const useTriggerRunMutation = (id: number) => {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (params: Record<string, unknown>) => triggerRun(name, params),
+    mutationFn: (params: Record<string, unknown>) => triggerRun(id, params),
     onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: workflowKeys.runs(name) }),
+      queryClient.invalidateQueries({ queryKey: workflowKeys.runs(id) }),
   })
 }
 

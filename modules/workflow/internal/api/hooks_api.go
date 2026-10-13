@@ -75,7 +75,6 @@ func (h *Handler) WebhookTrigger(c *gin.Context) {
 	h.deps.RecordHistory(store.HistoryEntry{
 		ResourceType: authzResource,
 		ResourceName: fmt.Sprintf("%s#%d", wf.Name, res.RunNumber),
-		Namespace:    wf.Namespace,
 		Operation:    "trigger-webhook",
 		YAML:         string(detail),
 		Success:      true,
@@ -97,7 +96,7 @@ func (h *Handler) workflowByToken(c *gin.Context, token string) (*store.Workflow
 	}
 	var workflows []store.Workflow
 	if err := h.store.DB().
-		Select("id", "name", "namespace", "current_rev", "webhook_token").
+		Select("id", "name", "current_rev", "webhook_token").
 		Find(&workflows).Error; err != nil {
 		slog.Error("workflow: webhook token lookup failed", "err", err)
 		c.Status(http.StatusInternalServerError)

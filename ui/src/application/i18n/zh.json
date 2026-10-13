@@ -31,7 +31,8 @@
       "quotaRequired": "请为每个所选集群填写大于 0 的 CPU（core）与内存（GiB）配额。",
       "createSuccess": "已在集群 {{clusters}} 创建空间 {{name}}",
       "createPartial": "已在 {{succeeded}} 创建空间 {{name}}；以下集群创建失败：{{failed}}（已成功的集群保留，不回滚）",
-      "createFailed": "创建空间 {{name}} 失败：{{failed}}"
+      "createFailed": "创建空间 {{name}} 失败：{{failed}}",
+      "lockedOnWorkflowEditor": "编辑流水线时空间已锁定（跟随该流水线的绑定空间）"
     }
   },
   "applications": {
@@ -280,6 +281,7 @@
       "workloadTypeLocked": "已部署后类型锁定：请先「下线」，修改后再发布。",
       "replicas": "副本数",
       "invalidName": "名称需为小写 DNS 标签：小写字母、数字和中划线，最长 63 个字符。",
+      "nameExists": "此空间下已存在同名应用。",
       "previewPlaceholderHint": "返回第 1 步「基本信息」填写应用名称后，即可渲染预览并创建应用。",
       "imageRequired": "镜像必填",
       "limitsRequired": "请填写 CPU 和内存资源限制",

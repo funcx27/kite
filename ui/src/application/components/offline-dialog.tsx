@@ -57,7 +57,11 @@ export function OfflineDialog({
       // A 200 always means everything was deleted (the backend answers 409
       // and keeps the config when any cluster deletion failed), so the
       // success result needs no partial-failure branch here.
-      const result = await offlineApplicationConfig(app.name, cluster)
+      const result = await offlineApplicationConfig(
+        app.namespace,
+        app.name,
+        cluster
+      )
       await queryClient.invalidateQueries({ queryKey: ['applications'] })
       toast.success(
         result.clusterGone

@@ -20,7 +20,7 @@ export const applicationRoutes: RouteObject[] = [
     ),
   },
   {
-    path: 'applications/:name',
+    path: 'applications/:space/:name',
     element: (
       <ApplicationModeRoute>
         <ApplicationDetailPage />
@@ -28,7 +28,7 @@ export const applicationRoutes: RouteObject[] = [
     ),
   },
   {
-    path: 'applications/:name/clusters/:cluster',
+    path: 'applications/:space/:name/clusters/:cluster',
     element: (
       <ApplicationModeRoute>
         <ApplicationDetailPage />
@@ -36,7 +36,7 @@ export const applicationRoutes: RouteObject[] = [
     ),
   },
   {
-    path: 'applications/:name/clusters/:cluster/pods/:pod',
+    path: 'applications/:space/:name/clusters/:cluster/pods/:pod',
     element: (
       <ApplicationModeRoute>
         <ApplicationPodPage />

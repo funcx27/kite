@@ -100,7 +100,7 @@ export function ActionTable<T>({
       return [...columns, actionColumn]
     }
     return columns
-  }, [actions, columns, t])
+  }, [actions, columns, actionCellPrefix, t])
 
   const table = useReactTable<T>({
     data,
@@ -117,7 +117,13 @@ export function ActionTable<T>({
               {headerGroup.headers.map((header) => (
                 <TableHead
                   key={header.id}
-                  className={header.id === 'actions' ? 'w-14 text-right' : ''}
+                  className={
+                    header.id === 'actions'
+                      ? actionCellPrefix
+                        ? 'text-right'
+                        : 'w-14 text-right'
+                      : ''
+                  }
                 >
                   {renderHeaderCell(header)}
                 </TableHead>
@@ -135,7 +141,11 @@ export function ActionTable<T>({
                 <TableCell
                   key={cell.id}
                   className={
-                    cell.column.id === 'actions' ? 'w-14 text-right' : ''
+                    cell.column.id === 'actions'
+                      ? actionCellPrefix
+                        ? 'text-right'
+                        : 'w-14 text-right'
+                      : ''
                   }
                 >
                   {cell.column.columnDef.cell

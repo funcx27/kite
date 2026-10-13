@@ -218,12 +218,12 @@ func (h *Handler) CreateApp(c *gin.Context) {
 	}
 	db := h.store.DB()
 	var count int64
-	if err := db.Model(&store.App{}).Where("name = ?", req.Name).Count(&count).Error; err != nil {
+	if err := db.Model(&store.App{}).Where("namespace = ? AND name = ?", req.Namespace, req.Name).Count(&count).Error; err != nil {
 		h.fail(c, http.StatusInternalServerError, err, "")
 		return
 	}
 	if count > 0 {
-		h.fail(c, http.StatusConflict, nil, "application already exists")
+		h.fail(c, http.StatusConflict, nil, "application already exists in this space")
 		return
 	}
 	app := store.App{Name: req.Name, Namespace: req.Namespace, Description: req.Description, Spec: store.JSONField(req.Spec)}
@@ -269,7 +269,7 @@ func (h *Handler) createAndDeployApp(c *gin.Context, id identity, app *store.App
 		return err
 	})
 	if isConcurrentWriteError(txErr) {
-		h.fail(c, http.StatusConflict, nil, "application already exists")
+		h.fail(c, http.StatusConflict, nil, "application already exists in this space")
 		return
 	}
 	if txErr != nil {

@@ -14,7 +14,6 @@ import type {
   ApplicationConfigSummary,
   ApplicationPendingChange,
 } from '@/application/types'
-import { useSpaces, withSpaceParam } from '@/platform/space-context'
 import { useWorkflows } from '@/workflow/api'
 import * as yaml from 'js-yaml'
 import { useTranslation } from 'react-i18next'
@@ -35,14 +34,18 @@ type DialogName = 'deploy' | 'deploy-copy' | 'offline' | 'history' | 'wizard'
 // rollback persists and publishes in one confirm.
 export function ApplicationDetailPage() {
   const { t } = useTranslation()
-  const { name, cluster: clusterParam } = useParams<{
+  const {
+    space,
+    name,
+    cluster: clusterParam,
+  } = useParams<{
+    space: string
     name: string
     cluster: string
   }>()
   const navigate = useNavigate()
   const { currentCluster } = useCluster()
-  const { currentSpace } = useSpaces()
-  const { data: app, isLoading, error } = useApplication(name)
+  const { data: app, isLoading, error } = useApplication(space, name)
   usePageTitle(app ? `${app.namespace} / ${app.name}` : t('nav.applications'))
 
   const [openDialog, setOpenDialog] = useState<DialogName | null>(null)
@@ -56,11 +59,6 @@ export function ApplicationDetailPage() {
     useState<ApplicationPendingChange | null>(null)
 
   const configs = useMemo(() => app?.configs ?? [], [app])
-  // An application belongs to the space it was created in (its namespace);
-  // outside the active space the detail view is out of scope. The global
-  // view (currentSpace null) sees every app.
-  const outOfSpace =
-    app !== undefined && currentSpace !== null && app.namespace !== currentSpace
   // The active cluster is a URL path segment (app → cluster → pod hierarchy),
   // so views are shareable; a missing or stale segment falls back to the
   // first config.
@@ -68,27 +66,19 @@ export function ApplicationDetailPage() {
     configs.find((config) => config.cluster === clusterParam) ?? configs[0]
 
   useEffect(() => {
-    if (outOfSpace || configs.length === 0) return
+    if (configs.length === 0) return
     if (clusterParam && configs.some((c) => c.cluster === clusterParam)) return
-    navigate(`/applications/${name}/clusters/${configs[0].cluster}`, {
+    navigate(`/applications/${space}/${name}/clusters/${configs[0].cluster}`, {
       replace: true,
     })
-  }, [outOfSpace, configs, clusterParam, name, navigate])
-
-  // Space gate: switching away from an app's space returns to that space's
-  // application list instead of showing a foreign app.
-  useEffect(() => {
-    if (outOfSpace) {
-      navigate(withSpaceParam('/applications', currentSpace), { replace: true })
-    }
-  }, [outOfSpace, currentSpace, navigate])
+  }, [configs, clusterParam, space, name, navigate])
 
   // setActiveTab moves between cluster routes; an empty value drops back to
   // the bare app route and lets the effect above pick the first config.
   const setActiveTab = (cluster: string) =>
     cluster
-      ? navigate(`/applications/${name}/clusters/${cluster}`)
-      : navigate(`/applications/${name}`, { replace: true })
+      ? navigate(`/applications/${space}/${name}/clusters/${cluster}`)
+      : navigate(`/applications/${space}/${name}`, { replace: true })
 
   const undeployed = configs.length === 0
 
@@ -111,11 +101,6 @@ export function ApplicationDetailPage() {
         {t('applications.detail.notFound', { name: name ?? '' })}
       </div>
     )
-  }
-
-  // Redirecting out of scope: render nothing so the foreign app never paints.
-  if (outOfSpace) {
-    return null
   }
 
   return (
@@ -314,7 +299,11 @@ function UnlinkedClusterPanel({
 }) {
   const { t } = useTranslation()
   const [viewYaml, setViewYaml] = useState(false)
-  const { data: detail } = useApplicationConfig(app.name, config.cluster)
+  const { data: detail } = useApplicationConfig(
+    app.namespace,
+    app.name,
+    config.cluster
+  )
 
   return (
     <div className="flex flex-col items-center gap-2 rounded-xl border bg-card px-6 py-16 text-center">
@@ -352,8 +341,9 @@ function UnlinkedClusterPanel({
 }
 
 // Related workflows: workflows whose deploy-app nodes target this app
-// (aggregated server-side into WorkflowListItem.apps). Deliberately light —
-// an editor link per workflow plus a runs-list link, no run data fetched.
+// (aggregated server-side into WorkflowListItem.apps as "space/name"
+// composites). Deliberately light — an editor link per workflow plus a
+// runs-list link, no run data fetched.
 function RelatedWorkflows({
   app,
   cluster,
@@ -365,12 +355,18 @@ function RelatedWorkflows({
   const navigate = useNavigate()
   const { data: workflows, isLoading } = useWorkflows()
   const related = useMemo(
-    () => (workflows ?? []).filter((wf) => (wf.apps ?? []).includes(app.name)),
-    [workflows, app.name]
+    () =>
+      (workflows ?? []).filter((wf) =>
+        (wf.apps ?? []).includes(`${app.namespace}/${app.name}`)
+      ),
+    [workflows, app.namespace, app.name]
   )
 
   const createWorkflow = () => {
-    const params = new URLSearchParams({ fromApp: app.name })
+    const params = new URLSearchParams({
+      fromApp: app.name,
+      fromSpace: app.namespace,
+    })
     if (cluster) params.set('cluster', cluster)
     navigate(`/workflows/new?${params.toString()}`)
   }
@@ -402,7 +398,7 @@ function RelatedWorkflows({
             >
               <div className="min-w-0">
                 <Link
-                  to={`/workflows/${wf.name}`}
+                  to={`/workflows/${wf.id}`}
                   className="font-mono text-sm font-medium hover:underline"
                 >
                   {wf.name}
@@ -414,7 +410,7 @@ function RelatedWorkflows({
                 )}
               </div>
               <Link
-                to={`/workflows/${wf.name}/runs`}
+                to={`/workflows/${wf.id}/runs`}
                 className="shrink-0 text-xs text-muted-foreground hover:text-foreground hover:underline"
               >
                 {t('applications.detail.workflowRuns')}

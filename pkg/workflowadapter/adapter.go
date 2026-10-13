@@ -361,7 +361,7 @@ func (d *Deps) DeployApp(ctx context.Context, req exec.DeployRequest, onLog func
 	if d.app == nil {
 		return exec.DeployResult{}, fmt.Errorf("application module is not wired: deploy nodes cannot run")
 	}
-	out, err := application.DeployWithImage(ctx, d.app, req.App, req.Cluster, req.Image, req.RegistryCredentialRef, req.OperatorID, req.DryRun, onLog)
+	out, err := application.DeployWithImage(ctx, d.app, req.Space, req.App, req.Cluster, req.Image, req.RegistryCredentialRef, req.OperatorID, req.DryRun, onLog)
 	if err != nil {
 		var df *application.DriftError
 		if errors.As(err, &df) {
@@ -371,16 +371,16 @@ func (d *Deps) DeployApp(ctx context.Context, req exec.DeployRequest, onLog func
 			for _, doc := range df.Docs {
 				fmt.Fprintf(&b, "\n  %s/%s/%s: %s", doc.Kind, doc.Namespace, doc.Name, strings.Join(doc.Paths, ", "))
 			}
-			return exec.DeployResult{}, fmt.Errorf("deploy app %q on cluster %q: %w%s",
-				req.App, req.Cluster, err, b.String())
+			return exec.DeployResult{}, fmt.Errorf("deploy app %s/%s on cluster %q: %w%s",
+				req.Space, req.App, req.Cluster, err, b.String())
 		}
-		return exec.DeployResult{}, fmt.Errorf("deploy app %q on cluster %q: %w", req.App, req.Cluster, err)
+		return exec.DeployResult{}, fmt.Errorf("deploy app %s/%s on cluster %q: %w", req.Space, req.App, req.Cluster, err)
 	}
 	res := exec.DeployResult{Revision: out.Revision}
 	if len(out.Preview) > 0 {
 		b, merr := json.Marshal(out.Preview)
 		if merr != nil {
-			return exec.DeployResult{}, fmt.Errorf("deploy app %q: encode preview: %w", req.App, merr)
+			return exec.DeployResult{}, fmt.Errorf("deploy app %s/%s: encode preview: %w", req.Space, req.App, merr)
 		}
 		res.Preview = b
 	}

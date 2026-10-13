@@ -1,6 +1,7 @@
 // Manual-trigger dialog: renders a form from the workflow's ParamSpec schema
 // (design §11 行内「运行」), plus the webhook token view/copy/reset dialog
-// backed by GET/POST /workflows/:name/webhook-token(/reset).
+// backed by GET/POST /workflows/:id/webhook-token(/reset). The workflow is
+// addressed by its numeric ID; the name is display only.
 import { useEffect, useState } from 'react'
 import { IconCopy, IconRefresh } from '@tabler/icons-react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -36,12 +37,14 @@ import {
 import type { ParamSpec, TriggerRunResponse } from '../types'
 
 export function RunParamsDialog({
+  id,
   name,
   params,
   open,
   onOpenChange,
   onTriggered,
 }: {
+  id: number
   name: string
   params: ParamSpec[]
   open: boolean
@@ -62,7 +65,7 @@ export function RunParamsDialog({
     }
   }, [open, params])
 
-  const trigger = useTriggerRunMutation(name)
+  const trigger = useTriggerRunMutation(id)
 
   const submit = () => {
     const payload: Record<string, unknown> = {}
@@ -189,28 +192,28 @@ export function RunParamsDialog({
 }
 
 export function WebhookTokenDialog({
-  name,
+  id,
   open,
   onOpenChange,
 }: {
-  name: string
+  id: number
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const { data, isLoading } = useQuery({
-    queryKey: ['workflow', 'webhook-token', name],
-    queryFn: () => fetchWebhookToken(name),
+    queryKey: ['workflow', 'webhook-token', id],
+    queryFn: () => fetchWebhookToken(id),
     enabled: open,
   })
 
   // Feed the reset response straight into the token query so the dialog never
   // keeps showing the invalidated old value past the 5-minute staleTime.
   const reset = useMutation({
-    mutationFn: () => resetWebhookToken(name),
+    mutationFn: () => resetWebhookToken(id),
     onSuccess: (data) =>
-      queryClient.setQueryData(['workflow', 'webhook-token', name], data),
+      queryClient.setQueryData(['workflow', 'webhook-token', id], data),
   })
 
   const webhookUrl = data?.token

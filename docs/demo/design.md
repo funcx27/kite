@@ -43,11 +43,11 @@ ui (React) ── /api/v1/applications* ──> kite routes.go（挂载点，RBA
 ## 3. 数据持久化模型
 
 ```go
-// 逻辑应用（分组 + 描述 + 创建草稿，全局唯一）
+// 逻辑应用（分组 + 描述 + 创建草稿；空间内唯一、跨空间可同名，与集群无关）
 type App struct {
     ID          uint
-    Name        string     // uniqueIndex, DNS-1123, ≤63（同时用作子资源名与 label 值）
-    Namespace   string     // 归属空间（创建时取当前空间；各 AppConfig.Namespace 的默认值）
+    Name        string     // DNS-1123, ≤63（同时用作子资源名与 label 值）；与 Namespace 组复合唯一索引 (namespace, name)
+    Namespace   string     // 归属空间 = 应用身份的 space 段（创建时取当前空间）
     Description string
     Spec        JSONField  // AppSpec：创建向导产物（草稿），见下方「AppSpec 流转」
 }
@@ -67,7 +67,7 @@ type AppConfig struct {
     ID             uint
     AppID          uint   // (AppID, Cluster) uniqueIndex
     Cluster        string // kite 集群名
-    Namespace      string
+    Namespace      string // 不变式：恒等于 App.Namespace（见下方「AppConfig.Namespace 不变式」）
     Manifests      JSONField  // 期望配置：多文档 []unstructured（表单/YAML 编辑的对象）
     LastApplied    JSONField  // 一致性锚点：上次发布/拉取后从集群读回的规范化对象
     StatusSummary  string     // synced / drift / conflict / merged / undeployed / error（详情页检测后回写）
@@ -92,7 +92,7 @@ type ConfigRevision struct {
 **关联关系（ER 视图，以 my-app 为例）**：
 
 ```
-App（应用定义 · 全局唯一 · 与集群无关）
+App（应用定义 · 空间内唯一 · 与集群无关；身份 = (Namespace, Name)）
   ID=1 · Name="my-app" · Namespace="default" · Spec=AppSpec（出生快照）
   ［data-worker：只有 App 行、无任何 AppConfig → 未部署，Spec 为活跃草稿］
         │
@@ -127,7 +127,7 @@ ConfigRevision 链（prod）      ConfigRevision 链（staging）
 
 要点：
 
-- **空间（Space）**：namespace 的产品化命名，应用归属空间（App 级默认空间，各集群配置可单独改，即 `AppConfig.Namespace`，展示名为空间）。
+- **空间（Space）**：namespace 的产品化命名，应用身份 = (space, name)：空间内唯一、跨空间可同名（复合唯一索引挡住同空间同名）。归属空间创建时取当前空间，`AppConfig.Namespace` 恒等于 `App.Namespace`（见下方「AppConfig.Namespace 不变式」，展示名为空间）。
 - **空间身份标记**：namespace 打 label `kite.application/space: "true"`；空间切换器只列出带该标记的命名空间，避免混入 kube-system 等无关空间。选 label 而非 annotation：label 支持 selector 查询（一次 List 取回全部空间）、有格式校验，且与应用的 `kite.application/name` 标记体系统一；annotation 仅作补充元数据（显示名/描述）。向导「＋ 新建空间」创建命名空间时自动打该标记。
 - **空间切换入口（唯一）**：应用列表页头、与「搜索应用」同一行（搜索框左侧），侧边栏收起时仍可见可调。弹层为空间较多设计——搜索框按子串过滤 + **定高滚动列表**（当前空间高亮并自动滚动到可见处）+「全部空间」固定项 +「＋ 新建」入口，创建命名空间时自动打标记。当前空间决定列表默认范围，**创建向导直接使用当前空间**（不提供空间选择控件）；可切「全部空间」查看聚合。前端实现为 SpaceProvider（与 ClusterProvider 同级），侧边栏不再重复提供入口以免双入口。不新增租户层级；未来若需跨 namespace 的逻辑分组，可再引入「项目」层。
 - **空间常显与标识规则**：创建向导头部始终展示当前空间徽标（全部步骤可见）；应用名称统一以 `空间/应用名` 复合形式展示（空间段只读，不可编辑），列表与详情同规则——目的：用户始终明确知道操作发生在哪个空间。
@@ -136,6 +136,10 @@ ConfigRevision 链（prod）      ConfigRevision 链（staging）
 - 复制到其他集群 = 发布携带 `copyFrom` 深拷贝源集群 `Manifests` 建行并直达发布（无「先建未部署配置」形态，见 §6 复制配置）。
 - 集群挂掉不影响配置读取（数据在 kite DB），恢复后可直接发布。
 - **库侧版本管理（ConfigRevision）**：库侧配置每次落库——向导「保存配置」、发布弹窗改镜像、收编、冲突合并、复制、回滚——写一条整份快照；**发布动作本身不新增版本**（推送的就是已保存的那份）。保留策略：每配置固定保留最近 **50 条**（模块常量 `MaxConfigRevisions`，插入后一条 `DELETE WHERE rev <= maxRev-50`，无后台任务；真不够再议配置项，不提前抽象）。约 0.25–0.75MB/集群配置封顶。版本链只管回滚与版本对比；细粒度操作审计（谁、何时、结果）仍由 kite `ResourceHistory` 审计流水承担，二者互补。
+
+**AppConfig.Namespace 不变式**：`AppConfig.Namespace` 恒等于 `App.Namespace`——三处建行路径（创建链路、发布 create 模式、workflow 部署门面）均为拷贝，不存在 per-config 覆盖。因此同名应用必然部署在不同 namespace，`kite.application/name` label 借助 namespace 作用域天然消歧：render 打标、归属校验、sync 的 label selector 全部无需携带空间段；审计 HistoryEntry 自带 Namespace 列，同名应用的操作记录同样可区分。
+
+**同名消歧与 label 演进路径**：当前集群侧 label 维持三件套不变（§5），空间信息由 namespace 本身承载。若未来放开 per-config namespace 覆盖（同一应用在各集群落不同 namespace），namespace 作用域不再能消歧 `kite.application/name` label，届时需引入空间 label（如 `kite.application/space`）并同步扩展 sync selector 与归属校验；在此之前，跨空间同名应用的碰撞完全由 DB 复合唯一索引与应用身份 (space, name) 承担。
 
 ## 4. 差异对比机制（三向语义对比 + 读回锚定）
 
@@ -200,8 +204,8 @@ labels:
 
 | 路由 | 语义 |
 |---|---|
-| `GET/PUT/DELETE /applications`、`GET/PUT/DELETE /applications/:name` | 逻辑应用 CRUD；创建携 `{name, namespace?, description?, spec?, cluster?}`——带 `cluster` 时先校验（ResolveCluster + create 鉴权，失败不写任何行），事务建 App + AppConfig + rev1（`Source=render`）后走既有发布管线（部分文档失败不整体失败），响应 = 应用响应 + `deploy` 字段（与 deploy 端点响应同构），**创建 + 建配置 + 首次发布一条链**；不带 `cluster` 仅建 App 草稿（回归场景，见 §3 AppSpec 流转）。更新携 `{description, spec}`；DELETE 应用仅当无已部署配置时允许（存在已部署配置则 409，提示先下线），删除级联清理残留配置与版本链 |
-| `GET/PUT /applications/:name/configs/:cluster` | GET：manifests + Extract 的 spec + 漂移摘要；PUT：`{spec}`（Inject）或 `{manifests}`（整份替换），携带 `expectedRev`（最新版本号）做乐观锁，不匹配返回 409「配置已被他人修改」。无 DELETE——配置删除统一并入下线端点，不提供「仅删配置」路径 |
+| `GET/PUT/DELETE /applications`、`GET/PUT/DELETE /applications/:space/:name` | 逻辑应用 CRUD（按 (space, name) 寻址；创建查重为空间内，同空间同名 409）；创建携 `{name, namespace?, description?, spec?, cluster?}`——带 `cluster` 时先校验（ResolveCluster + create 鉴权，失败不写任何行），事务建 App + AppConfig + rev1（`Source=render`）后走既有发布管线（部分文档失败不整体失败），响应 = 应用响应 + `deploy` 字段（与 deploy 端点响应同构），**创建 + 建配置 + 首次发布一条链**；不带 `cluster` 仅建 App 草稿（回归场景，见 §3 AppSpec 流转）。更新携 `{description, spec}`；DELETE 应用仅当无已部署配置时允许（存在已部署配置则 409，提示先下线），删除级联清理残留配置与版本链 |
+| `GET/PUT /applications/:space/:name/configs/:cluster` | GET：manifests + Extract 的 spec + 漂移摘要；PUT：`{spec}`（Inject）或 `{manifests}`（整份替换），携带 `expectedRev`（最新版本号）做乐观锁，不匹配返回 409「配置已被他人修改」。无 DELETE——配置删除统一并入下线端点，不提供「仅删配置」路径 |
 | `POST .../configs/:cluster/offline` | 下线（唯一动作，无请求参数）：删集群对象 + 删该集群配置行与版本链（不可恢复）；部分集群文档删除失败 → 409（配置行保留供重试）；集群已消失 → 直接删行；响应结构不变（`configDeleted` 恒为 true） |
 | `GET .../configs/:cluster/merge-preview` · `POST .../configs/:cluster/merge` | 冲突合并：预览返回自动采纳项 + 碰撞字段（无写入）；确认携带碰撞选择与回退清单，写 Manifests + Source=merge 版本（见 §4/§6） |
 | `POST .../deploy` · `POST .../sync` | 发布（冲突预检 + create 归属校验 + 可选 `{dryRun: true}`，见 §6 发布安全；`image?` 快捷改镜像；**配置不存在时进入 create 模式建行发布**：base = `copyFrom?` 源集群配置深拷贝（源不存在 → 404；配置已存在又带 `copyFrom` → 400）否则 `Render(App.Spec)`，dryRun 全内存不落库，并发创建撞 (AppID,Cluster) 唯一索引复用既有 409 语义）/ 整份收编 |
@@ -215,7 +219,7 @@ labels:
 
 **部署路径身份化（M2b）**：发布管线内部（persistImage/persistPendingConfig → 冲突门 → ensure namespace → 逐文档 apply → 读回锚定）一律收身份参数 `identity{operatorID, authorize}`，不再触碰 `*gin.Context`——HTTP handler 从请求上下文适配（`Deps.Authorize` + `Deps.OperatorID`），程序化调用方按用户 id 适配（`Deps.AuthorizeUser`，以 id 现查 RBAC，未知用户拒绝）。审计条目同样以身份归属操作者；HTTP 响应形状（409 冲突明细、错误文案）不变。
 
-**导出部署门面（M2b，供 workflow 进程内调用，见 workflow-design §5.2）**：`application.DeployWithImage(ctx, deps, appName, cluster, image, operatorID, dryRun) (*DeployOutcome, error)`——完整复用上述发布语义（镜像写 Manifests + Source=deploy-image 版本 → 冲突预检 → ensure namespace → 逐文档身份授权 apply → 读回锚定 → 变更 preview）。冲突命中返回 `*ConflictError{Details}`（每条含 kind/namespace/name/paths）；集群不存在、应用缺失返回明确错误；**目标配置不存在时自动以 `Render(App.Spec)` 建行并发布**（同 deploy create 模式，不再报 config not found）；dryRun 仅服务端校验不落库。模块不 import workflow 与宿主，deps 即模块 `Deps`。
+**导出部署门面（M2b，供 workflow 进程内调用，见 workflow-design §5.2）**：`application.DeployWithImage(ctx, deps, space, appName, cluster, image, registryCredentialRef, operatorID, dryRun, onLog) (*DeployOutcome, error)`——按 (space, appName) 身份寻址应用，完整复用上述发布语义（镜像写 Manifests + Source=deploy-image 版本 → 冲突预检 → ensure namespace → 逐文档身份授权 apply → 读回锚定 → 变更 preview）。冲突命中返回 `*ConflictError{Details}`（每条含 kind/namespace/name/paths）；集群不存在、应用缺失返回明确错误；**目标配置不存在时自动以 `Render(App.Spec)` 建行并发布**（同 deploy create 模式，不再报 config not found）；dryRun 仅服务端校验不落库。模块不 import workflow 与宿主，deps 即模块 `Deps`。
 
 ## 8. 网络模型（简化：一张端口列表）
 
@@ -300,7 +304,7 @@ type WorkloadSpec struct {
 - **向导与发布的边界**：编辑模式向导是纯编辑器，末步按钮 **[保存配置] / [去发布]**（后者暂存修改并返回发布弹窗，经变更预览确认后才推送）；创建模式 **[创建应用]** 即提交创建链路（创建 + 建配置 + 首次发布一条链；链上发布失败则应用以「未部署」形态存在，经发布弹窗 firstPublish 模式恢复）。发布走与发布弹窗同一条管线，冲突门禁不可绕过。
 - 发布/拉取确认后状态即时流转：漂移 chip → 已同步、一致性卡切换为同步态、上次发布/拉取时间更新、Tab 状态点变色（对应「读回锚定/重置锚点」语义）。
 - **历史版本**：详情页 ⋯ 菜单「历史版本」打开该集群配置的版本列表面板（Rev / 来源 / 操作人 / 时间，含脱敏标记），支持任选两版对比；「回滚到此版」仅将该版 `Manifests` 写回为待发布状态（新增一条 Source=rollback 的版本），经发布弹窗变更预览与冲突门禁确认后才推送——回滚不直接触碰集群。
-- 接入：`routes.tsx` 静态路由（`applications`、`applications/:name`，置于 `:resource` 通配之前）；侧边栏 `sidebar.groups.application` 分组，`SIDEBAR_CONFIG_VERSION` 需递增；`en.json/zh.json` 同步。
+- 接入：`routes.tsx` 静态路由（`applications`、`applications/:space/:name`（含 `clusters/:cluster`、`pods/:pod` 子段），置于 `:resource` 通配之前）；侧边栏 `sidebar.groups.application` 分组，`SIDEBAR_CONFIG_VERSION` 需递增；`en.json/zh.json` 同步。
 
 ## 12. 里程碑
 

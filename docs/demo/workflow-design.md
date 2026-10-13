@@ -54,11 +54,10 @@ ui (React) ── /api/v1/workflows* ──> kite routes.go（挂载点，RBAC �
 ## 3. 数据持久化模型
 
 ```go
-// 工作流定义（逻辑实体，全局唯一）
+// 工作流定义（全局实体：数字 ID 是身份，Name 是可重复的显示标签）
 type Workflow struct {
     ID           uint
-    Name         string        // uniqueIndex, DNS-1123, ≤63
-    Namespace    string        // 归属空间（对齐应用模块的 Space 概念）
+    Name         string        // 任意 unicode（含中文），trim 后 1-63 字符；普通索引（可重复显示标签，需唯一引用处以 name#id 消歧）；Update 可改名（nil=不改）
     Description  string
     CurrentRev   int           // 最新定义版本
     WebhookToken SecretString  // 随机生成，触发鉴权（展示/重置走 API）
@@ -112,7 +111,7 @@ type NodeRun struct {
 ER 视图：
 
 ```
-Workflow（定义 · 全局唯一）
+Workflow（定义 · 全局实体 · ID 即身份，name 为可重复标签）
   │ 1:N 版本链（Rev 单调；编辑保存 = 追加一条）
   ▼
 WorkflowRevision（rev 3 = 当前）     Spec=DAGSpec  Params  Triggers
@@ -129,6 +128,18 @@ NodeRun(build)     NodeRun(approve)   NodeRun(deploy)
 - Run 创建时按钉住的 DAGSpec **展开**全部 NodeRun 行（pending），执行只改状态不增删行——run 的拓扑在创建时刻固化，之后编辑定义不影响在跑的 run。
 - 保留策略：Run 按 Workflow 保留最近 **50** 条（含 NodeRun 级联删除），同 ConfigRevision 的裁剪方式（插入后一条 DELETE，无后台任务）。
 - 审批的操作人、评论不单独建表：审批动作即 NodeRun 状态流转，操作者与评论追加写入 `Outputs`（`{decision, by, comment, at}`）。
+
+**空间绑定（`workflow_bindings` 表，可选可见性元数据）**：
+
+```
+WorkflowBinding(id, workflow_id FK→workflows ON DELETE CASCADE, kind, target)
+  UNIQUE (workflow_id, kind, target)   INDEX (kind, target)
+```
+
+- **可选绑定**：工作流可绑定零个或多个空间；未绑定 = 平台级（仅"全部空间"视图可见）。绑定**不改变** ID 身份、命名、URL 与权限（CRUD/触发仍走通配鉴权）——纯展示/筛选元数据，纯构建等无部署引用的流水线借此获得空间归属。
+- **通用 kind/target 行式设计**：kind 是代码常量（首期仅 `space`，target = 空间名 DNS-1123），未来 cluster/app/项目等新类型零 schema 变更。目标侧是刻意的软引用：空间只存在于集群侧（本地无表）、未来类型属其它模块，无处可挂外键——有效性由 API 入口按 kind 校验，集群侧消失的目标只是不再命中筛选。
+- **列表的归属集合 = 绑定 ∪ 派生**（deploy-app 节点引用的空间），顶栏空间选择器按该集合联动过滤工作流列表；「全部空间」视图聚合所有工作流（未绑定的平台级流水线也只在此可见）。列表不设空间列——可见范围即页头全局空间；高频行操作（运行/运行记录/复制）内联为图标按钮，其余留在操作菜单。
+- 写入随 Create/Update 既有事务整体替换（`ReplaceBindingsTx`：delete + 批量插入）；删除工作流经 FK 级联清理绑定。
 
 ## 4. DAG 规格与模板传参
 
@@ -175,11 +186,13 @@ NodeRun(build)     NodeRun(approve)   NodeRun(deploy)
   "outputRef":   "reg.acme/web:{{params.tag}}",
   "gitCredentialRef": "gitlab-main",   // 凭证中心引用（可选）：git 拉源认证
   "registryCredentialRef": "reg-acme", // 凭证中心引用（可选）：registry 推送认证
-  "provider":    ""                    // 钉定 provider；空 = 任意
+  "provider":    "",                   // 钉定 provider；空 = 按 space 解析构建集群默认
+  "space":       ""                    // 构建集群默认（build_settings）选择键，可选；空 = 全局默认行
 }
 ```
 
 - 执行：`Deps.BuildImage(ctx, req)` → workflowadapter 组装 `fleet.Request`（git/http 源、dockerfile、args、platforms、OutputRef、Provider）并注入凭证（`fleet.Request.Creds`，SDK 原生支持按请求传递：git 凭证进 clone、registry 凭证进 solve 会话，实例不落凭证）——**进程内直调，天然绕过 REST 接线层暂不暴露凭证的缺口**（该缺口对 REST 页面另行修复，见 §9）。
+- **provider 解析顺序**：节点 `provider` 优先；为空时按节点 `space` 取 build_settings 的空间级默认（精确匹配， miss 再退全局默认行），`space` 为空即全局默认——space 在此只是构建默认的选择键，不承载应用身份。
 - 进度：fleet 构建回调（vertex/log 事件）桥接为节点日志（SSE 实时 + LogTail 截断落库）。
 - **Outputs**：`{imageRef: "reg.acme/web:v1.4.0", digest: "sha256:…", imageRefWithDigest: "reg.acme/web@sha256:…"}`——下游 deploy 节点应消费 `imageRefWithDigest`（不可变引用，可复现）。
 - 取消：run 取消传播 ctx cancel 至 Solve，buildfleet 排他租约释放。
@@ -189,14 +202,16 @@ NodeRun(build)     NodeRun(approve)   NodeRun(deploy)
 
 ```jsonc
 "props": {
-  "app":     "web",                          // 应用模块的逻辑应用名
+  "space":   "team-a",                       // 应用归属空间；应用身份 = (space, name)，必填
+  "app":     "web",                          // 应用模块的逻辑应用名（空间内）
   "cluster": "prod",                         // 目标集群
   "image":   "{{steps.build.outputs.imageRefWithDigest}}",  // 可选；空 = 按当前配置发布
   "dryRun":  false                           // true = 仅服务端 dry-run 校验
 }
 ```
 
-- 执行：`Deps.DeployApp(ctx, req)` → workflowadapter 调 **application 模块导出的服务门面** `application.DeployWithImage(ctx, deps, app, cluster, image, operatorID, dryRun, onLog)`（M2b 落地：模块内部演进，不引入对 workflow 或宿主的依赖），等价于应用模块「改镜像即发布」路径：镜像写入 Manifests（追加 Source=deploy-image 版本）→ 冲突预检 → ensure namespace → Apply → 读回锚定 → 变更 preview；发布头、逐文档 apply 结果与冲突明细按行写入 onLog（节点日志：SSE 实时 + LogTail，同 §5.1 的桥接方式）。
+- 执行：`Deps.DeployApp(ctx, req)` → workflowadapter 调 **application 模块导出的服务门面** `application.DeployWithImage(ctx, deps, space, app, cluster, image, registryCredentialRef, operatorID, dryRun, onLog)`（M2b 落地：模块内部演进，不引入对 workflow 或宿主的依赖），按 (space, app) 身份寻址，等价于应用模块「改镜像即发布」路径：镜像写入 Manifests（追加 Source=deploy-image 版本）→ 冲突预检 → ensure namespace → Apply → 读回锚定 → 变更 preview；发布头、逐文档 apply 结果与冲突明细按行写入 onLog（节点日志：SSE 实时 + LogTail，同 §5.1 的桥接方式）。
+- **props 校验**：`space` / `app` / `cluster` 三者必填（缺失 = 节点失败，错误明确指出缺哪项）；属性面板的空间**固定不可选**——跟随流水线所属空间（未保存过空间的节点取当前锁定空间），应用列表严格限定在该空间内（裸名），**不提供跨空间的应用选择**。落库仍写 space+app 两个字段。平台工作流（未绑定空间）暂不支持部署应用节点：编辑器调色板隐藏该节点，保存校验兜底报错。
 - **门禁语义完整保留**：冲突（Live≠锚点）→ 节点失败，Error 含冲突明细与「去应用模块处理合并」指引；重试在人工合并后进行。create 归属校验、dry-run、逐文档权限同样生效。
 - **溯源闭环（M2b 落地形状）**：产生的 ConfigRevision（Source=deploy-image，操作者=触发用户）与 ResourceHistory（归属 application 模块，操作者=触发用户）记录每次门面发布的镜像变更；run ↔ 应用版本的关联目前以操作者+时间定位——run 序号写入审计（Source=workflow）尚未落地，列为后续项。
 - **Outputs**：`{revision: <rev>, preview: [...]}`（deploy 响应的变更文档摘要）。
@@ -259,17 +274,17 @@ node: pending ──> running ──┬─> succeeded ──(下游解锁)
 { "manual": true, "webhook": true, "cron": "30 2 * * *" }
 ```
 
-- **手动**：`POST /workflows/:name/runs {params}`（参数按 schema 校验，必填缺失拒绝）。
+- **手动**：`POST /workflows/:id/runs {params}`（参数按 schema 校验，必填缺失拒绝）。
 - **webhook**：公开端点 `POST /api/workflow-hooks/:token`（**无会话鉴权**，挂载于 routes.go 公开组——这是宿主触点白名单内 routes.go 装配的一处合法新增）；鉴权 = 路径中的 WebhookToken，恒定时间比较，未知 token 一律 404（不暴露工作流是否存在；响应只含 run id 与序号，不暴露定义细节；token 属凭据，宿主访问日志对该路径前缀脱敏）。载荷按 github / gitea / gitlab 三家 push 事件适配（识别 `X-GitHub-Event` 等特征头），提取 repo/ref/sha 填入预留参数 `branch`/`ref`/`sha`/`repo`（schema 未声明的自动忽略）与 TriggerRef（sha 优先，缺 sha 用全 ref）；非 push 事件（PR 等）、tag push、分支删除及无法识别的载荷（含无特征头且未声明 push 的载荷）v1 一律忽略（200 `{"ignored":true}`）。token 在 UI 可见、可重置（重置即失效旧值）。
 - **cron**：模块内置调度循环（自带轻量 cron 解析，标准 5 段、本地时区，核心为可单测的纯函数 `NextFire`；不依赖也不修改宿主 `pkg/scheduler`——其仅支持 interval/daily，扩展它反而增加宿主触点）；cron 表达式保存期校验（非法即 400），运行期遇到不可触发的表达式记 warn；每分钟 tick，到点以 Triggers 中定义用参数 default 触发，`maxConcurrent` 预算照常生效；进程重启后错过的调度点**漏过即跳过**（不补跑）。同一 ticker 复用为审批超时巡检（§5.3）。cron 触发的 run 的 TriggeredBy 记录最后编辑该触发器的用户（权限以其为准）。
 - **运行身份**：run 全程以触发用户的 RBAC 身份执行（节点执行时 Authorize 检查；webhook/cron 无会话上下文，用 TriggeredBy 的用户身份）。审批人只做决定，不改变 run 的执行身份。
 
 ## 8. 权限与审计
 
-- 伪资源 `"workflows"`，模块内自授权（挂载于 RBAC 中间件之前，同 applications/builds 模式）：CRUD → get/create/update/delete；run/cancel/retry/approve → `exec`。
-- **节点级映射**：build 节点派发前以触发用户身份检查 `AuthorizeUser(触发用户, "builds", "create", "", "")`——M1 的 build props 不携带 cluster，检查针对宿主级 builds 能力（空 cluster 仅匹配通配集群授权，M2 随 props 传入 cluster）；deploy 节点由 application 模块内部的逐文档校验承接（Deps.DeployApp 传入触发用户身份）；无权限 → 节点失败并明确报错（不是静默跳过）。
+- 伪资源 `"workflows"`，模块内自授权（挂载于 RBAC 中间件之前，同 applications/builds 模式）：CRUD → get/create/update/delete；run/cancel/retry/approve → `exec`。**定义是全局实体（无 namespace），鉴权走通配模型**：CRUD 与触发的 authorize 一律传空 namespace——仅命中 namespace 段为通配的授权，不再逐 workflow 按 namespace 过滤；列表入口一次通配 get 校验即全量可见。
+- **节点级映射（运行时鉴权不变）**：build 节点派发前以触发用户身份检查 `AuthorizeUser(触发用户, "builds", "create", "", "")`（宿主级 builds 能力，空 cluster 仅匹配通配集群授权）；provider 为空时按节点 `space` 解析构建集群默认（空 space = 全局默认行，见 §5.1）；deploy 节点由 application 模块内部的逐文档校验承接（`Deps.DeployApp` 传入触发用户身份与目标 (space, app)，见 §5.2）；无权限 → 节点失败并明确报错（不是静默跳过）。
 - 审批：assignees 内用户或 admin（审批不检 workflows 资源 verb——assignees 列表本身就是授权）。
-- 审计：run 触发/取消/重试、审批决定、定义修订经 `Deps.RecordHistory` 写 ResourceHistory（`Source: "workflow"`，detail 含 workflow/run/node 标识）。
+- 审计：run 触发/取消/重试、审批决定、定义修订经 `Deps.RecordHistory` 写 ResourceHistory（`Source: "workflow"`，detail 含 workflow/run/node 标识）；name 可重复，workflow 条目的 ResourceName 用 `name#id` 复合消歧（同 run 的 name#runNumber 模式）。
 
 ## 9. 凭证接口契约（凭证中心 = 独立前置模块）
 
@@ -298,24 +313,24 @@ type Credential struct {
 
 | 路由 | 语义 |
 |---|---|
-| `GET/POST /workflows` · `GET/PUT/DELETE /workflows/:name` | 定义 CRUD；PUT `{spec, params, triggers, expectedRev}` 乐观锁，保存即追加 WorkflowRevision；DELETE 拒绝存在 running run 的 workflow（409） |
-| `GET /workflows/:name/revisions` · `GET .../revisions/:rev` | 定义版本链（列表 + 单版完整 spec） |
-| `POST /workflows/:name/runs` | 手动触发 `{params}`（schema 校验） |
-| `GET /workflows/:name/runs` | run 列表（序号/状态/触发者/耗时，倒序分页） |
+| `GET/POST /workflows` · `GET/PUT/DELETE /workflows/:id` | 定义 CRUD，按数字 ID 寻址（name 是可重复的显示标签；非法 id 400）；PUT `{spec, params, triggers, expectedRev}` 乐观锁，保存即追加 WorkflowRevision；DELETE 拒绝存在 running run 的 workflow（409） |
+| `GET /workflows/:id/revisions` · `GET .../revisions/:rev` | 定义版本链（列表 + 单版完整 spec） |
+| `POST /workflows/:id/runs` | 手动触发 `{params}`（schema 校验） |
+| `GET /workflows/:id/runs` | run 列表（序号/状态/触发者/耗时，倒序分页） |
 | `GET /runs/:id` | run 详情（拓扑 + 全部 NodeRun 状态/输出/错误） |
 | `GET /runs/:id/events` | **SSE 实时流（M2b 落地形状）**：`event: node/log/run/done` + `data` JSON（形状对齐 buildfleet 接线），15s `: ping` 心跳；连接时先订阅引擎事件流、再以落库快照对齐（run 现状一帧 `run` + 全部 NodeRun 逐帧 `node`），随后消费实时事件；run 到终态发 `done` 收流；授权同 run 动作（exec）；引擎侧 per-run 订阅为带缓冲 channel、慢订阅者丢弃溢出事件（绝不反压引擎）；断线重连以 NodeRun 落库状态对齐（快照即落库值） |
 | `POST /runs/:id/cancel` · `POST /runs/:id/retry` | 取消 / 从失败节点重试（仅 failed/cancelled/interrupted 态可重试） |
 | `POST /runs/:id/nodes/:nodeId/approve` · `.../reject` | 审批动作 `{comment}`（assignees/admin） |
 | `POST /api/workflow-hooks/:token` | webhook 接收（公开组，路径内 token 恒定时间比较、未知 token 404，三家 push 载荷适配；非 push 忽略） |
-| `GET /workflows/:name/webhook-token` · `POST .../webhook-token/reset` | token 查看/重置（update 权限） |
+| `GET /workflows/:id/webhook-token` · `POST .../webhook-token/reset` | token 查看/重置（update 权限） |
 
 ## 11. 前端：目录结构独立（视觉以 demo 为准）
 
 - demo：`docs/demo/workflow.html`（顶部工具条切三视图：列表 / 画布编辑器 / run 视图；支持 `#view=editor&node=deploy`、`#view=run&node=approve` 深链）。
 - **工程形态**：kite `ui/` 工程内单一自包含目录 `ui/src/workflow/`——`pages/`（列表 / 详情含编辑器 / run 三页）、`components/`（画布、属性抽屉、日志流、参数表单等模块组件）、`api.ts`（自有 API 客户端，不动共享 `lib/api.ts`）、`types.ts`、`routes.tsx`（模块路由定义，导出给宿主单块接入）、`i18n/`（自带 zh/en 资源 + 轻量 hook，读宿主语言偏好）。TanStack Query、react-router、shadcn 原语直接复用宿主已有设施（import 复用）。
-- **路由**：`workflows`（列表）、`workflows/:name`（详情 + 编辑器）、`workflows/:name/runs/:runId`（run 视图），模块 `routes.tsx` 导出，宿主 `ui/src/routes.tsx` 单块插入（置于 `:resource` 通配之前，同 application 模式）。
+- **路由**：`workflows`（列表）、`workflows/new`（创建，静态段优先于 `:id`）、`workflows/:id`（详情 + 编辑器）、`workflows/:id/runs`（run 列表）、`workflows/:id/runs/:runId`（run 视图），模块 `routes.tsx` 导出，宿主 `ui/src/routes.tsx` 单块插入（置于 `:resource` 通配之前，同 application 模式）。编辑器把全局空间**锁定并同步**为流水线的绑定空间（全部空间下点开空间流水线 → 自动切到该空间；平台流水线 → 全部空间；复制/fromApp 草稿同理），编辑期间空间选择器禁用；新建沿用进入时的空间上下文（全部空间下新建 = 平台工作流）；运行页等子页切换空间则跳回列表页（对齐应用模块）；名称可编辑改名（任意 unicode，1-63 字符）。
 - **编辑器**（详情页内）：React Flow 画布——左侧节点面板（四类可拖入）、中央画布（节点卡 + 贝塞尔连线 + 小地图）、右侧属性抽屉（按节点类型出表单，模板变量插入器）；顶部工具条：参数 / 触发器 / 校验 / 保存（校验规则见 §4，错误定位到节点）。画布 ⇄ YAML 双模切换进 Backlog（先画布单向）。
-- **run 视图**：只读画布按节点状态着色（绿成功/红失败/蓝运行/黄等待审批/灰跳过）+ 底部节点日志抽屉（SSE 实时流）；**审批节点内联操作**（通过/拒绝 + 评论框，仅 assignees 可见按钮）；头部：run 序号、触发者与来源（git SHA 链接）、参数 chips、耗时、取消/从失败节点重试按钮。notify 模板的 `{{run.url}}` 即 `/workflows/:name/runs/:runId` 深链。
+- **run 视图**：只读画布按节点状态着色（绿成功/红失败/蓝运行/黄等待审批/灰跳过）+ 底部节点日志抽屉（SSE 实时流）；**审批节点内联操作**（通过/拒绝 + 评论框，仅 assignees 可见按钮）；头部：run 序号、触发者与来源（git SHA 链接）、参数 chips、耗时、取消/从失败节点重试按钮。notify 模板的 `{{run.url}}` 即 `/workflows/:id/runs/:runId` 深链。
 - 列表页：工作流名/描述/最近 run 状态与序号/触发器徽标（手动/webhook/cron）；行内「运行」（弹参数表单）与「编辑」。
 - 入口：kite 既有「自定义侧边栏」配 `/workflows` 链接（零代码触点），或直接 URL。
 
