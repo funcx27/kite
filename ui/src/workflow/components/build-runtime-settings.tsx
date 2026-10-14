@@ -10,7 +10,6 @@ import {
   IconCopy,
   IconInfoCircle,
   IconPencil,
-  IconPlus,
   IconTrash,
 } from '@tabler/icons-react'
 import { useTranslation } from 'react-i18next'
@@ -84,10 +83,42 @@ const splitList = (raw: string) =>
     .map((entry) => entry.trim())
     .filter((entry) => entry !== '')
 
+// Registry endpoint: scheme + bare host[:port]. buildkit joins anything
+// after the authority onto the upstream path (e.g. /library → doubled), so
+// trailing paths must fail validation here.
+const REGISTRY_URL_RE =
+  /^https?:\/\/[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?(?::\d{1,5})?$/
+
+// Real-time validation helpers: empty (sentinel) rows stay neutral.
+const insecureEntryInvalid = (entry: string) => {
+  const v = entry.trim()
+  return v !== '' && !REGISTRY_URL_RE.test(v)
+}
+const mirrorSourcesInvalid = (sources: string) =>
+  splitList(sources).some((s) => !REGISTRY_URL_RE.test(s))
+const HOST_IP_RE =
+  /^((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/
+const hostIpInvalid = (ip: string) => {
+  const v = ip.trim()
+  return v !== '' && !HOST_IP_RE.test(v)
+}
+
 // Mirror the backend's built-in buildkitd images (buildfleet config.Image)
 // so the summary shows the effective reference when nothing is configured.
 const BUILTIN_ROOTFUL_IMAGE = 'moby/buildkit:master'
 const BUILTIN_ROOTLESS_IMAGE = 'moby/buildkit:master-rootless'
+
+// Dialog fields rest as plain text: the border appears as a dashed hint on
+// hover and solid on focus, signalling editability only on intent. Invalid
+// rows get a solid destructive border at rest (the base border-none would
+// otherwise hide the aria-invalid styling).
+const INLINE_FIELD_CLS =
+  'border-none px-1.5 font-mono text-xs shadow-none hover:border-dashed hover:border-input/60 focus-visible:border-solid aria-invalid:border-solid dark:bg-transparent!'
+
+// Empty fields keep the ordinary bordered look — a visible spot to type
+// into; the plain-text rest state only applies once there is content.
+const fieldCls = (value: string) =>
+  value === '' ? 'font-mono text-xs' : INLINE_FIELD_CLS
 
 export function BuildRuntimeSettings() {
   const { t } = useTranslation()
@@ -107,6 +138,52 @@ export function BuildRuntimeSettings() {
     setForm(formOf(data))
   }, [data, synced])
 
+  // Keep one empty row at the tail of each editable list: filling the last
+  // row appends the next one automatically. Empty rows are skipped on save,
+  // so the sentinel never reaches the backend.
+  useEffect(() => {
+    const patch: Partial<RuntimeForm> = {}
+    const lastHost = form.hosts[form.hosts.length - 1]
+    if (!lastHost || lastHost.ip !== '' || lastHost.names !== '') {
+      patch.hosts = [...form.hosts, { ip: '', names: '' }]
+    }
+    if (
+      !form.insecure.length ||
+      form.insecure[form.insecure.length - 1] !== ''
+    ) {
+      patch.insecure = [...form.insecure, '']
+    }
+    const lastMirror = form.mirrors[form.mirrors.length - 1]
+    if (!lastMirror || lastMirror.host !== '' || lastMirror.sources !== '') {
+      patch.mirrors = [...form.mirrors, { host: '', sources: '' }]
+    }
+    if (Object.keys(patch).length > 0) setForm({ ...form, ...patch })
+  }, [form])
+
+  // A plain-HTTP mirror source needs the matching insecure-registry entry
+  // (buildkitd http=true block) to be reachable, so list them together:
+  // on blur of a mirror row, add its sources to the insecure list. Manual
+  // deletion sticks — re-adding only happens after editing the row again.
+  // Additions replace the tail sentinel row, never land behind it (which
+  // would strand an empty row between filled entries).
+  const syncInsecureFromMirrors = () => {
+    setForm((f) => {
+      const have = new Set(f.insecure.map((e) => e.trim()).filter(Boolean))
+      const additions: string[] = []
+      for (const row of f.mirrors) {
+        for (const raw of splitList(row.sources)) {
+          if (REGISTRY_URL_RE.test(raw) && !have.has(raw)) {
+            have.add(raw)
+            additions.push(raw)
+          }
+        }
+      }
+      if (additions.length === 0) return f
+      const filled = f.insecure.filter((e) => e.trim() !== '')
+      return { ...f, insecure: [...filled, ...additions, ''] }
+    })
+  }
+
   const save = () => {
     const hosts = []
     for (const row of form.hosts) {
@@ -117,14 +194,18 @@ export function BuildRuntimeSettings() {
         toast.error(t('workflow.buildRuntime.hostsRequired'))
         return
       }
+      if (hostIpInvalid(ip)) {
+        toast.error(t('workflow.buildRuntime.hostIpInvalid', { ip }))
+        return
+      }
       hosts.push({ ip, names })
     }
     const insecureRegistries: string[] = []
     for (const raw of form.insecure) {
       const entry = raw.trim()
       if (entry === '') continue
-      if (!entry.startsWith('http://') && !entry.startsWith('https://')) {
-        toast.error(t('workflow.buildRuntime.insecureInvalid'))
+      if (!REGISTRY_URL_RE.test(entry)) {
+        toast.error(t('workflow.buildRuntime.insecureInvalid', { entry }))
         return
       }
       insecureRegistries.push(entry)
@@ -136,6 +217,13 @@ export function BuildRuntimeSettings() {
       if (host === '' && sources.length === 0) continue
       if (host === '' || sources.length === 0) {
         toast.error(t('workflow.buildRuntime.mirrorsRequired'))
+        return
+      }
+      const badSource = sources.find((s) => !REGISTRY_URL_RE.test(s))
+      if (badSource !== undefined) {
+        toast.error(
+          t('workflow.buildRuntime.mirrorInvalid', { source: badSource })
+        )
         return
       }
       mirrors[host] = sources
@@ -162,6 +250,13 @@ export function BuildRuntimeSettings() {
 
   const pending = updateMutation.isPending
 
+  // Real-time regex state: with an invalid row the save button locks until
+  // the offending value is fixed or cleared (save() re-checks defensively).
+  const hasInvalid =
+    form.hosts.some((row) => hostIpInvalid(row.ip)) ||
+    form.insecure.some(insecureEntryInvalid) ||
+    form.mirrors.some((row) => mirrorSourcesInvalid(row.sources))
+
   return (
     <Card>
       <CardHeader className="flex flex-row items-start justify-between space-y-0">
@@ -176,7 +271,12 @@ export function BuildRuntimeSettings() {
         <Button
           size="icon"
           disabled={isLoading || error !== null}
-          onClick={() => setDialogOpen(true)}
+          onClick={() => {
+            // Fresh copy of the saved settings each time: cancel or abandon
+            // must not leak earlier edits back into the dialog.
+            if (data) setForm(formOf(data))
+            setDialogOpen(true)
+          }}
           title={t('workflow.buildRuntime.editTitle')}
         >
           <IconPencil className="h-4 w-4" />
@@ -211,24 +311,22 @@ export function BuildRuntimeSettings() {
                 scenario={t('workflow.buildRuntime.chipIsolation')}
               />
             </div>
-            <div className="flex flex-wrap gap-1.5">
-              <MetaChip
+            <div className="divide-y rounded-lg border text-xs">
+              <ConfigPreview
                 label={t('workflow.buildRuntime.hostsSection')}
-                value={t('workflow.buildRuntime.hostsCountValue', {
-                  count: data?.hosts.length ?? 0,
-                })}
+                entries={(data?.hosts ?? []).map(
+                  (h) => `${h.ip} → ${h.names.join(', ')}`
+                )}
               />
-              <MetaChip
+              <ConfigPreview
                 label={t('workflow.buildRuntime.insecureSection')}
-                value={t('workflow.buildRuntime.insecureCountValue', {
-                  count: data?.insecureRegistries.length ?? 0,
-                })}
+                entries={data?.insecureRegistries ?? []}
               />
-              <MetaChip
+              <ConfigPreview
                 label={t('workflow.buildRuntime.mirrorsSection')}
-                value={t('workflow.buildRuntime.mirrorsCountValue', {
-                  count: Object.keys(data?.mirrors ?? {}).length,
-                })}
+                entries={Object.entries(data?.mirrors ?? {}).map(
+                  ([host, sources]) => `${host} → ${sources.join(', ')}`
+                )}
               />
             </div>
             <div className="flex items-start gap-1.5 text-xs text-muted-foreground">
@@ -260,7 +358,7 @@ export function BuildRuntimeSettings() {
                       setForm({ ...form, rootfulImage: e.target.value })
                     }
                     placeholder="moby/buildkit:master"
-                    className="font-mono text-xs"
+                    className={fieldCls(form.rootfulImage)}
                   />
                 </div>
                 <div className="flex items-center gap-3">
@@ -273,7 +371,7 @@ export function BuildRuntimeSettings() {
                       setForm({ ...form, rootlessImage: e.target.value })
                     }
                     placeholder="moby/buildkit:master-rootless"
-                    className="font-mono text-xs"
+                    className={fieldCls(form.rootlessImage)}
                   />
                 </div>
               </div>
@@ -318,7 +416,15 @@ export function BuildRuntimeSettings() {
                       })
                     }
                     placeholder="10.0.0.5"
-                    className="font-mono text-xs"
+                    className={fieldCls(row.ip)}
+                    aria-invalid={hostIpInvalid(row.ip)}
+                    title={
+                      hostIpInvalid(row.ip)
+                        ? t('workflow.buildRuntime.hostIpInvalid', {
+                            ip: row.ip.trim(),
+                          })
+                        : undefined
+                    }
                   />
                   <Input
                     value={row.names}
@@ -331,36 +437,25 @@ export function BuildRuntimeSettings() {
                       })
                     }
                     placeholder="registry.example.com, git.example.com"
-                    className="font-mono text-xs"
+                    className={fieldCls(row.names)}
                   />
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="text-muted-foreground hover:text-destructive"
-                    onClick={() =>
-                      setForm({
-                        ...form,
-                        hosts: form.hosts.filter((_, i) => i !== index),
-                      })
-                    }
-                  >
-                    <IconTrash className="h-4 w-4" />
-                  </Button>
+                  {(row.ip !== '' || row.names !== '') && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="text-muted-foreground hover:text-destructive"
+                      onClick={() =>
+                        setForm({
+                          ...form,
+                          hosts: form.hosts.filter((_, i) => i !== index),
+                        })
+                      }
+                    >
+                      <IconTrash className="h-4 w-4" />
+                    </Button>
+                  )}
                 </div>
               ))}
-              <Button
-                variant="outline"
-                size="icon"
-                title={t('workflow.buildRuntime.addHost')}
-                onClick={() =>
-                  setForm({
-                    ...form,
-                    hosts: [...form.hosts, { ip: '', names: '' }],
-                  })
-                }
-              >
-                <IconPlus className="h-4 w-4" />
-              </Button>
             </div>
 
             <Separator />
@@ -384,34 +479,33 @@ export function BuildRuntimeSettings() {
                         ),
                       })
                     }
-                    placeholder="http://registry.local:5000"
-                    className="font-mono text-xs"
-                  />
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="text-muted-foreground hover:text-destructive"
-                    onClick={() =>
-                      setForm({
-                        ...form,
-                        insecure: form.insecure.filter((_, i) => i !== index),
-                      })
+                    aria-invalid={insecureEntryInvalid(entry)}
+                    title={
+                      insecureEntryInvalid(entry)
+                        ? t('workflow.buildRuntime.insecureInvalid', {
+                            entry: entry.trim(),
+                          })
+                        : undefined
                     }
-                  >
-                    <IconTrash className="h-4 w-4" />
-                  </Button>
+                    className={fieldCls(entry)}
+                  />
+                  {entry !== '' && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="text-muted-foreground hover:text-destructive"
+                      onClick={() =>
+                        setForm({
+                          ...form,
+                          insecure: form.insecure.filter((_, i) => i !== index),
+                        })
+                      }
+                    >
+                      <IconTrash className="h-4 w-4" />
+                    </Button>
+                  )}
                 </div>
               ))}
-              <Button
-                variant="outline"
-                size="icon"
-                title={t('workflow.buildRuntime.addInsecure')}
-                onClick={() =>
-                  setForm({ ...form, insecure: [...form.insecure, ''] })
-                }
-              >
-                <IconPlus className="h-4 w-4" />
-              </Button>
             </div>
 
             <Separator />
@@ -420,6 +514,9 @@ export function BuildRuntimeSettings() {
               <Label className="text-xs font-semibold">
                 {t('workflow.buildRuntime.mirrorsSection')}
               </Label>
+              <p className="text-[11px] text-muted-foreground">
+                {t('workflow.buildRuntime.mirrorsHint')}
+              </p>
               {form.mirrors.length > 0 && (
                 <div className="grid grid-cols-[1fr_2fr_auto] gap-2">
                   <Label className="text-xs text-muted-foreground">
@@ -447,7 +544,7 @@ export function BuildRuntimeSettings() {
                       })
                     }
                     placeholder="docker.io"
-                    className="font-mono text-xs"
+                    className={fieldCls(row.host)}
                   />
                   <Input
                     value={row.sources}
@@ -459,37 +556,37 @@ export function BuildRuntimeSettings() {
                         ),
                       })
                     }
-                    placeholder="mirror-registry.local:5000/library"
-                    className="font-mono text-xs"
-                  />
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="text-muted-foreground hover:text-destructive"
-                    onClick={() =>
-                      setForm({
-                        ...form,
-                        mirrors: form.mirrors.filter((_, i) => i !== index),
-                      })
+                    className={fieldCls(row.sources)}
+                    aria-invalid={mirrorSourcesInvalid(row.sources)}
+                    title={
+                      mirrorSourcesInvalid(row.sources)
+                        ? t('workflow.buildRuntime.mirrorInvalid', {
+                            source:
+                              splitList(row.sources).find(
+                                (s) => !REGISTRY_URL_RE.test(s)
+                              ) ?? '',
+                          })
+                        : undefined
                     }
-                  >
-                    <IconTrash className="h-4 w-4" />
-                  </Button>
+                    onBlur={syncInsecureFromMirrors}
+                  />
+                  {(row.host !== '' || row.sources !== '') && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="text-muted-foreground hover:text-destructive"
+                      onClick={() =>
+                        setForm({
+                          ...form,
+                          mirrors: form.mirrors.filter((_, i) => i !== index),
+                        })
+                      }
+                    >
+                      <IconTrash className="h-4 w-4" />
+                    </Button>
+                  )}
                 </div>
               ))}
-              <Button
-                variant="outline"
-                size="icon"
-                title={t('workflow.buildRuntime.addMirror')}
-                onClick={() =>
-                  setForm({
-                    ...form,
-                    mirrors: [...form.mirrors, { host: '', sources: '' }],
-                  })
-                }
-              >
-                <IconPlus className="h-4 w-4" />
-              </Button>
             </div>
           </div>
           <DialogFooter>
@@ -499,7 +596,7 @@ export function BuildRuntimeSettings() {
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               {t('common.actions.cancel')}
             </Button>
-            <Button disabled={pending} onClick={save}>
+            <Button disabled={pending || hasInvalid} onClick={save}>
               {t('common.actions.save')}
             </Button>
           </DialogFooter>
@@ -583,5 +680,35 @@ function MetaChip({ label, value }: { label: string; value: ReactNode }) {
       {label}
       <b className="font-semibold text-foreground">{value}</b>
     </span>
+  )
+}
+
+// ConfigPreview lists one settings section's saved values as read-only text;
+// editing stays behind the edit dialog.
+function ConfigPreview({
+  label,
+  entries,
+}: {
+  label: string
+  entries: string[]
+}) {
+  const { t } = useTranslation()
+  return (
+    <div className="p-3">
+      <div className="mb-1 font-medium text-muted-foreground">{label}</div>
+      {entries.length === 0 ? (
+        <div className="text-muted-foreground/70">
+          {t('workflow.buildRuntime.noneConfigured')}
+        </div>
+      ) : (
+        <ul className="space-y-0.5">
+          {entries.map((entry) => (
+            <li key={entry} className="break-all font-mono leading-5">
+              {entry}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   )
 }
