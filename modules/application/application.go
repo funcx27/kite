@@ -13,6 +13,7 @@ import (
 
 	applicationapi "github.com/funcx27/kite/modules/application/internal/api"
 	"github.com/funcx27/kite/modules/application/internal/store"
+	"github.com/funcx27/kite/modules/application/internal/syncops"
 )
 
 // HistoryEntry is one audit record for a state change performed by the
@@ -74,7 +75,47 @@ func RegisterRoutes(api *gin.RouterGroup, deps Deps) {
 
 // Migrate creates or updates the module tables on the host database.
 func Migrate(db *gorm.DB) error {
-	return store.Migrate(db)
+	if err := store.Migrate(db); err != nil {
+		return err
+	}
+	backfillAppliedRev(db)
+	return nil
+}
+
+// backfillAppliedRev fills the applied-rev marker for configs published before
+// the column existed: the newest revision whose content matches the stored
+// anchor is what the cluster last ran (the same comparison the status check
+// calls synced). Best-effort on purpose — the marker is display-only
+// bookkeeping that every publish/sync/resolve maintains from here on, so a
+// row that fails to decode or matches no revision keeps 0 (shown as "no
+// marker") rather than failing the host boot; it is retried on the next start.
+func backfillAppliedRev(db *gorm.DB) {
+	var configs []store.AppConfig
+	if err := db.Where("last_applied <> '' AND applied_rev = 0").Find(&configs).Error; err != nil {
+		return
+	}
+	for i := range configs {
+		cfg := &configs[i]
+		anchor, err := store.DecodeManifests(cfg.LastApplied)
+		if err != nil {
+			continue
+		}
+		var revs []store.ConfigRevision
+		if err := db.Where("app_config_id = ?", cfg.ID).Order("rev DESC").Find(&revs).Error; err != nil {
+			continue
+		}
+		for _, r := range revs {
+			docs, err := store.DecodeManifests(r.Manifests)
+			if err != nil {
+				continue
+			}
+			if len(syncops.DiffManifests(docs, anchor)) != 0 {
+				continue
+			}
+			db.Model(&store.AppConfig{}).Where("id = ?", cfg.ID).Update("applied_rev", r.Rev)
+			break
+		}
+	}
 }
 
 // SetSecretCodec wires the SecretJSON codec to host implementations. The host

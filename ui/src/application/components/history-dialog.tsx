@@ -69,6 +69,9 @@ export function HistoryDialog({
     cluster
   )
   const latestRev = config?.latestRev ?? 0
+  // The revision the cluster currently runs — with save-only edits on top it
+  // sits below latestRev, so the row gets an explicit marker.
+  const appliedRev = config?.appliedRev ?? 0
   const [selected, setSelected] = useState<number[]>([])
   const [diff, setDiff] = useState<{
     open: boolean
@@ -266,6 +269,14 @@ export function HistoryDialog({
                             t(
                               `applications.history.source.${revisionSourceKeys[revision.source] ?? 'render'}`
                             )
+                          )}
+                          {revision.rev === appliedRev && appliedRev > 0 && (
+                            <Badge
+                              variant="outline"
+                              className="text-[10px] text-emerald-600"
+                            >
+                              {t('applications.history.published')}
+                            </Badge>
                           )}
                           {revision.redacted && (
                             <Badge

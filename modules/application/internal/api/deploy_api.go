@@ -445,7 +445,7 @@ func (h *Handler) deployManifests(c *gin.Context, id identity, app *store.App, c
 // publishPending runs the apply pipeline for the resolved manifest set and
 // writes the deploy response.
 func (h *Handler) publishPending(c *gin.Context, ctx context.Context, id identity, app *store.App, cfg *store.AppConfig, cli client.Client, manifests []unstructured.Unstructured, dryRun bool, latestRev int, previewToken string) {
-	resp, err := h.applyPublish(ctx, id, app, cfg, cli, manifests, dryRun, previewToken)
+	resp, err := h.applyPublish(ctx, id, app, cfg, cli, manifests, dryRun, latestRev, previewToken)
 	if !h.publishFailure(c, err) {
 		return
 	}
@@ -630,8 +630,10 @@ func (h *Handler) rerenderForCredential(app *store.App, cfg *store.AppConfig, cr
 // is checked against the hash of the current diff before any write (design
 // §6: the confirmed preview must describe the cluster state being pushed).
 // With dryRun the apply only validates against the API server and the
-// response carries the previewToken of that diff.
-func (h *Handler) applyPublish(ctx context.Context, id identity, app *store.App, cfg *store.AppConfig, cli client.Client, manifests []unstructured.Unstructured, dryRun bool, previewToken string) (deployResponse, error) {
+// response carries the previewToken of that diff. appliedRev is the revision
+// the applied set was persisted as (0 — a bare republish of the stored set —
+// resolves to the newest revision when the result is written).
+func (h *Handler) applyPublish(ctx context.Context, id identity, app *store.App, cfg *store.AppConfig, cli client.Client, manifests []unstructured.Unstructured, dryRun bool, appliedRev int, previewToken string) (deployResponse, error) {
 	if !dryRun {
 		if err := h.ensureNamespace(ctx, id, cli, cfg.Cluster, cfg.Namespace); err != nil {
 			return deployResponse{}, err
@@ -704,7 +706,7 @@ func (h *Handler) applyPublish(ctx context.Context, id identity, app *store.App,
 
 	allOK := len(failedKeys) == 0
 	if !dryRun {
-		if err := h.persistDeployResult(cfg, anchor, anchorReadBacks, failedKeys, allOK); err != nil {
+		if err := h.persistDeployResult(cfg, anchor, anchorReadBacks, failedKeys, allOK, appliedRev); err != nil {
 			return deployResponse{}, err
 		}
 	}
@@ -1125,8 +1127,12 @@ func readBack(ctx context.Context, cli client.Client, doc *unstructured.Unstruct
 
 // persistDeployResult writes the anchor and the deploy bookkeeping in one
 // transaction: read-backs of applied documents replace the previous anchor,
-// failed documents keep theirs (design §6 读回锚定).
-func (h *Handler) persistDeployResult(cfg *store.AppConfig, previousAnchor, readBacks []unstructured.Unstructured, failedKeys map[string]bool, allOK bool) error {
+// failed documents keep theirs (design §6 读回锚定). On a fully successful
+// publish appliedRev becomes the config's live revision (a 0 appliedRev is a
+// bare republish of the stored set, i.e. the newest revision); a partial
+// failure leaves the marker untouched — the cluster then matches no single
+// revision until the error is republished.
+func (h *Handler) persistDeployResult(cfg *store.AppConfig, previousAnchor, readBacks []unstructured.Unstructured, failedKeys map[string]bool, allOK bool, appliedRev int) error {
 	var newAnchor []unstructured.Unstructured
 	for i := range previousAnchor {
 		if failedKeys[store.DocKeyOf(&previousAnchor[i])] {
@@ -1155,6 +1161,17 @@ func (h *Handler) persistDeployResult(cfg *store.AppConfig, previousAnchor, read
 		updates["last_deployed_at"] = now
 	}
 	return h.store.DB().Transaction(func(tx *gorm.DB) error {
+		if allOK {
+			if appliedRev == 0 {
+				if err := tx.Model(&store.ConfigRevision{}).
+					Where("app_config_id = ?", cfg.ID).
+					Select("COALESCE(MAX(rev), 0)").
+					Scan(&appliedRev).Error; err != nil {
+					return err
+				}
+			}
+			updates["applied_rev"] = appliedRev
+		}
 		return tx.Model(&store.AppConfig{}).Where("id = ?", cfg.ID).Updates(updates).Error
 	})
 }

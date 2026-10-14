@@ -87,6 +87,11 @@ type AppConfig struct {
 	// the anchor and the drift set.
 	CredentialRef string `json:"credentialRef" gorm:"type:varchar(63);not null;default:''"`
 
+	// AppliedRev is the revision whose content the last successful publish
+	// pushed to the cluster; save-only edits and pending saves never move it,
+	// so the history view can tell the live revision from the newest one.
+	AppliedRev int `json:"appliedRev" gorm:"not null;default:0"`
+
 	StatusSummary   string     `json:"statusSummary" gorm:"type:varchar(20);not null;default:'';index"`
 	StatusCheckedAt *time.Time `json:"statusCheckedAt"`
 

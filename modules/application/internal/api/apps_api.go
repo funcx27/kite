@@ -277,7 +277,9 @@ func (h *Handler) createAndDeployApp(c *gin.Context, id identity, app *store.App
 		return
 	}
 	h.auditAppCreated(id, app, &cfg, manifests)
-	resp, err := h.applyPublish(c.Request.Context(), id, app, &cfg, cli, docs, false, "")
+	// createConfigTx wrote rev1 in the same transaction; this publish is
+	// exactly that revision.
+	resp, err := h.applyPublish(c.Request.Context(), id, app, &cfg, cli, docs, false, 1, "")
 	if !h.publishFailure(c, err) {
 		return
 	}

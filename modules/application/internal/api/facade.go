@@ -180,7 +180,7 @@ func DeployWithImage(ctx context.Context, deps Deps, st *store.Store, space, app
 		return nil, err
 	}
 
-	resp, err := h.applyPublish(ctx, id, app, cfg, cli, manifests, dryRun, "")
+	resp, err := h.applyPublish(ctx, id, app, cfg, cli, manifests, dryRun, latestRev, "")
 	if err != nil {
 		return nil, err
 	}

@@ -50,6 +50,9 @@ type configResponse struct {
 	LastDeployedAt  *time.Time      `json:"lastDeployedAt"`
 	LastSyncedAt    *time.Time      `json:"lastSyncedAt"`
 	LatestRev       int             `json:"latestRev"`
+	// AppliedRev is the revision the last successful publish pushed to the
+	// cluster; 0 predates the marker or the config was never published.
+	AppliedRev int `json:"appliedRev"`
 }
 
 func toConfigResponse(cfg *store.AppConfig, latestRev int) configResponse {
@@ -68,6 +71,7 @@ func toConfigResponse(cfg *store.AppConfig, latestRev int) configResponse {
 		LastDeployedAt:  cfg.LastDeployedAt,
 		LastSyncedAt:    cfg.LastSyncedAt,
 		LatestRev:       latestRev,
+		AppliedRev:      cfg.AppliedRev,
 	}
 }
 

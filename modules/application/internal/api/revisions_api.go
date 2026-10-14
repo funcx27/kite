@@ -186,7 +186,7 @@ func (h *Handler) RollbackConfig(c *gin.Context) {
 	// The rollback persists first (its revision records the intent), mirroring
 	// the deploy path's image persist.
 	cfg.Manifests = store.SecretJSON(data)
-	resp, err := h.applyPublish(c.Request.Context(), h.requestIdentity(c), app, cfg, cli, rollbackDocs, false, "")
+	resp, err := h.applyPublish(c.Request.Context(), h.requestIdentity(c), app, cfg, cli, rollbackDocs, false, newRev, "")
 	var nf *namespaceForbiddenError
 	switch {
 	case errors.As(err, &nf):

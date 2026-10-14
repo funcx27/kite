@@ -134,6 +134,9 @@ export interface ApplicationConfig {
   lastDeployedAt: string | null
   lastSyncedAt: string | null
   latestRev: number
+  /** Revision the last successful publish pushed to the cluster; save-only
+   *  edits never move it. 0 = never published (or predates the marker). */
+  appliedRev: number
 }
 
 // Wizard edits handed over to the deploy dialog: persisted as a revision and

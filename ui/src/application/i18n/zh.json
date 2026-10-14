@@ -232,6 +232,7 @@
       "operator": "操作人",
       "time": "时间",
       "redacted": "已脱敏",
+      "published": "当前发布",
       "rollback": "回滚并发布",
       "rollbackConfirm": "确认回滚发布",
       "rollbackHint": "查看该版本与当前配置的差异，确认后回滚并发布",

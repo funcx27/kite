@@ -232,6 +232,7 @@
       "operator": "Operator",
       "time": "Time",
       "redacted": "redacted",
+      "published": "live on cluster",
       "rollback": "Roll back & publish",
       "rollbackConfirm": "Confirm rollback",
       "rollbackHint": "View the diff of this revision against the current config, then confirm to roll back and publish",

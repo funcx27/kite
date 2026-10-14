@@ -141,17 +141,20 @@ func (h *Handler) SyncConfig(c *gin.Context) {
 		if err != nil {
 			return err
 		}
-		if err := tx.Model(&store.AppConfig{}).Where("id = ?", cur.ID).Updates(map[string]interface{}{
+		// The revision lands first so applied_rev can name it: the sync
+		// revision's content is what the cluster now runs.
+		newRev, err = store.AppendRevisionTx(tx, cur.ID, store.RevSourceSync, data, h.deps.OperatorID(c), 0)
+		if err != nil {
+			return err
+		}
+		return tx.Model(&store.AppConfig{}).Where("id = ?", cur.ID).Updates(map[string]interface{}{
 			"manifests":         store.SecretJSON(data),
 			"last_applied":      store.SecretJSON(data),
+			"applied_rev":       newRev,
 			"status_summary":    store.StatusSynced,
 			"status_checked_at": now,
 			"last_synced_at":    now,
-		}).Error; err != nil {
-			return err
-		}
-		newRev, err = store.AppendRevisionTx(tx, cur.ID, store.RevSourceSync, data, h.deps.OperatorID(c), 0)
-		return err
+		}).Error
 	})
 	if txErr != nil {
 		h.fail(c, http.StatusInternalServerError, txErr, "")

@@ -142,16 +142,20 @@ func (h *Handler) ResolveConfig(c *gin.Context) {
 		if *req.ExpectedRev != maxRev {
 			return ErrConfigModified
 		}
-		if err := tx.Model(&store.AppConfig{}).Where("id = ?", cur.ID).Updates(map[string]interface{}{
-			"manifests":         store.SecretJSON(data),
-			"last_applied":      store.SecretJSON(anchorData),
-			"status_summary":    post.Status,
-			"status_checked_at": now,
-		}).Error; err != nil {
+		// The revision lands first so applied_rev can name it: resolving
+		// re-anchors by definition, so the resolve revision is what the
+		// cluster now runs.
+		newRev, err := store.AppendRevisionTx(tx, cur.ID, store.RevSourceResolve, data, h.deps.OperatorID(c), 0)
+		if err != nil {
 			return err
 		}
-		_, err = store.AppendRevisionTx(tx, cur.ID, store.RevSourceResolve, data, h.deps.OperatorID(c), 0)
-		return err
+		return tx.Model(&store.AppConfig{}).Where("id = ?", cur.ID).Updates(map[string]interface{}{
+			"manifests":         store.SecretJSON(data),
+			"last_applied":      store.SecretJSON(anchorData),
+			"applied_rev":       newRev,
+			"status_summary":    post.Status,
+			"status_checked_at": now,
+		}).Error
 	})
 	switch {
 	case errors.Is(txErr, ErrConfigModified), isConcurrentWriteError(txErr):
