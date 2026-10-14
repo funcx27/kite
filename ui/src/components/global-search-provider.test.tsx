@@ -1,12 +1,7 @@
-import { WorkModeProvider } from '@/platform/work-mode-context'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 import { GlobalSearchProvider, useGlobalSearch } from './global-search-provider'
-
-vi.mock('@/contexts/auth-context', () => ({
-  useAuth: () => ({ user: null }),
-}))
 
 function createStorage() {
   let store: Record<string, string> = {}
@@ -51,11 +46,9 @@ function GlobalSearchConsumer() {
 describe('GlobalSearchProvider', () => {
   it('toggles from the keyboard and closes on escape', async () => {
     render(
-      <WorkModeProvider>
-        <GlobalSearchProvider>
-          <GlobalSearchConsumer />
-        </GlobalSearchProvider>
-      </WorkModeProvider>
+      <GlobalSearchProvider>
+        <GlobalSearchConsumer />
+      </GlobalSearchProvider>
     )
 
     expect(screen.getByTestId('state')).toHaveTextContent('closed')

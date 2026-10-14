@@ -1,8 +1,6 @@
 import { createBrowserRouter } from 'react-router-dom'
 
 import App, { StandaloneAIChatApp } from './App'
-import { applicationRoutes } from './application/routes'
-import { buildfleetRoutes } from './buildfleet/routes'
 import { InitCheckRoute } from './components/init-check-route'
 import { ProtectedRoute } from './components/protected-route'
 import { getSubPath } from './lib/subpath'
@@ -11,11 +9,10 @@ import { HelmChartDetailPage } from './pages/helm-chart-detail-page'
 import { HelmChartListPage } from './pages/helm-chart-list-page'
 import { InitializationPage } from './pages/initialization'
 import { LoginPage } from './pages/login'
+import { Overview } from './pages/overview'
 import { ResourceDetail } from './pages/resource-detail'
 import { ResourceList } from './pages/resource-list'
 import { SettingsPage } from './pages/settings'
-import { HomeRoute } from './platform/home-route'
-import { workflowRoutes } from './workflow/routes'
 
 const subPath = getSubPath()
 
@@ -55,11 +52,11 @@ export const router = createBrowserRouter(
       children: [
         {
           index: true,
-          element: <HomeRoute />,
+          element: <Overview />,
         },
         {
           path: 'dashboard',
-          element: <HomeRoute />,
+          element: <Overview />,
         },
         {
           path: 'settings',
@@ -85,12 +82,6 @@ export const router = createBrowserRouter(
           path: 'crds/:resource/:name',
           element: <ResourceDetail />,
         },
-        // Platform module routes (application stays ahead of the :resource
-        // wildcards below, design §11); each block is imported from its own
-        // module directory.
-        ...applicationRoutes,
-        ...buildfleetRoutes,
-        ...workflowRoutes,
         {
           path: ':resource/:name',
           element: <ResourceDetail />,

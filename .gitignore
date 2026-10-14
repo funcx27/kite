@@ -53,3 +53,5 @@ kite
 
 # e2e demo scripts' generated screenshots
 e2e/scripts/artifacts/
+
+.zcodeignore

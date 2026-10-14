@@ -804,11 +804,6 @@
       "apikeys": "API 密钥"
     }
   },
-  "applicationSettings": {
-    "description": "管理应用模式的设置",
-    "viewGlobal": "查看全局设置",
-    "viewSpace": "查看 {{name}} 的空间设置"
-  },
   "generalManagement": {
     "title": "通用设置",
     "description": "管理全局功能开关。",

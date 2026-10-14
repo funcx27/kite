@@ -1,14 +1,5 @@
 {
   "nav": {
     "applications": "Applications"
-  },
-  "workMode": {
-    "label": "Work Mode",
-    "application": "Application Mode",
-    "professional": "Professional Mode",
-    "switchToApplication": "Switch to Application Mode",
-    "switchToProfessional": "Switch to Professional Mode",
-    "currentApplication": "Current: Application Mode",
-    "currentProfessional": "Current: Professional Mode"
   }
 }

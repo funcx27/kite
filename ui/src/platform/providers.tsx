@@ -1,14 +1,9 @@
 import type { ReactNode } from 'react'
 
 import { SpaceProvider } from './space-context'
-import { WorkModeProvider } from './work-mode-context'
 
-// The platform shell's context stack, mounted by the host App.tsx as the
-// single shell-level integration point (see modules/README.md).
+// The platform shell's context stack, mounted by the platform SPA root
+// (src/platform/main.tsx) as the single shell-level integration point.
 export function PlatformProviders({ children }: { children: ReactNode }) {
-  return (
-    <WorkModeProvider>
-      <SpaceProvider>{children}</SpaceProvider>
-    </WorkModeProvider>
-  )
+  return <SpaceProvider>{children}</SpaceProvider>
 }

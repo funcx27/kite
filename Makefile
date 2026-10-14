@@ -97,7 +97,7 @@ frontend: static ## Build frontend only
 # make's ** glob is not recursive, so ui/src/**/*.tsx missed deeper files and
 # stale binaries were served as "up to date"; collect sources with find.
 # .json/.css ride along: i18n-only or style-only edits must rebuild too.
-UI_SOURCES := $(shell find $(UI_DIR)/src \( -name '*.tsx' -o -name '*.ts' -o -name '*.json' -o -name '*.css' \) 2>/dev/null) $(UI_DIR)/index.html
+UI_SOURCES := $(shell find $(UI_DIR)/src \( -name '*.tsx' -o -name '*.ts' -o -name '*.json' -o -name '*.css' \) 2>/dev/null) $(UI_DIR)/index.html $(UI_DIR)/platform.html
 static: $(UI_SOURCES) $(UI_DIR)/package.json $(UI_DIR)/vite.config.ts
 	@echo "📦 Ensuring static files are built..."
 	cd $(UI_DIR) && pnpm run build
@@ -144,8 +144,11 @@ format: ## Format code
 	cd $(UI_DIR) && pnpm run format
 
 # Pre-commit checks
-pre-commit: format lint ## Run pre-commit checks
+pre-commit: format lint check-ui-boundaries ## Run pre-commit checks
 	@echo "✅ Pre-commit checks completed!"
+
+check-ui-boundaries: ## Check ui/src module boundary rules
+	./scripts/check-ui-boundaries.sh
 
 test: ## Run tests
 	@echo "🧪 Running tests..."

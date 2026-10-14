@@ -30,6 +30,7 @@ import { useTranslation } from 'react-i18next'
 import { Link, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 
+import { ActionTable } from '@/lib/action-table'
 import { cn, formatDate, translateError } from '@/lib/utils'
 import { useCluster } from '@/hooks/use-cluster'
 import { usePageTitle } from '@/hooks/use-page-title'
@@ -48,7 +49,6 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover'
-import { ActionTable } from '@/components/action-table'
 
 // Application list (design §11): ActionTable with a ready-first status column
 // (one row per cluster config), a space column, and a cluster filter in the

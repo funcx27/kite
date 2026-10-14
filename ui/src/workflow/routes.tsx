@@ -1,6 +1,6 @@
 // Workflow module routes (design §11): list, create/edit editor, per-workflow
-// run list and run view. Mounted by the host ui/src/routes.tsx ahead of the
-// :resource wildcards.
+// run list and run view. Mounted by the platform SPA root
+// (src/platform/main.tsx).
 import type { RouteObject } from 'react-router-dom'
 
 import { WorkflowEditorPage } from './pages/workflow-editor-page'

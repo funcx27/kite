@@ -379,8 +379,6 @@
     "unsetGlobal": "Unset global sidebar",
     "unsetGlobalSuccess": "Global sidebar disabled successfully",
     "unsetGlobalError": "Failed to disable global sidebar",
-    "expand": "Expand",
-    "collapse": "Collapse",
     "updateAvailable": "A newer Kite version is available"
   },
   "nav": {
@@ -795,11 +793,6 @@
       "rbac": "RBAC",
       "users": "User"
     }
-  },
-  "applicationSettings": {
-    "description": "Manage settings for application mode",
-    "viewGlobal": "View global settings",
-    "viewSpace": "View {{name}} space settings"
   },
   "generalManagement": {
     "title": "General",

@@ -14,13 +14,13 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { APIKey } from '@/types/api'
+import { Action, ActionTable } from '@/lib/action-table'
 import { createAPIKey, deleteAPIKey, useAPIKeyList } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { DeleteConfirmationDialog } from '@/components/delete-confirmation-dialog'
 
-import { Action, ActionTable } from '../action-table'
 import { APIKeyDialog } from './apikey-dialog'
 import UserRoleAssignment from './user-role-assignment'
 

@@ -11,6 +11,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { ResourceTemplate } from '@/types/api'
+import { Action, ActionTable } from '@/lib/action-table'
 import {
   createTemplate,
   deleteTemplate,
@@ -32,8 +33,6 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { DeleteConfirmationDialog } from '@/components/delete-confirmation-dialog'
 import { SimpleYamlEditor } from '@/components/simple-yaml-editor'
-
-import { Action, ActionTable } from '../action-table'
 
 export function TemplateManagement() {
   const { t } = useTranslation()

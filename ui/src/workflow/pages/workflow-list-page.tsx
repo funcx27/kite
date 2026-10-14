@@ -12,6 +12,7 @@ import { useTranslation } from 'react-i18next'
 import { Link, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 
+import { ActionTable, type Action } from '@/lib/action-table'
 import { formatDate } from '@/lib/utils'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { Badge } from '@/components/ui/badge'
@@ -31,7 +32,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { ActionTable, type Action } from '@/components/action-table'
 
 import {
   useDeleteWorkflowMutation,

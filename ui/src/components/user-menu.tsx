@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { useAuth } from '@/contexts/auth-context'
-import { WorkModeMenuItem } from '@/platform/work-mode-menu-item'
 import {
   CaseSensitive,
   Check,
@@ -150,8 +149,6 @@ export function UserMenu() {
               <DropdownMenuSeparator />
             </>
           )}
-
-          <WorkModeMenuItem />
 
           <DropdownMenuSub>
             <DropdownMenuSubTrigger>

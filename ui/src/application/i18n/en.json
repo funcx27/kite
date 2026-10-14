@@ -422,5 +422,10 @@
     "valueFrom": "Value From",
     "variableName": "Variable name",
     "variableValue": "Variable value"
+  },
+  "applicationSettings": {
+    "description": "Manage settings for application mode",
+    "viewGlobal": "View global settings",
+    "viewSpace": "View {{name}} space settings"
   }
 }

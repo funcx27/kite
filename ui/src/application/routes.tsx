@@ -1,4 +1,3 @@
-import { ApplicationModeRoute } from '@/platform/home-route'
 import type { RouteObject } from 'react-router-dom'
 
 import { ApplicationDetailPage } from './pages/application-detail-page'
@@ -8,47 +7,27 @@ import { ApplicationSettingsPage } from './pages/application-settings-page'
 
 import './i18n'
 
-// Application module routes: application-mode only, kept ahead of the
-// :resource wildcards in the host routes (design §11).
+// Application module routes, mounted by the platform SPA root
+// (src/platform/main.tsx).
 export const applicationRoutes: RouteObject[] = [
   {
     path: 'applications',
-    element: (
-      <ApplicationModeRoute>
-        <ApplicationListPage />
-      </ApplicationModeRoute>
-    ),
+    element: <ApplicationListPage />,
   },
   {
     path: 'applications/:space/:name',
-    element: (
-      <ApplicationModeRoute>
-        <ApplicationDetailPage />
-      </ApplicationModeRoute>
-    ),
+    element: <ApplicationDetailPage />,
   },
   {
     path: 'applications/:space/:name/clusters/:cluster',
-    element: (
-      <ApplicationModeRoute>
-        <ApplicationDetailPage />
-      </ApplicationModeRoute>
-    ),
+    element: <ApplicationDetailPage />,
   },
   {
     path: 'applications/:space/:name/clusters/:cluster/pods/:pod',
-    element: (
-      <ApplicationModeRoute>
-        <ApplicationPodPage />
-      </ApplicationModeRoute>
-    ),
+    element: <ApplicationPodPage />,
   },
   {
     path: 'application-settings',
-    element: (
-      <ApplicationModeRoute>
-        <ApplicationSettingsPage />
-      </ApplicationModeRoute>
-    ),
+    element: <ApplicationSettingsPage />,
   },
 ]

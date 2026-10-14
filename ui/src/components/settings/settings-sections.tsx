@@ -1,4 +1,5 @@
 import type { ComponentType, ReactNode } from 'react'
+import { KcrossManagement } from '@/kcross/kcross-management'
 import type { TFunction } from 'i18next'
 
 import { APIKeyManagement } from './apikey-management'
@@ -6,7 +7,6 @@ import { AuditLog } from './audit-log'
 import { AuthenticationManagement } from './authentication-management'
 import { ClusterManagement } from './cluster-management'
 import { GeneralManagement } from './general-management'
-import { KcrossManagement } from './kcross-management'
 import { RBACManagement } from './rbac-management'
 import { TemplateManagement } from './template-management'
 import { UserManagement } from './user-management'

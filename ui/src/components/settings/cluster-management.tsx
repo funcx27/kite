@@ -13,6 +13,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { Cluster } from '@/types/api'
+import { Action, ActionTable } from '@/lib/action-table'
 import {
   ClusterCreateRequest,
   ClusterUpdateRequest,
@@ -45,7 +46,6 @@ import {
 } from '@/components/ui/tooltip'
 import { DeleteConfirmationDialog } from '@/components/delete-confirmation-dialog'
 
-import { Action, ActionTable } from '../action-table'
 import { ClusterDialog } from './cluster-dialog'
 import { ClusterImportDialog } from './cluster-import-dialog'
 

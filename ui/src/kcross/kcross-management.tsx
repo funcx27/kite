@@ -23,6 +23,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { Cluster } from '@/types/api'
+import { ActionTable } from '@/lib/action-table'
 import { createCluster, deleteCluster } from '@/lib/api'
 import { fetchClusterList, updateCluster } from '@/lib/api/admin'
 import { Badge } from '@/components/ui/badge'
@@ -39,9 +40,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { DeleteConfirmationDialog } from '@/components/delete-confirmation-dialog'
+import { ClusterDialog } from '@/components/settings/cluster-dialog'
 
-import { ActionTable } from '../action-table'
-import { ClusterDialog } from './cluster-dialog'
 import { KcrossPeerTerminal } from './kcross-peer-terminal'
 
 // kubernetes 能力前缀匹配：兼容 kubernetes-acluster 等多集群命名

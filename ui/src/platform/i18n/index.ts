@@ -1,6 +1,6 @@
 // Registers the platform shell's own translations into the shared
 // 'translation' namespace (deep-merged at import time, before first render —
-// module routes are imported eagerly by ui/src/routes.tsx). Keys live under
+// imported eagerly by src/platform/main.tsx). Keys live under
 // module-owned prefixes so they never collide with upstream ones.
 import i18n from '@/i18n'
 

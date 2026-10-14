@@ -22,6 +22,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { UserItem } from '@/types/api'
+import { Action } from '@/lib/action-table'
 import {
   createPasswordUser,
   deleteUser,
@@ -58,7 +59,6 @@ import {
 import { DeleteConfirmationDialog } from '@/components/delete-confirmation-dialog'
 import { ResourceTableView } from '@/components/resource-table-view'
 
-import { Action } from '../action-table'
 import { Badge } from '../ui/badge'
 import UserRoleAssignment from './user-role-assignment'
 

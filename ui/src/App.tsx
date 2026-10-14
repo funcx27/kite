@@ -1,6 +1,6 @@
 import './App.css'
 
-import { CSSProperties, ReactNode } from 'react'
+import { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Outlet, useSearchParams } from 'react-router-dom'
 
@@ -20,10 +20,6 @@ import { AIChatProvider } from './contexts/ai-chat-context'
 import { ClusterProvider } from './contexts/cluster-context'
 import { TerminalProvider, useTerminal } from './contexts/terminal-context'
 import { useCluster } from './hooks/use-cluster'
-import { ApplicationHeader } from './platform/application-header'
-import { ApplicationSidebar } from './platform/application-sidebar'
-import { PlatformProviders } from './platform/providers'
-import { useWorkMode } from './platform/work-mode-context'
 
 function ClusterGate({ children }: { children: ReactNode }) {
   const { t } = useTranslation()
@@ -56,7 +52,6 @@ function ClusterGate({ children }: { children: ReactNode }) {
 function AppContent() {
   const { isOpen, closeSearch } = useGlobalSearch()
   const { isOpen: isTerminalOpen } = useTerminal()
-  const { isApplicationMode } = useWorkMode()
   const [searchParams] = useSearchParams()
   const isIframe = searchParams.get('iframe') === 'true'
 
@@ -66,22 +61,10 @@ function AppContent() {
 
   return (
     <>
-      {/* Application mode uses a narrower sidebar; the override must sit on
-          the provider because the gap and container both read --sidebar-width. */}
-      <SidebarProvider
-        style={
-          isApplicationMode
-            ? ({ '--sidebar-width': '12rem' } as CSSProperties)
-            : undefined
-        }
-      >
-        {isApplicationMode ? (
-          <ApplicationSidebar variant="inset" />
-        ) : (
-          <AppSidebar variant="inset" />
-        )}
+      <SidebarProvider>
+        <AppSidebar variant="inset" />
         <SidebarInset className="h-dvh overflow-y-auto overscroll-none scrollbar-hide">
-          {isApplicationMode ? <ApplicationHeader /> : <SiteHeader />}
+          <SiteHeader />
           <div className="@container/main flex min-h-0 flex-1 flex-col">
             <div className="flex min-h-0 flex-1 flex-col gap-4 py-4 md:gap-6">
               <div className="flex min-h-0 flex-1 flex-col px-4 lg:px-6">
@@ -93,7 +76,7 @@ function AppContent() {
           </div>
         </SidebarInset>
       </SidebarProvider>
-      {!isApplicationMode && isOpen ? (
+      {isOpen ? (
         <GlobalSearch open={isOpen} onOpenChange={closeSearch} />
       ) : null}
       {isTerminalOpen ? (
@@ -113,11 +96,9 @@ function AppProviders({ children }: { children: ReactNode }) {
   return (
     <TerminalProvider>
       <ClusterProvider>
-        <PlatformProviders>
-          <GlobalSearchProvider>
-            <AIChatProvider>{children}</AIChatProvider>
-          </GlobalSearchProvider>
-        </PlatformProviders>
+        <GlobalSearchProvider>
+          <AIChatProvider>{children}</AIChatProvider>
+        </GlobalSearchProvider>
       </ClusterProvider>
     </TerminalProvider>
   )

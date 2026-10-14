@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from 'fs'
+import { existsSync, readFileSync, writeFileSync } from 'fs'
 import path from 'path'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
@@ -16,6 +16,17 @@ function getDevBase() {
 
 function getManualChunk(id: string) {
   const normalizedId = id.replaceAll('\\', '/')
+
+  // Shared across both HTML entries; a stable name keeps it one cacheable
+  // chunk instead of per-entry copies.
+  if (
+    normalizedId.includes('/node_modules/react/') ||
+    normalizedId.includes('/node_modules/react-dom/') ||
+    normalizedId.includes('/node_modules/scheduler/') ||
+    normalizedId.includes('/node_modules/@tanstack/')
+  ) {
+    return 'vendor'
+  }
 
   if (
     normalizedId.includes('/src/lib/monaco-runtime.ts') ||
@@ -49,6 +60,44 @@ function getManualChunk(id: string) {
   return undefined
 }
 
+// Paths owned by the platform SPA entry. Must match the server-side fallback
+// prefixes in static.go.
+const platformRoutePrefixes = [
+  '/applications',
+  '/application-settings',
+  '/workflows',
+  '/buildfleet',
+]
+
+// The dev server's SPA fallback only knows about index.html; without this,
+// hard navigations to platform routes would boot the console entry, whose
+// :resource catch-all would render them as cluster resource pages.
+function platformSpaFallbackPlugin(): Plugin {
+  return {
+    name: 'kite-platform-spa-fallback',
+    apply: 'serve',
+    configureServer(server) {
+      server.middlewares.use((req, _res, next) => {
+        if (req.method !== 'GET' && req.method !== 'HEAD') return next()
+        if (!req.headers.accept?.includes('text/html')) return next()
+
+        const pathname = req.url?.split('?', 1)[0] ?? ''
+        const withoutBase = devSubPath
+          ? pathname.slice(devSubPath.length)
+          : pathname
+        const matches = platformRoutePrefixes.some(
+          (prefix) =>
+            withoutBase === prefix || withoutBase.startsWith(`${prefix}/`)
+        )
+        if (matches) {
+          req.url = `${devSubPath}/platform.html`
+        }
+        next()
+      })
+    },
+  }
+}
+
 function runtimeBaseHtmlPlugin(): Plugin {
   let buildOutDir = ''
 
@@ -59,17 +108,23 @@ function runtimeBaseHtmlPlugin(): Plugin {
       buildOutDir = path.resolve(config.root, config.build.outDir)
     },
     closeBundle() {
-      const indexHtmlPath = path.join(buildOutDir, 'index.html')
-      const html = readFileSync(indexHtmlPath, 'utf8')
+      // Every HTML entry served at arbitrary SPA routes needs the runtime
+      // base in its asset URLs; relative ./assets would resolve against the
+      // current route instead of the deploy root.
+      for (const htmlName of ['index.html', 'platform.html']) {
+        const htmlPath = path.join(buildOutDir, htmlName)
+        if (!existsSync(htmlPath)) continue
+        const html = readFileSync(htmlPath, 'utf8')
 
-      // Make the first HTML-loaded assets runtime-base aware without relying on <base href>.
-      const nextHtml = html.replaceAll(
-        /((?:href|src)=["'])\.\/assets\//g,
-        `$1${runtimeBasePlaceholder}/assets/`
-      )
+        // Make the first HTML-loaded assets runtime-base aware without relying on <base href>.
+        const nextHtml = html.replaceAll(
+          /((?:href|src)=["'])\.\/assets\//g,
+          `$1${runtimeBasePlaceholder}/assets/`
+        )
 
-      if (nextHtml !== html) {
-        writeFileSync(indexHtmlPath, nextHtml)
+        if (nextHtml !== html) {
+          writeFileSync(htmlPath, nextHtml)
+        }
       }
     },
   }
@@ -98,6 +153,7 @@ export default defineConfig(({ command }) => ({
       ],
     }),
     runtimeBaseHtmlPlugin(),
+    platformSpaFallbackPlugin(),
   ],
   envPrefix: ['VITE_', 'KITE_'],
   build: {
@@ -106,6 +162,10 @@ export default defineConfig(({ command }) => ({
     chunkSizeWarningLimit: 3000,
     modulePreload: true,
     rolldownOptions: {
+      input: {
+        main: path.resolve(import.meta.dirname, 'index.html'),
+        platform: path.resolve(import.meta.dirname, 'platform.html'),
+      },
       output: {
         manualChunks: getManualChunk,
       },
