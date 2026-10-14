@@ -30,6 +30,8 @@ import '@xyflow/react/dist/style.css'
 import { Bell, Rocket, ShieldCheck, Wrench } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
+import { useAppearance } from '@/components/appearance-provider'
+
 import {
   WORKFLOW_NODE_CARD,
   WORKFLOW_NODE_MIME,
@@ -102,7 +104,7 @@ const WorkflowNodeCard = memo(
     const Icon = typeIcons[data.nodeType] ?? Wrench
     return (
       <div
-        className={`w-44 rounded-lg border bg-card px-3 py-2.5 shadow-sm transition-shadow hover:shadow-md ${
+        className={`relative w-44 rounded-lg border bg-card px-3 py-2.5 shadow-sm transition-shadow hover:shadow-md ${
           selected ? 'border-primary ring-2 ring-primary/30' : 'border-border'
         }`}
       >
@@ -248,6 +250,7 @@ function CanvasInner({
   onDropNode,
 }: FlowCanvasProps) {
   const { screenToFlowPosition } = useReactFlow()
+  const { actualTheme } = useAppearance()
 
   // Read-only canvas: mark nodes so the card hides its connection handles
   // (invisible + non-interactive, still mounted as edge anchors).
@@ -310,6 +313,7 @@ function CanvasInner({
           : (connection) => connection.source !== connection.target
       }
       deleteKeyCode={readOnly ? null : ['Backspace', 'Delete']}
+      colorMode={actualTheme === 'dark' ? 'dark' : 'light'}
       fitView
       proOptions={{ hideAttribution: true }}
       className="bg-muted/30"
