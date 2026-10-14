@@ -227,7 +227,10 @@ export function WebhookTokenDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      {/* minmax(0,1fr) keeps the grid column at the dialog width — the
+          unbreakable URL/Token strings otherwise size the auto track to
+          max-content and push the Copy buttons out of the viewport. */}
+      <DialogContent className="grid-cols-[minmax(0,1fr)]">
         <DialogHeader>
           <DialogTitle>{t('workflow.list.webhookToken')}</DialogTitle>
           <DialogDescription>
@@ -240,7 +243,7 @@ export function WebhookTokenDialog({
             {isLoading ? (
               <Skeleton className="h-9 w-full" />
             ) : (
-              <div className="flex items-center gap-2">
+              <div className="flex min-w-0 items-center gap-2">
                 <code className="min-w-0 flex-1 truncate rounded bg-muted px-2 py-2 font-mono text-xs">
                   {webhookUrl}
                 </code>
@@ -257,7 +260,7 @@ export function WebhookTokenDialog({
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs">{t('workflow.list.tokenLabel')}</Label>
-            <div className="flex items-center gap-2">
+            <div className="flex min-w-0 items-center gap-2">
               <code className="min-w-0 flex-1 truncate rounded bg-muted px-2 py-2 font-mono text-xs">
                 {data?.token ?? ''}
               </code>
@@ -272,7 +275,7 @@ export function WebhookTokenDialog({
             </div>
           </div>
           <div className="flex items-center justify-between gap-2">
-            <p className="text-xs text-muted-foreground">
+            <p className="min-w-0 text-xs text-muted-foreground">
               {t('workflow.list.resetTokenConfirm')}
             </p>
             <Button

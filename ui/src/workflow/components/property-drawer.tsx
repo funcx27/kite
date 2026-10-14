@@ -4,9 +4,10 @@
 // the host (clusters, applications, credentials) render as selects and fall
 // back to free text when the list cannot serve a pick.
 import { useMemo, useRef, useState } from 'react'
-import { useApplications } from '@/application/api'
+import { useApplications, useSpaceQuotas } from '@/application/api'
 import { useSpaces } from '@/platform/space-context'
 import {
+  IconAdjustmentsHorizontal,
   IconCheck,
   IconChevronDown,
   IconChevronRight,
@@ -219,6 +220,11 @@ export function PropertyDrawer({
   const patchProps = (key: string, value: unknown) =>
     onChange({ ...node, props: { ...(node.props ?? {}), [key]: value } })
 
+  // Node-level fields (onFailure/timeout) live inside each type form's
+  // advanced section, so the forms need the same node-snapshot patch path.
+  const patchNode = (updates: Partial<WorkflowNode>) =>
+    onChange({ ...node, ...updates })
+
   // Selecting a deploy target writes the space+app pair in one change: two
   // separate patchProps calls would race on the same stale node snapshot and
   // drop the first field.
@@ -265,44 +271,6 @@ export function PropertyDrawer({
             onFocus={() => (focusedField.current = '__name__')}
           />
         </Field>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label={t('workflow.editor.onFailure')}>
-            <Select
-              value={node.onFailure ?? 'stop'}
-              onValueChange={(v) =>
-                onChange({
-                  ...node,
-                  onFailure: v === 'stop' ? undefined : (v as 'continue'),
-                })
-              }
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="stop">
-                  {t('workflow.editor.onFailureStop')}
-                </SelectItem>
-                <SelectItem value="continue">
-                  {t('workflow.editor.onFailureContinue')}
-                </SelectItem>
-              </SelectContent>
-            </Select>
-          </Field>
-          <Field
-            label={t('workflow.editor.timeout')}
-            hint={t('workflow.editor.timeoutHint')}
-          >
-            <Input
-              value={node.timeout ?? ''}
-              onChange={(e) =>
-                onChange({ ...node, timeout: e.target.value || undefined })
-              }
-              placeholder="24h"
-            />
-          </Field>
-        </div>
-
         <Separator />
 
         {node.type === 'build-image' && (
@@ -310,6 +278,7 @@ export function PropertyDrawer({
             key={node.id}
             node={node}
             patchProps={patchProps}
+            patchNode={patchNode}
             onFocusField={(f) => (focusedField.current = f)}
             templateVars={templateInputVars}
           />
@@ -319,6 +288,7 @@ export function PropertyDrawer({
             key={node.id}
             node={node}
             patchProps={patchProps}
+            patchNode={patchNode}
             onSelectApp={patchAppTarget}
             onFocusField={(f) => (focusedField.current = f)}
             templateVars={templateInputVars}
@@ -326,16 +296,20 @@ export function PropertyDrawer({
         )}
         {node.type === 'approval' && (
           <ApprovalPropsForm
+            key={node.id}
             node={node}
             patchProps={patchProps}
+            patchNode={patchNode}
             onFocusField={(f) => (focusedField.current = f)}
             templateVars={templateInputVars}
           />
         )}
         {node.type === 'notify' && (
           <NotifyPropsForm
+            key={node.id}
             node={node}
             patchProps={patchProps}
+            patchNode={patchNode}
             onFocusField={(f) => (focusedField.current = f)}
             templateVars={templateInputVars}
           />
@@ -416,6 +390,8 @@ function Field({
 interface PropsFormShared {
   node: WorkflowNode
   patchProps: (key: string, value: unknown) => void
+  /** Patches node-level fields (onFailure/timeout) on the current snapshot. */
+  patchNode: (updates: Partial<WorkflowNode>) => void
   onFocusField: (field: string) => void
   // Autocomplete inputs for TemplateInput fields: params, sibling nodes and
   // the owning node id (its own outputs stay out of the suggestions).
@@ -440,9 +416,12 @@ function setStringProp(
   onChange({ ...node, props: { ...(node.props ?? {}), [key]: value } })
 }
 
-// AdvancedCollapsible folds a props form's low-frequency fields. The owning
-// forms are keyed by node id, so each selection re-derives the initial open
-// state from that node's stored values.
+// AdvancedCollapsible folds a props form's low-frequency fields behind a
+// full-width block: header and expanded content share one bordered box, so
+// the fold reads as a single "advanced" group. Label text sits left, the
+// chevron sits at the far right and turns down when open. The owning forms
+// are keyed by node id, so each selection re-derives the initial open state
+// from that node's stored values.
 function AdvancedCollapsible({
   open,
   onOpenChange,
@@ -454,26 +433,83 @@ function AdvancedCollapsible({
 }) {
   const { t } = useTranslation()
   return (
-    <Collapsible open={open} onOpenChange={onOpenChange}>
-      <CollapsibleTrigger className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent/50">
+    <Collapsible
+      open={open}
+      onOpenChange={onOpenChange}
+      className="rounded-md border bg-muted"
+    >
+      <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/70">
+        <span className="flex items-center gap-1.5">
+          <IconAdjustmentsHorizontal className="h-3.5 w-3.5" />
+          {t('workflow.props.advancedSection')}
+        </span>
         <IconChevronRight
           className={cn(
-            'h-4 w-4 shrink-0 text-muted-foreground transition-transform',
+            'h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform',
             open && 'rotate-90'
           )}
         />
-        {t('workflow.props.advancedSection')}
       </CollapsibleTrigger>
-      <CollapsibleContent className="space-y-4 pt-3">
+      <CollapsibleContent className="space-y-4 rounded-b-md border-t bg-background px-3 pb-3 pt-3">
         {children}
       </CollapsibleContent>
     </Collapsible>
   )
 }
 
+// The shared failure-strategy/timeout fields render inside each type form's
+// advanced section (one fold per drawer), so the forms receive patchNode for
+// these node-level writes.
+function SharedAdvancedFields({
+  node,
+  patchNode,
+}: {
+  node: WorkflowNode
+  patchNode: (updates: Partial<WorkflowNode>) => void
+}) {
+  const { t } = useTranslation()
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      <Field label={t('workflow.editor.onFailure')}>
+        <Select
+          value={node.onFailure ?? 'stop'}
+          onValueChange={(v) =>
+            patchNode({
+              onFailure: v === 'stop' ? undefined : (v as 'continue'),
+            })
+          }
+        >
+          <SelectTrigger className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="stop">
+              {t('workflow.editor.onFailureStop')}
+            </SelectItem>
+            <SelectItem value="continue">
+              {t('workflow.editor.onFailureContinue')}
+            </SelectItem>
+          </SelectContent>
+        </Select>
+      </Field>
+      <Field
+        label={t('workflow.editor.timeout')}
+        hint={t('workflow.editor.timeoutHint')}
+      >
+        <Input
+          value={node.timeout ?? ''}
+          onChange={(e) => patchNode({ timeout: e.target.value || undefined })}
+          placeholder="24h"
+        />
+      </Field>
+    </div>
+  )
+}
+
 function BuildPropsForm({
   node,
   patchProps,
+  patchNode,
   onFocusField,
   templateVars,
 }: PropsFormShared) {
@@ -501,7 +537,9 @@ function BuildPropsForm({
   // The advanced section starts collapsed unless one of its fields already
   // carries a value, so configured options never hide behind the fold.
   const [advancedOpen, setAdvancedOpen] = useState(
-    readNestedString(node, 'git', 'subdir') !== '' ||
+    node.onFailure !== undefined ||
+      node.timeout !== undefined ||
+      readNestedString(node, 'git', 'subdir') !== '' ||
       readStringProp(node, 'httpUrl') !== '' ||
       readStringProp(node, 'dockerfileContent') !== '' ||
       args !== '' ||
@@ -580,6 +618,7 @@ function BuildPropsForm({
         />
       </Field>
       <AdvancedCollapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
+        <SharedAdvancedFields node={node} patchNode={patchNode} />
         {sourceKind === 'git' && (
           <Field label={t('workflow.props.gitSubdir')}>
             <TemplateInput
@@ -631,12 +670,11 @@ function BuildPropsForm({
           label={t('workflow.props.platforms')}
           hint={t('workflow.props.platformsHint')}
         >
-          <Input
-            value={
-              (node.props?.platforms as string[] | undefined)?.join(',') ?? ''
+          <PlatformsSelect
+            values={(node.props?.platforms as string[] | undefined) ?? []}
+            onChange={(next) =>
+              patchProps('platforms', next.length > 0 ? next : undefined)
             }
-            onChange={(e) => patchProps('platforms', splitList(e.target.value))}
-            onFocus={() => onFocusField('platforms')}
           />
         </Field>
       </AdvancedCollapsible>
@@ -655,6 +693,7 @@ interface AppOption {
 function DeployPropsForm({
   node,
   patchProps,
+  patchNode,
   onSelectApp,
   onFocusField,
   templateVars,
@@ -663,7 +702,7 @@ function DeployPropsForm({
 }) {
   const { t } = useTranslation()
   const { clusters } = useCluster()
-  const { currentSpace } = useSpaces()
+  const { currentSpace, spaceClusters } = useSpaces()
   const { data: applications } = useApplications()
   // Registry credentials feed the pull-secret pick; the Select degrades to a
   // plain input when the list failed to load or is empty (same contract as
@@ -681,6 +720,13 @@ function DeployPropsForm({
   // pair; a saved space always wins so legacy nodes keep deploying where
   // their spec says.
   const selectedSpace = savedSpace || currentSpace || ''
+  // A space is deployable only where it was adopted — a configured managed
+  // quota. The labeled namespace alone can pre-exist on non-adopted clusters
+  // (quota row `unconfigured`), so namespace presence is not a sufficient
+  // scope.
+  const { data: spaceQuotaRows, isError: spaceQuotasFailed } = useSpaceQuotas(
+    selectedSpace === '' ? undefined : selectedSpace
+  )
 
   const appOptions: AppOption[] = (applications ?? [])
     .filter((app) => app.namespace === selectedSpace)
@@ -696,26 +742,63 @@ function DeployPropsForm({
   const options = appEcho ? [appEcho, ...appOptions] : appOptions
 
   // Clusters the selected app already has configs on sort first; the rest
-  // stay selectable so a brand-new binding can be created.
+  // stay selectable so a brand-new binding can be created. A space-bound
+  // node offers only the space's adopted clusters; an unset space (platform
+  // flow / all spaces) keeps the full list.
   const clusterOptions = useMemo(() => {
     const usable = clusters.filter((cluster) => !cluster.error)
-    if (savedSpace === '' || savedApp === '') return usable
+    // Adopted = quota configured AND the labeled namespace present: the
+    // namespace can pre-exist without a quota (quota row `unconfigured`),
+    // and the managed quota lingers after a dissociate (the marker is only
+    // removed from the namespace) — the intersection drops both.
+    const nsSet = new Set(spaceClusters[selectedSpace] ?? [])
+    const adoptedSet =
+      selectedSpace === '' || spaceQuotasFailed
+        ? null
+        : new Set(
+            (spaceQuotaRows?.quotas ?? [])
+              .filter(
+                (row) =>
+                  !row.unconfigured &&
+                  !row.unauthorized &&
+                  !row.error &&
+                  nsSet.has(row.cluster)
+              )
+              .map((row) => row.cluster)
+          )
+    const scoped = adoptedSet
+      ? usable.filter((cluster) => adoptedSet.has(cluster.name))
+      : usable
+    if (savedSpace === '' || savedApp === '') return scoped
     const app = applications?.find(
       (candidate) =>
         candidate.namespace === savedSpace && candidate.name === savedApp
     )
-    if (!app) return usable
+    if (!app) return scoped
     const bound = new Set(app.configs.map((config) => config.cluster))
     return [
-      ...usable.filter((cluster) => bound.has(cluster.name)),
-      ...usable.filter((cluster) => !bound.has(cluster.name)),
+      ...scoped.filter((cluster) => bound.has(cluster.name)),
+      ...scoped.filter((cluster) => !bound.has(cluster.name)),
     ]
-  }, [clusters, applications, savedSpace, savedApp])
+  }, [
+    clusters,
+    applications,
+    savedSpace,
+    savedApp,
+    selectedSpace,
+    spaceClusters,
+    spaceQuotaRows,
+    spaceQuotasFailed,
+  ])
   const clusterEcho =
     savedCluster && !clusterOptions.some((c) => c.name === savedCluster)
       ? savedCluster
       : undefined
-  const [advancedOpen, setAdvancedOpen] = useState(node.props?.dryRun === true)
+  const [advancedOpen, setAdvancedOpen] = useState(
+    node.onFailure !== undefined ||
+      node.timeout !== undefined ||
+      node.props?.dryRun === true
+  )
 
   return (
     <div className="space-y-4">
@@ -792,6 +875,7 @@ function DeployPropsForm({
         onFocusField={onFocusField}
       />
       <AdvancedCollapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
+        <SharedAdvancedFields node={node} patchNode={patchNode} />
         <label className="flex items-center gap-2 text-sm">
           <Checkbox
             checked={node.props?.dryRun === true}
@@ -895,6 +979,7 @@ function AppCombobox({
 function ApprovalPropsForm({
   node,
   patchProps,
+  patchNode,
   onFocusField,
   templateVars,
 }: PropsFormShared) {
@@ -908,6 +993,16 @@ function ApprovalPropsForm({
   const pickerEnabled =
     directory !== undefined && !directory.forbidden && directoryUsers.length > 0
   const assignees = (node.props?.assignees as number[] | undefined) ?? []
+
+  // Approval owns two timeout pairs: the shared node-level onFailure/timeout
+  // and its own approval timeout/timeoutAction props — both fold into one
+  // advanced section so the drawer keeps a single fold.
+  const [advancedOpen, setAdvancedOpen] = useState(
+    node.onFailure !== undefined ||
+      node.timeout !== undefined ||
+      readStringProp(node, 'timeout') !== '' ||
+      readStringProp(node, 'timeoutAction') !== ''
+  )
 
   // A stored ID missing from the directory (deleted or disabled user) still
   // shows, as #<id>, so the saved spec never silently loses assignees.
@@ -997,41 +1092,46 @@ function ApprovalPropsForm({
           onFocus={() => onFocusField('message')}
         />
       </Field>
-      <div className="grid grid-cols-2 gap-3">
-        <Field
-          label={t('workflow.editor.timeout')}
-          hint={t('workflow.editor.timeoutHint')}
-        >
-          <Input
-            value={readStringProp(node, 'timeout')}
-            onChange={(e) => patchProps('timeout', e.target.value || undefined)}
-            onFocus={() => onFocusField('timeout')}
-            placeholder="24h"
-          />
-        </Field>
-        <Field label={t('workflow.props.timeoutAction')}>
-          <Select
-            value={
-              (readStringProp(node, 'timeoutAction') || 'reject') as string
-            }
-            onValueChange={(v) =>
-              patchProps('timeoutAction', v === 'reject' ? undefined : v)
-            }
+      <AdvancedCollapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
+        <SharedAdvancedFields node={node} patchNode={patchNode} />
+        <div className="grid grid-cols-2 gap-3">
+          <Field
+            label={t('workflow.props.timeout')}
+            hint={t('workflow.props.timeoutHint')}
           >
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="reject">
-                {t('workflow.props.timeoutActionReject')}
-              </SelectItem>
-              <SelectItem value="approve">
-                {t('workflow.props.timeoutActionApprove')}
-              </SelectItem>
-            </SelectContent>
-          </Select>
-        </Field>
-      </div>
+            <Input
+              value={readStringProp(node, 'timeout')}
+              onChange={(e) =>
+                patchProps('timeout', e.target.value || undefined)
+              }
+              onFocus={() => onFocusField('timeout')}
+              placeholder="24h"
+            />
+          </Field>
+          <Field label={t('workflow.props.timeoutAction')}>
+            <Select
+              value={
+                (readStringProp(node, 'timeoutAction') || 'reject') as string
+              }
+              onValueChange={(v) =>
+                patchProps('timeoutAction', v === 'reject' ? undefined : v)
+              }
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="reject">
+                  {t('workflow.props.timeoutActionReject')}
+                </SelectItem>
+                <SelectItem value="approve">
+                  {t('workflow.props.timeoutActionApprove')}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+        </div>
+      </AdvancedCollapsible>
     </div>
   )
 }
@@ -1111,10 +1211,14 @@ function AssigneeCombobox({
 function NotifyPropsForm({
   node,
   patchProps,
+  patchNode,
   onFocusField,
   templateVars,
 }: PropsFormShared) {
   const { t } = useTranslation()
+  const [advancedOpen, setAdvancedOpen] = useState(
+    node.onFailure !== undefined || node.timeout !== undefined
+  )
   return (
     <div className="space-y-4">
       <Field label={t('workflow.props.channel')}>
@@ -1142,7 +1246,75 @@ function NotifyPropsForm({
           onFocus={() => onFocusField('payloadTemplate')}
         />
       </Field>
+      <AdvancedCollapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
+        <SharedAdvancedFields node={node} patchNode={patchNode} />
+      </AdvancedCollapsible>
     </div>
+  )
+}
+
+// Platforms are fixed OCI os/arch values handed straight to buildkit
+// (joined with commas); a multi-select popover keeps typos out of the spec.
+// The preset covers the arch pairs this fleet actually builds (Java/C apps);
+// stored values outside the list stay listed and removable so legacy specs
+// never lose their entries.
+const PLATFORM_OPTIONS = ['linux/amd64', 'linux/arm64']
+
+function PlatformsSelect({
+  values,
+  onChange,
+}: {
+  values: string[]
+  onChange: (next: string[]) => void
+}) {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+  const options = [...new Set([...PLATFORM_OPTIONS, ...values])]
+  const toggle = (platform: string) =>
+    onChange(
+      values.includes(platform)
+        ? values.filter((v) => v !== platform)
+        : [...values, platform].sort()
+    )
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className="w-full justify-between font-normal"
+        >
+          <span
+            className={cn(
+              'truncate',
+              values.length === 0 && 'text-muted-foreground'
+            )}
+          >
+            {values.length > 0
+              ? values.join(', ')
+              : t('workflow.props.platformsPlaceholder')}
+          </span>
+          <IconChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-56 p-1" align="start">
+        {options.map((platform) => (
+          <button
+            key={platform}
+            type="button"
+            role="option"
+            aria-selected={values.includes(platform)}
+            onClick={() => toggle(platform)}
+            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent"
+          >
+            <Checkbox checked={values.includes(platform)} />
+            <span className="font-mono text-xs">{platform}</span>
+          </button>
+        ))}
+      </PopoverContent>
+    </Popover>
   )
 }
 
@@ -1179,12 +1351,4 @@ function parseArgs(text: string): Record<string, string> | undefined {
     out[key] = line.slice(idx + 1)
   }
   return Object.keys(out).length > 0 ? out : undefined
-}
-
-function splitList(text: string): string[] | undefined {
-  const items = text
-    .split(',')
-    .map((v) => v.trim())
-    .filter((v) => v !== '')
-  return items.length > 0 ? items : undefined
 }

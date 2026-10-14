@@ -16,6 +16,7 @@ import type {
 } from '@/application/types'
 import { useWorkflows } from '@/workflow/api'
 import * as yaml from 'js-yaml'
+import { Pencil, Plus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 
@@ -342,8 +343,9 @@ function UnlinkedClusterPanel({
 
 // Related workflows: workflows whose deploy-app nodes target this app
 // (aggregated server-side into WorkflowListItem.apps as "space/name"
-// composites). Deliberately light — an editor link per workflow plus a
-// runs-list link, no run data fetched.
+// composites). Deliberately light — the name links into the runs list (the
+// primary question is "how is this app's pipeline doing"), the editor is an
+// icon action, no run data fetched.
 function RelatedWorkflows({
   app,
   cluster,
@@ -356,10 +358,16 @@ function RelatedWorkflows({
   const { data: workflows, isLoading } = useWorkflows()
   const related = useMemo(
     () =>
-      (workflows ?? []).filter((wf) =>
-        (wf.apps ?? []).includes(`${app.namespace}/${app.name}`)
+      (workflows ?? []).filter(
+        (wf) =>
+          (wf.apps ?? []).includes(`${app.namespace}/${app.name}`) &&
+          // A workflow pinned to clusters only shows on its cluster tab;
+          // unpinned ones show on every tab. With no active cluster, only
+          // unpinned workflows qualify.
+          ((wf.clusters ?? []).length === 0 ||
+            (cluster != null && (wf.clusters ?? []).includes(cluster)))
       ),
-    [workflows, app.namespace, app.name]
+    [workflows, app.namespace, app.name, cluster]
   )
 
   const createWorkflow = () => {
@@ -373,12 +381,19 @@ function RelatedWorkflows({
 
   return (
     <section className="rounded-xl border bg-card">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3">
+      <div className="flex flex-wrap items-center gap-2 border-b px-4 py-3">
         <h2 className="text-sm font-semibold">
           {t('applications.detail.relatedWorkflows')}
         </h2>
-        <Button size="sm" variant="outline" onClick={createWorkflow}>
-          ＋ {t('applications.detail.createWorkflow')}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-6 w-6"
+          aria-label={t('applications.detail.createWorkflow')}
+          title={t('applications.detail.createWorkflow')}
+          onClick={createWorkflow}
+        >
+          <Plus className="h-4 w-4" />
         </Button>
       </div>
       {isLoading ? (
@@ -398,7 +413,7 @@ function RelatedWorkflows({
             >
               <div className="min-w-0">
                 <Link
-                  to={`/workflows/${wf.id}`}
+                  to={`/workflows/${wf.id}/runs`}
                   className="font-mono text-sm font-medium hover:underline"
                 >
                   {wf.name}
@@ -409,12 +424,16 @@ function RelatedWorkflows({
                   </span>
                 )}
               </div>
-              <Link
-                to={`/workflows/${wf.id}/runs`}
-                className="shrink-0 text-xs text-muted-foreground hover:text-foreground hover:underline"
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                aria-label={t('common.actions.edit')}
+                title={t('common.actions.edit')}
+                onClick={() => navigate(`/workflows/${wf.id}`)}
               >
-                {t('applications.detail.workflowRuns')}
-              </Link>
+                <Pencil className="h-3.5 w-3.5" />
+              </Button>
             </li>
           ))}
         </ul>

@@ -131,7 +131,7 @@
       "args": "Docker 构建参数（--build-arg）",
       "argsHint": "每行一条 key=value",
       "platforms": "平台",
-      "platformsHint": "逗号分隔，如 linux/amd64,linux/arm64",
+      "platformsHint": "构建的目标平台，可多选；留空跟随构建节点的原生平台",
       "outputRef": "输出镜像",
       "outputRefHint": "支持模板，如 registry/app:{{params.tag}}",
       "gitCredentialRef": "Git 凭证",
@@ -171,7 +171,10 @@
       "payloadTemplate": "载荷模板",
       "payloadTemplateHint": "JSON 载荷；支持 {{params.*}} / {{steps.*.outputs.*}} / {{run.*}}",
       "advancedSection": "高级选项",
-      "spaceFixedHint": "部署空间固定为流水线所属空间，不可切换"
+      "spaceFixedHint": "部署空间固定为流水线所属空间，不可切换",
+      "timeout": "审批超时",
+      "timeoutHint": "超过该时长未审批，按超时动作处理；留空用平台默认",
+      "platformsPlaceholder": "选择构建平台…"
     },
     "template": {
       "groupParams": "参数",

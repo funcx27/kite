@@ -95,7 +95,7 @@ export function WorkflowListPage() {
 function WorkflowList() {
   const { t } = useTranslation()
   const navigate = useNavigate()
-  const { currentSpace } = useSpaces()
+  const { currentSpace, spaceClusters } = useSpaces()
   // Mirror the active space into ?space= so a scoped list view is shareable.
   useSyncSpaceParam()
   const { data: workflows, isLoading } = useWorkflows()
@@ -114,14 +114,27 @@ function WorkflowList() {
 
   const workflowList = useMemo(() => workflows ?? [], [workflows])
   // Filter options aggregate the current list's deploy targets (deduped and
-  // sorted), so entries never appear that no visible workflow matches.
+  // sorted), so entries never appear that no visible workflow matches. In a
+  // space view they are scoped to that space: apps from the space's rows,
+  // clusters from the space registry (not row aggregation).
   const appOptions = useMemo(
-    () => aggregateUnique(workflowList, (wf) => wf.apps),
-    [workflowList]
+    () =>
+      currentSpace === null
+        ? aggregateUnique(workflowList, (wf) => wf.apps)
+        : aggregateUnique(
+            workflowList.filter((wf) =>
+              workflowSpaces(wf).includes(currentSpace)
+            ),
+            (wf) => wf.apps
+          ),
+    [workflowList, currentSpace]
   )
   const clusterOptions = useMemo(
-    () => aggregateUnique(workflowList, (wf) => wf.clusters),
-    [workflowList]
+    () =>
+      currentSpace === null
+        ? aggregateUnique(workflowList, (wf) => wf.clusters)
+        : (spaceClusters[currentSpace] ?? []),
+    [workflowList, currentSpace, spaceClusters]
   )
 
   // Latest runs fetched once per visible workflow (parent-level map) so the

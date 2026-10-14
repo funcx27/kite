@@ -131,7 +131,7 @@
       "args": "Docker build args (--build-arg)",
       "argsHint": "key=value per line",
       "platforms": "Platforms",
-      "platformsHint": "Comma separated, e.g. linux/amd64,linux/arm64",
+      "platformsHint": "Target build platforms, multi-select; empty follows the build node's native platform",
       "outputRef": "Output Image Ref",
       "outputRefHint": "Supports templates like registry/app:{{params.tag}}",
       "gitCredentialRef": "Git Credential",
@@ -171,7 +171,10 @@
       "payloadTemplate": "Payload Template",
       "payloadTemplateHint": "JSON body; supports {{params.*}} / {{steps.*.outputs.*}} / {{run.*}}",
       "advancedSection": "Advanced",
-      "spaceFixedHint": "The deploy space is fixed to the workflow’s own space."
+      "spaceFixedHint": "The deploy space is fixed to the workflow’s own space.",
+      "timeout": "Approval Timeout",
+      "timeoutHint": "On expiry the timeout action applies; empty = platform default",
+      "platformsPlaceholder": "Pick build platforms…"
     },
     "template": {
       "groupParams": "Params",

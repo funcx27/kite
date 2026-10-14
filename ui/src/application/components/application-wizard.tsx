@@ -5,6 +5,7 @@ import {
   previewApplicationRender,
   updateApplication,
   useApplicationConfig,
+  useSpaceQuotas,
 } from '@/application/api'
 import type {
   Application,
@@ -164,7 +165,12 @@ export function ApplicationWizard({
 }: ApplicationWizardProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
-  const { spaces, currentSpace, isLoading: spacesLoading } = useSpaces()
+  const {
+    spaces,
+    currentSpace,
+    spaceClusters,
+    isLoading: spacesLoading,
+  } = useSpaces()
   const { clusters } = useCluster()
   // Creation is bound to the sidebar's current space — the wizard offers no
   // space picker (switching scope happens in the sidebar, not in a modal);
@@ -215,11 +221,40 @@ export function ApplicationWizard({
   }, [open, mode, app?.name, config?.latestRev, cluster])
 
   // GET /clusters only returns RBAC-visible clusters; offline ones carry
-  // `error` (same filter as the deploy dialog's dropdown).
-  const availableClusters = useMemo(
-    () => clusters.filter((candidate) => !candidate.error),
-    [clusters]
+  // `error` (same filter as the deploy dialog's dropdown). In create mode the
+  // publish target must be a cluster the space was adopted on: quota
+  // configured AND the labeled namespace present — the namespace alone can
+  // pre-exist on non-adopted clusters, and the managed quota lingers after a
+  // dissociate (the marker is only removed from the namespace).
+  const { data: spaceQuotaRows, isError: spaceQuotasFailed } = useSpaceQuotas(
+    mode === 'create' && effectiveNamespace ? effectiveNamespace : undefined
   )
+  const availableClusters = useMemo(() => {
+    const usable = clusters.filter((candidate) => !candidate.error)
+    if (mode !== 'create' || !effectiveNamespace || spaceQuotasFailed) {
+      return usable
+    }
+    const nsSet = new Set(spaceClusters[effectiveNamespace] ?? [])
+    const adopted = new Set(
+      (spaceQuotaRows?.quotas ?? [])
+        .filter(
+          (row) =>
+            !row.unconfigured &&
+            !row.unauthorized &&
+            !row.error &&
+            nsSet.has(row.cluster)
+        )
+        .map((row) => row.cluster)
+    )
+    return usable.filter((candidate) => adopted.has(candidate.name))
+  }, [
+    clusters,
+    mode,
+    effectiveNamespace,
+    spaceClusters,
+    spaceQuotaRows,
+    spaceQuotasFailed,
+  ])
 
   const patch = (updates: Partial<WizardState>) =>
     setState((prev) => ({ ...prev, ...updates }))

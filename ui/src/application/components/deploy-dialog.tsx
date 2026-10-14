@@ -12,6 +12,7 @@ import type {
   ApplicationDocDiff,
   ApplicationPendingChange,
 } from '@/application/types'
+import { useSpaces } from '@/platform/space-context'
 import { useCredentials } from '@/workflow/api'
 import { useQueryClient } from '@tanstack/react-query'
 import * as yaml from 'js-yaml'
@@ -106,6 +107,7 @@ export function DeployDialog({
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const { clusters } = useCluster()
+  const { spaceClusters } = useSpaces()
 
   const [targetCluster, setTargetCluster] = useState<string | undefined>(
     cluster
@@ -223,17 +225,18 @@ export function DeployDialog({
   // GET /clusters only returns RBAC-visible clusters; offline ones carry
   // `error`. It has no `connected` field — that exists on the admin
   // cluster-management list only, so filtering on it empties the dropdown.
-  // Create modes also skip clusters the app is already bound to (the copy
-  // source itself is bound, hence never a target).
-  const availableClusters = useMemo(
-    () =>
-      clusters.filter(
-        (candidate) =>
-          !candidate.error &&
-          !app.configs.some((config) => config.cluster === candidate.name)
-      ),
-    [clusters, app.configs]
-  )
+  // The app's namespace is a space, so only clusters where that space exists
+  // are valid targets. Create modes also skip clusters the app is already
+  // bound to (the copy source itself is bound, hence never a target).
+  const availableClusters = useMemo(() => {
+    const spaceClusterNames = new Set(spaceClusters[app.namespace] ?? [])
+    return clusters.filter(
+      (candidate) =>
+        !candidate.error &&
+        spaceClusterNames.has(candidate.name) &&
+        !app.configs.some((config) => config.cluster === candidate.name)
+    )
+  }, [clusters, app.configs, app.namespace, spaceClusters])
 
   const { data: credentials } = useCredentials()
   // Pull secrets are built from registry entries only, so git-only
