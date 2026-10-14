@@ -64,7 +64,7 @@ export interface ApplicationManifest {
 // ── Applications (apps_api.go) ──
 
 export type ApplicationStatusSummary =
-  'synced' | 'drift' | 'undeployed' | 'error' | ''
+  'synced' | 'drift' | 'pending' | 'undeployed' | 'error' | ''
 
 export interface ApplicationConfigSummary {
   id: number
@@ -163,6 +163,9 @@ export interface ApplicationDeployRequest {
   /** Dry-run preview token echoed back on the real deploy: the server
    *  re-computes the diff and answers 409 when the cluster moved on. */
   previewToken?: string
+  /** Persist the pending set as a revision without applying it to the
+   *  cluster (仅保存): the config then shows as pending until published. */
+  saveOnly?: boolean
 }
 
 export interface ApplicationDeployDocResult {
@@ -197,6 +200,8 @@ export interface ApplicationDocDiff {
 export interface ApplicationDeployResponse {
   success: boolean
   dryRun: boolean
+  /** True on a save-only response: nothing was applied to the cluster. */
+  saveOnly?: boolean
   results: ApplicationDeployDocResult[]
   anchored: boolean
   anchorError?: string

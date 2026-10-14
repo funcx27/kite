@@ -718,7 +718,7 @@ export function ClusterTab({
               <div className="text-sm text-destructive">
                 {statusReport?.error || t('applications.status.error')}
               </div>
-            ) : status === 'drift' && statusReport ? (
+            ) : (status === 'drift' || status === 'pending') && statusReport ? (
               <div className="space-y-2">
                 {statusReport.docs.map((doc) => (
                   <DriftDocCard

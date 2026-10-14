@@ -29,6 +29,7 @@ const (
 const (
 	StatusSynced     = "synced"
 	StatusDrift      = "drift"
+	StatusPending    = "pending" // saved-but-unpublished edits: DB ahead of the cluster
 	StatusUndeployed = "undeployed"
 	StatusError      = "error"
 )

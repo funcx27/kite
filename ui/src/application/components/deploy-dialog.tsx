@@ -357,6 +357,42 @@ export function DeployDialog({
     !!activeCluster &&
     !deploying
 
+  // 仅保存 persists what the preview shows — the pending wizard edits and a
+  // bare image edit — as a revision without applying it to the cluster; the
+  // pull credential does not ride a save, it lands with the publish.
+  const canSave =
+    !isCreateMode &&
+    !!activeCluster &&
+    !deploying &&
+    !dryRun.loading &&
+    !dryRun.error &&
+    (!!pending || imageChanged)
+
+  const handleSaveOnly = async () => {
+    if (!activeCluster) return
+    setDeploying(true)
+    try {
+      await deployApplicationConfig(app.namespace, app.name, activeCluster, {
+        saveOnly: true,
+        image: imageChanged ? image.trim() : undefined,
+        ...pendingRequest,
+      })
+      toast.success(t('applications.deploy.savedNotPublished'))
+      await queryClient.invalidateQueries({ queryKey: ['applications'] })
+      onOpenChange(false)
+    } catch (err) {
+      toast.error(translateError(err, t))
+      // A concurrent save (409) invalidated the revision the edits were
+      // based on; reload for a fresh decision.
+      if (err instanceof ApplicationApiError && err.status === 409) {
+        await queryClient.invalidateQueries({ queryKey: ['applications'] })
+        void runDryRun()
+      }
+    } finally {
+      setDeploying(false)
+    }
+  }
+
   const handleDeploy = async () => {
     if (!activeCluster) return
     setDeploying(true)
@@ -703,6 +739,16 @@ export function DeployDialog({
             <Button variant="outline" onClick={() => onOpenChange(false)}>
               {t('common.actions.cancel')}
             </Button>
+            {!isCreateMode && (
+              <Button
+                variant="outline"
+                disabled={!canSave}
+                title={t('applications.deploy.saveOnlyHint')}
+                onClick={() => void handleSaveOnly()}
+              >
+                {t('applications.deploy.saveOnly')}
+              </Button>
+            )}
             <Button disabled={!canConfirm} onClick={() => void handleDeploy()}>
               {copyMode
                 ? t('applications.deploy.confirmCopyPublish')

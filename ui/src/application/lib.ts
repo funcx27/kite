@@ -42,6 +42,12 @@ export const applicationStatusStyles: Record<
     dot: 'bg-amber-500',
     chip: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-400',
   },
+  // Saved-but-unpublished edits share drift's amber: both mean "DB and
+  // cluster disagree, publish or reconcile", only the direction differs.
+  pending: {
+    dot: 'bg-amber-500',
+    chip: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-400',
+  },
   error: {
     dot: 'bg-red-500',
     chip: 'border-red-200 bg-red-50 text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-400',

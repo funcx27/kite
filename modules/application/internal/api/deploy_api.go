@@ -52,6 +52,10 @@ type deployRequest struct {
 	// PreviewToken echoes the hash a dry-run preview returned; the apply
 	// refuses to run when the current diff no longer hashes to it.
 	PreviewToken string `json:"previewToken,omitempty"`
+	// SaveOnly persists the resolved pending set as a revision without
+	// applying it to the cluster (the dialog's 仅保存): the config lands in
+	// the pending state until a later publish pushes it.
+	SaveOnly bool `json:"saveOnly,omitempty"`
 }
 
 type deployDocResult struct {
@@ -66,6 +70,7 @@ type deployDocResult struct {
 type deployResponse struct {
 	Success     bool              `json:"success"`
 	DryRun      bool              `json:"dryRun"`
+	SaveOnly    bool              `json:"saveOnly,omitempty"`
 	Results     []deployDocResult `json:"results"`
 	Anchored    bool              `json:"anchored"`
 	AnchorError string            `json:"anchorError,omitempty"`
@@ -113,6 +118,10 @@ func (h *Handler) DeployConfig(c *gin.Context) {
 	}
 	cluster := c.Param("cfgCluster")
 	if !h.validateDeployCreateReq(c, app, cluster, req) {
+		return
+	}
+	if req.SaveOnly {
+		h.saveOnlyConfig(c, app, id, cluster, &req)
 		return
 	}
 	ctx := c.Request.Context()
@@ -165,6 +174,37 @@ func (h *Handler) bindDeployRequest(c *gin.Context, req *deployRequest) bool {
 		return false
 	}
 	return true
+}
+
+// saveOnlyConfig is the deploy dialog's 仅保存 action: it persists the same
+// pending set a publish would — {spec}/{manifests} plus a bare {image} edit,
+// under the same optimistic rev check — but never touches the cluster, so the
+// config lands in the pending state (含待发布修改) until a later publish pushes
+// it. The pull credential does not ride a save: the managed secret only
+// upserts with a publish.
+func (h *Handler) saveOnlyConfig(c *gin.Context, app *store.App, id identity, cluster string, req *deployRequest) {
+	if req.CopyFrom != "" {
+		h.fail(c, http.StatusBadRequest, nil, "copyFrom is only valid when the config does not exist yet")
+		return
+	}
+	cfg, err := h.findConfig(app.ID, cluster)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		h.fail(c, http.StatusNotFound, nil, "config not found for cluster "+cluster)
+		return
+	}
+	if err != nil {
+		h.fail(c, http.StatusInternalServerError, err, "")
+		return
+	}
+	if !h.authorize(c, "update", cfg.Cluster, cfg.Namespace) {
+		return
+	}
+	req.CredentialRef = nil
+	_, latestRev, ok := h.deployManifests(c, id, app, cfg, *req)
+	if !ok {
+		return
+	}
+	c.JSON(http.StatusOK, deployResponse{Success: true, SaveOnly: true, Results: []deployDocResult{}, LatestRev: latestRev})
 }
 
 // validateDeployCreateReq rejects a copyFrom deploy against a config that
@@ -717,7 +757,13 @@ func previewDocs(manifests []unstructured.Unstructured, live map[string]*unstruc
 		key := store.DocKey(change[i].Kind, change[i].Namespace, change[i].Name)
 		p := deployDocPreview{Kind: change[i].Kind, Name: change[i].Name, Action: "update"}
 		if old := live[key]; old != nil {
-			p.Old = redactedDocRaw(old)
+			oldDoc := old.DeepCopy()
+			// Same defaulted-pull-policy absorption the change diff ran on,
+			// so the YAML view matches the paths the diff reports.
+			if doc := byKey[key]; doc != nil {
+				syncops.AbsorbDefaultedPullPolicy(doc, oldDoc)
+			}
+			p.Old = redactedDocRaw(oldDoc)
 		} else {
 			p.Action = "create"
 		}

@@ -67,8 +67,10 @@ interface ApplicationWizardProps {
   /** Called after the app definition was saved (create/draft) */
   onSaved?: (app: Application) => void
   /** cluster mode: hands the pending config changes to the deploy dialog;
-   *  nothing is saved here — save and publish happen on [确认发布] together. */
-  onGoPublish?: (pending: ApplicationPendingChange) => void
+   *  nothing is saved here — save and publish happen on [确认发布] together.
+   *  null means the wizard round-tripped to the stored config unchanged, so
+   *  the dialog opens without pending edits. */
+  onGoPublish?: (pending: ApplicationPendingChange | null) => void
 }
 
 interface WizardState {
@@ -296,10 +298,32 @@ export function ApplicationWizard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, step])
 
+  // The YAML textarea's seeded content — the untouched baseline a no-op
+  // round trip compares against.
+  const yamlModeSeed = () =>
+    mode === 'cluster' && config?.manifests?.length
+      ? yaml.dump(config.manifests)
+      : ''
+
+  // True when the wizard no longer round-trips to the stored config: only a
+  // dirty wizard hands pending edits to the deploy dialog, so an untouched
+  // pass never shows the pending-edits marker.
+  const dirty = useMemo(
+    () =>
+      mode === 'cluster' &&
+      (yamlMode
+        ? yamlContent !== yamlModeSeed()
+        : JSON.stringify(spec) !==
+          JSON.stringify(buildSpec(buildState(mode, app, config)))),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [mode, yamlMode, yamlContent, spec, config, app]
+  )
+
   const toggleYamlMode = (on: boolean) => {
     if (on) {
-      if (mode === 'cluster' && config?.manifests?.length) {
-        setYamlContent(yaml.dump(config.manifests))
+      if (mode === 'cluster') {
+        const seed = yamlModeSeed()
+        if (seed) setYamlContent(seed)
       } else if (previewYaml) {
         setYamlContent(previewYaml)
       }
@@ -384,7 +408,8 @@ export function ApplicationWizard({
 
   // Cluster mode hands the edits to the deploy dialog without saving; a
   // cancelled publish discards them, so no revision is created behind the
-  // user's back.
+  // user's back. A round trip that lands on the stored config hands over
+  // null — the dialog opens without a pending-edits marker.
   const goPublish = () => {
     const validationError = validate()
     if (validationError) {
@@ -395,6 +420,10 @@ export function ApplicationWizard({
     // Close first: the parent clears openDialog on close, which would
     // otherwise clobber the 'deploy' state onGoPublish is about to set.
     onOpenChange(false)
+    if (!dirty) {
+      onGoPublish?.(null)
+      return
+    }
     if (yamlMode) {
       let manifests: ApplicationManifest[]
       try {
@@ -846,12 +875,19 @@ export function ApplicationWizard({
                     </>
                   ) : (
                     <>
-                      <pre className="max-h-72 overflow-auto rounded-lg bg-zinc-950 p-4 font-mono text-xs leading-5 text-zinc-300">
-                        {previewLoading
-                          ? t('common.messages.loading')
-                          : previewYaml ||
-                            t('applications.wizard.previewEmpty')}
-                      </pre>
+                      {previewLoading || !previewYaml ? (
+                        <pre className="max-h-72 overflow-auto rounded-lg bg-zinc-950 p-4 font-mono text-xs leading-5 text-zinc-300">
+                          {previewLoading
+                            ? t('common.messages.loading')
+                            : t('applications.wizard.previewEmpty')}
+                        </pre>
+                      ) : (
+                        <SimpleYamlEditor
+                          value={previewYaml}
+                          disabled
+                          height="360px"
+                        />
+                      )}
                       <div>
                         <Label>{t('applications.wizard.extraYaml')}</Label>
                         <textarea

@@ -44,8 +44,12 @@ var specServerFields = []string{
 // podSpecServerFields are pod-spec fields the API server always fills in.
 var podSpecServerFields = []string{"dnsPolicy", "restartPolicy", "schedulerName", "terminationGracePeriodSeconds"}
 
-// containerServerFields are per-container fields the API server always fills in.
-var containerServerFields = []string{"imagePullPolicy", "terminationMessagePath", "terminationMessagePolicy"}
+// containerServerFields are per-container fields the API server always fills
+// in and the rendered manifests never own. imagePullPolicy is not among
+// them: the wizard renders it from the spec, so it is user-owned and must
+// diff — the server defaulting of an unset policy is absorbed cross-side by
+// AbsorbDefaultedPullPolicy instead.
+var containerServerFields = []string{"terminationMessagePath", "terminationMessagePolicy"}
 
 // deleteIfEmptyMap removes key when its value is an empty JSON object — a
 // server-added placeholder such as securityContext: {}. A user-set value stays.
@@ -165,6 +169,63 @@ func normalizeValue(v interface{}, top bool) {
 	}
 }
 
+// AbsorbDefaultedPullPolicy removes the API server's defaulted
+// imagePullPolicy from live's containers whose manifest counterpart does not
+// set the field: the server fills the policy on every write, so an unset
+// policy must not read the defaulted value back as drift. A manifest that
+// sets the policy owns it and the field is compared normally (design §4.1).
+func AbsorbDefaultedPullPolicy(manifest, live *unstructured.Unstructured) {
+	if manifest == nil || live == nil {
+		return
+	}
+	for _, key := range []string{"containers", "initContainers"} {
+		mcs := templateContainers(manifest, key)
+		if len(mcs) == 0 {
+			continue
+		}
+		lcs := templateContainers(live, key)
+		for name, mc := range mcs {
+			if _, set := mc["imagePullPolicy"]; set {
+				continue
+			}
+			if lc := lcs[name]; lc != nil {
+				delete(lc, "imagePullPolicy")
+			}
+		}
+	}
+}
+
+// templateContainers indexes a pod-template container list by container name.
+// It walks the raw maps on purpose: unstructured.NestedSlice deep-copies its
+// result, which would disconnect the deletion in AbsorbDefaultedPullPolicy
+// from the document it must modify.
+func templateContainers(doc *unstructured.Unstructured, key string) map[string]map[string]interface{} {
+	spec, _ := store.AsMap(doc.Object["spec"])
+	if spec == nil {
+		return nil
+	}
+	tpl, _ := store.AsMap(spec["template"])
+	if tpl == nil {
+		return nil
+	}
+	podSpec, _ := store.AsMap(tpl["spec"])
+	if podSpec == nil {
+		return nil
+	}
+	list, _ := store.AsList(podSpec[key])
+	out := make(map[string]map[string]interface{}, len(list))
+	for _, e := range list {
+		m, ok := store.AsMap(e)
+		if !ok {
+			continue
+		}
+		if n, _ := m["name"].(string); n != "" {
+			out[n] = m
+		}
+	}
+	return out
+}
+
 // DocDiff is the per-document change set of DiffManifests.
 type DocDiff struct {
 	Kind      string `json:"kind"`
@@ -201,6 +262,7 @@ func DiffManifests(manifests, live []unstructured.Unstructured) []DocDiff {
 			out = append(out, d)
 			continue
 		}
+		AbsorbDefaultedPullPolicy(&nm[i], &nl[j])
 		sink := &diffSink{limit: MaxDiffPaths}
 		diffValue(nm[i].Object, nl[j].Object, "", sink)
 		if len(sink.paths) == 0 {

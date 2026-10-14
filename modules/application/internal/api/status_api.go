@@ -98,7 +98,11 @@ func (h *Handler) computeStatus(c *gin.Context, appName string, cfg *store.AppCo
 	if err != nil {
 		return errorStatus(fmt.Errorf("fetch live objects: %w", err))
 	}
-	resp := statusOf(manifests, live)
+	anchor, err := store.DecodeManifests(cfg.LastApplied)
+	if err != nil {
+		return errorStatus(fmt.Errorf("decode anchor: %w", err))
+	}
+	resp := statusOf(manifests, anchor, live)
 	resp.ReadyReplicas, resp.Replicas = workloadReplicas(appName, manifests, live)
 	return resp, nil
 }
@@ -125,13 +129,18 @@ func workloadReplicas(app string, manifests []unstructured.Unstructured, live ma
 	return &readyCount, &desired
 }
 
-// statusOf builds the status response for one manifests/live snapshot: synced
-// when the diff is empty, drift otherwise.
-func statusOf(manifests []unstructured.Unstructured, live map[string]*unstructured.Unstructured) statusResponse {
+// statusOf builds the status response for one DB/anchor/live snapshot:
+// synced when the DB manifests match the cluster, pending when only the DB
+// side moved (saved-but-unpublished edits — the cluster still matches the
+// last publish's anchor), drift when the cluster moved off the anchor.
+func statusOf(manifests, anchor []unstructured.Unstructured, live map[string]*unstructured.Unstructured) statusResponse {
 	diff := syncops.DiffManifests(manifests, syncops.LiveList(live, manifests))
 	status := store.StatusDrift
-	if len(diff) == 0 {
+	switch {
+	case len(diff) == 0:
 		status = store.StatusSynced
+	case len(syncops.DiffManifests(anchor, syncops.LiveList(live, anchor))) == 0:
+		status = store.StatusPending
 	}
 	return statusResponse{
 		Status:       status,
@@ -153,11 +162,23 @@ func buildStatusDocs(diff []syncops.DocDiff, manifests []unstructured.Unstructur
 	for i := range diff {
 		doc := statusDoc{DocDiff: diff[i]}
 		key := store.DocKey(diff[i].Kind, diff[i].Namespace, diff[i].Name)
+		var liveDoc, manDoc *unstructured.Unstructured
 		if ld := live[key]; ld != nil {
-			doc.Live = redactedDocRaw(syncops.Normalize(ld))
+			liveDoc = syncops.Normalize(ld)
 		}
 		if md := manIdx[key]; md != nil {
-			doc.Manifest = redactedDocRaw(syncops.Normalize(md))
+			manDoc = syncops.Normalize(md)
+		}
+		// Same normalization the diff ran on, defaulted pull policy included,
+		// so the views never show a line the diff paths do not carry.
+		if liveDoc != nil && manDoc != nil {
+			syncops.AbsorbDefaultedPullPolicy(manDoc, liveDoc)
+		}
+		if liveDoc != nil {
+			doc.Live = redactedDocRaw(liveDoc)
+		}
+		if manDoc != nil {
+			doc.Manifest = redactedDocRaw(manDoc)
 		}
 		out = append(out, doc)
 	}

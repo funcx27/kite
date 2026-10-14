@@ -117,7 +117,8 @@ func (h *Handler) ResolveConfig(c *gin.Context) {
 	}
 	// The anchor takes the current live snapshot (normalized, the same shape
 	// readBack leaves behind): resolve re-anchors by definition.
-	anchorData, err := store.EncodeManifests(syncops.NormalizeManifests(syncops.LiveList(live, manifests)))
+	anchorDocs := syncops.NormalizeManifests(syncops.LiveList(live, manifests))
+	anchorData, err := store.EncodeManifests(anchorDocs)
 	if err != nil {
 		h.fail(c, http.StatusInternalServerError, err, "")
 		return
@@ -125,7 +126,7 @@ func (h *Handler) ResolveConfig(c *gin.Context) {
 
 	previous := string(cfg.Manifests)
 	now := time.Now()
-	post := statusOf(manifests, live)
+	post := statusOf(manifests, anchorDocs, live)
 	txErr := h.store.DB().Transaction(func(tx *gorm.DB) error {
 		cur, err := lockConfig(tx, cfg.ID)
 		if err != nil {
