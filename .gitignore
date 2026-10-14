@@ -50,3 +50,6 @@ kite
 
 .gocache/
 .zcode/
+
+# e2e demo scripts' generated screenshots
+e2e/scripts/artifacts/
