@@ -26,6 +26,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { LogViewer } from '@/components/log-viewer'
 import { PodFileBrowser } from '@/components/pod-file-browser'
 import { PodMonitoring } from '@/components/pod-monitoring'
+import { SimpleYamlEditor } from '@/components/simple-yaml-editor'
 import { Terminal } from '@/components/terminal-content'
 
 type View = 'monitoring' | 'terminal' | 'logs' | 'files' | 'yaml'
@@ -296,17 +297,23 @@ export function ApplicationPodPage() {
               cluster={cluster}
             />
           )}
-          {view === 'yaml' && (
-            <pre className="max-h-[calc(100dvh-260px)] overflow-auto rounded-lg bg-zinc-950 p-4 font-mono text-xs leading-5 text-zinc-300">
-              {yamlLoading
-                ? t('common.messages.loading')
-                : yamlError
-                  ? translateError(yamlError, t)
-                  : podObject
-                    ? yaml.dump(podObject)
+          {view === 'yaml' &&
+            (yamlLoading || yamlError || !podObject ? (
+              <pre className="max-h-[calc(100dvh-260px)] overflow-auto rounded-lg bg-zinc-950 p-4 font-mono text-xs leading-5 text-zinc-300">
+                {yamlLoading
+                  ? t('common.messages.loading')
+                  : yamlError
+                    ? translateError(yamlError, t)
                     : '—'}
-            </pre>
-          )}
+              </pre>
+            ) : (
+              <SimpleYamlEditor
+                value={yaml.dump(podObject)}
+                onChange={() => {}}
+                disabled
+                height="calc(100dvh - 260px)"
+              />
+            ))}
         </>
       )}
     </div>

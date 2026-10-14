@@ -884,6 +884,7 @@ export function ApplicationWizard({
                       ) : (
                         <SimpleYamlEditor
                           value={previewYaml}
+                          onChange={() => {}}
                           disabled
                           height="360px"
                         />
