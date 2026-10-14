@@ -52,7 +52,6 @@
       "name": "名称",
       "search": "搜索应用…",
       "create": "创建应用",
-      "view": "查看",
       "editDescription": "编辑描述",
       "editDescriptionTitle": "编辑 {{name}} 的描述",
       "deleteTitle": "删除应用 {{name}}？",

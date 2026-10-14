@@ -52,7 +52,6 @@
       "name": "Name",
       "search": "Search applications...",
       "create": "Create Application",
-      "view": "View",
       "editDescription": "Edit Description",
       "editDescriptionTitle": "Edit description of {{name}}",
       "deleteTitle": "Delete application {{name}}?",

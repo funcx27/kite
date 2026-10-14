@@ -6,7 +6,6 @@ import {
   useApplications,
 } from '@/application/api'
 import { ApplicationWizard } from '@/application/components/application-wizard'
-import { DeployDialog } from '@/application/components/deploy-dialog'
 import {
   ApplicationConfigStatus,
   StatusDotGlyph,
@@ -19,7 +18,14 @@ import {
 import type { Application } from '@/application/types'
 import { useSpaces, useSyncSpaceParam } from '@/platform/space-context'
 import { ColumnDef } from '@tanstack/react-table'
-import { Check, ChevronDown, Search, Server } from 'lucide-react'
+import {
+  Check,
+  ChevronDown,
+  Pencil,
+  Search,
+  Server,
+  Trash2,
+} from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
@@ -45,9 +51,9 @@ import {
 import { ActionTable } from '@/components/action-table'
 
 // Application list (design §11): ActionTable with a ready-first status column
-// (one row per cluster config), a space column, a cluster filter in the
-// toolbar (chips for a handful of clusters, a picker popover beyond that),
-// and the first-publish entry on undeployed apps.
+// (one row per cluster config), a space column, and a cluster filter in the
+// toolbar (chips for a handful of clusters, a picker popover beyond that).
+// First publish of an undeployed app lives on the detail page, not here.
 
 // Mirrors the backend delete gate (apps_api.go DeleteApp): only configs with
 // a consistency anchor — deployed, not offlined (StatusSummary=undeployed) or
@@ -77,11 +83,6 @@ export function ApplicationListPage() {
   const [describeTarget, setDescribeTarget] = useState<Application | null>(null)
   const [description, setDescription] = useState('')
   const [savingDescription, setSavingDescription] = useState(false)
-  // Undeployed app picked for first publish (deploy dialog with cluster
-  // selection, design §11).
-  const [firstPublishTarget, setFirstPublishTarget] =
-    useState<Application | null>(null)
-  const [wizardMode, setWizardMode] = useState<'create' | 'draft'>('create')
 
   // Clusters a config filter can pick: the current space's clusters unioned
   // with the clusters its apps actually have configs on (an unlinked config's
@@ -315,12 +316,7 @@ export function ApplicationListPage() {
             {/* 创建绑定当前空间：全部空间视图（currentSpace=null）不显示入口，
                 先在侧边栏/页头选择或创建空间 */}
             {currentSpace && (
-              <Button
-                onClick={() => {
-                  setWizardMode('create')
-                  setWizardOpen(true)
-                }}
-              >
+              <Button onClick={() => setWizardOpen(true)}>
                 ＋ {t('applications.list.create')}
               </Button>
             )}
@@ -343,33 +339,39 @@ export function ApplicationListPage() {
         </div>
       </div>
 
+      {/* 行内两个图标操作（工作流列表同款）；查看走应用名链接，不再单列 */}
       <ActionTable<Application>
         data={filtered}
         columns={columns}
-        actions={[
-          {
-            label: t('applications.list.view'),
-            onClick: (app) =>
-              navigate(`/applications/${app.namespace}/${app.name}`),
-          },
-          {
-            label: t('applications.detail.firstPublish'),
-            shouldDisable: (app) => app.configs.length > 0,
-            onClick: (app) => setFirstPublishTarget(app),
-          },
-          {
-            label: t('applications.list.editDescription'),
-            onClick: (app) => {
-              setDescribeTarget(app)
-              setDescription(app.description ?? '')
-            },
-          },
-          {
-            label: t('common.actions.delete'),
-            shouldDisable: hasDeployedConfig,
-            onClick: (app) => setDeleteTarget(app),
-          },
-        ]}
+        actions={[]}
+        actionCellPrefix={(app) => (
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              aria-label={t('applications.list.editDescription')}
+              title={t('applications.list.editDescription')}
+              onClick={() => {
+                setDescribeTarget(app)
+                setDescription(app.description ?? '')
+              }}
+            >
+              <Pencil className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              aria-label={t('common.actions.delete')}
+              title={t('common.actions.delete')}
+              disabled={hasDeployedConfig(app)}
+              onClick={() => setDeleteTarget(app)}
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </div>
+        )}
       />
 
       {/* App-layer legend for the ready-first status column; the cluster
@@ -396,33 +398,14 @@ export function ApplicationListPage() {
       <ApplicationWizard
         open={wizardOpen}
         onOpenChange={setWizardOpen}
-        mode={wizardMode}
-        app={
-          wizardMode === 'draft' ? (firstPublishTarget ?? undefined) : undefined
-        }
+        mode="create"
         onSaved={(app) => {
-          // Creation now finishes with the first publish (wizard step 5
-          // picks the target cluster); the draft edit goes to the detail
-          // page for the first publish too.
+          // Creation finishes with the first publish (wizard step 5 picks
+          // the target cluster).
           void refetch()
           navigate(`/applications/${app.namespace}/${app.name}`)
         }}
       />
-
-      {firstPublishTarget && (
-        <DeployDialog
-          app={firstPublishTarget}
-          firstPublish={true}
-          open={!wizardOpen}
-          onOpenChange={(nextOpen) => {
-            if (!nextOpen) setFirstPublishTarget(null)
-          }}
-          onEditConfig={() => {
-            setWizardMode('draft')
-            setWizardOpen(true)
-          }}
-        />
-      )}
 
       <Dialog
         open={deleteTarget !== null}
