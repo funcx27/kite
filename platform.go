@@ -15,6 +15,7 @@ import (
 	"github.com/zxh326/kite/pkg/applicationadapter"
 	"github.com/zxh326/kite/pkg/auth"
 	"github.com/zxh326/kite/pkg/buildfleetadapter"
+	"github.com/zxh326/kite/pkg/certificate"
 	"github.com/zxh326/kite/pkg/cluster"
 	"github.com/zxh326/kite/pkg/credentialsadapter"
 	"github.com/zxh326/kite/pkg/kcross"
@@ -106,6 +107,8 @@ func registerPlatformModuleRoutes(api *gin.RouterGroup) {
 	}
 	platformModules.wfModule.RegisterRoutes(api)
 	platformModules.credDeps.RegisterRoutes(api)
+	// Read-only certificate metadata for the application wizard's picker.
+	certificate.RegisterModuleRoutes(api.Group("/certificates"))
 }
 
 // registerPlatformPublicRoutes mounts the routes that must sit outside the
@@ -120,8 +123,10 @@ func registerPlatformPublicRoutes(r *gin.RouterGroup, authHandler *auth.AuthHand
 }
 
 // registerPlatformAdminRoutes mounts the kcross admin API (settings,
-// discovery, bindings — all implemented in pkg/kcross).
+// discovery, bindings — all implemented in pkg/kcross) and the certificate
+// management API (pkg/certificate).
 func registerPlatformAdminRoutes(adminAPI *gin.RouterGroup) {
 	kcrossAPI := adminAPI.Group("/kcross")
 	kcross.RegisterRoutes(kcrossAPI)
+	certificate.RegisterAdminRoutes(adminAPI.Group("/certificates"))
 }

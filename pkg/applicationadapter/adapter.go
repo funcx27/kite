@@ -157,6 +157,30 @@ func (d *Deps) PullSecretData(credentialRef string) (map[string]application.Regi
 	return out, nil
 }
 
+// CertificateData resolves the named platform certificate to its TLS
+// material. The returned key is decrypted in-memory only: it must never be
+// logged or persisted outside the upserted kubernetes.io/tls secret.
+func (d *Deps) CertificateData(name string) (string, string, string, error) {
+	cert, err := model.GetCertificateByName(name)
+	if err != nil {
+		return "", "", "", fmt.Errorf("load certificate %q: %w", name, err)
+	}
+	if cert.CertPEM == "" || cert.KeyPEM == "" || cert.ContentHash == "" {
+		return "", "", "", fmt.Errorf("certificate %q has incomplete material", name)
+	}
+	return cert.CertPEM, string(cert.KeyPEM), cert.ContentHash, nil
+}
+
+// CertificateHash resolves only the certificate's content hash: rotation
+// checks run on every status poll and must not decrypt the private key.
+func (d *Deps) CertificateHash(name string) (string, error) {
+	hash, err := model.GetCertificateContentHash(name)
+	if err != nil {
+		return "", fmt.Errorf("load certificate %q: %w", name, err)
+	}
+	return hash, nil
+}
+
 func (d *Deps) RecordHistory(entry application.HistoryEntry) {
 	if err := model.DB.Create(&model.ResourceHistory{
 		ClusterName:     entry.Cluster,

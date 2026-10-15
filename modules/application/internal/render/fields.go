@@ -41,6 +41,7 @@ func ExtractFields(app string, docs []unstructured.Unstructured) AppSpec {
 	}
 	spec.Ports = extractPorts(app, docs)
 	spec.IngressClass = extractIngressClass(app, docs)
+	spec.TLSCertificate = extractTLSCertificate(app, docs)
 	return spec
 }
 
@@ -369,6 +370,23 @@ func extractIngressClass(app string, docs []unstructured.Unstructured) string {
 		}
 		if class, ok, _ := unstructured.NestedString(d.Object, "spec", "ingressClassName"); ok {
 			return class
+		}
+	}
+	return ""
+}
+
+// extractTLSCertificate reads the managed-certificate annotation off the
+// app's Ingress. A hand-written spec.tls without the annotation carries no
+// kite certificate reference and stays uncovered by the form, like any other
+// non-form Ingress field.
+func extractTLSCertificate(app string, docs []unstructured.Unstructured) string {
+	for i := range docs {
+		d := &docs[i]
+		if d.GetKind() != "Ingress" || d.GetLabels()[store.LabelKiteName] != app {
+			continue
+		}
+		if name := d.GetAnnotations()[store.AnnotationKiteCertificate]; name != "" {
+			return name
 		}
 	}
 	return ""

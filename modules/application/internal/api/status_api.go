@@ -7,8 +7,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/funcx27/kite/modules/application/internal/render"
 	"github.com/funcx27/kite/modules/application/internal/runtime"
 	"github.com/funcx27/kite/modules/application/internal/store"
 	"github.com/funcx27/kite/modules/application/internal/syncops"
@@ -21,6 +24,9 @@ type statusDoc struct {
 	syncops.DocDiff
 	Live     json.RawMessage `json:"live,omitempty"`
 	Manifest json.RawMessage `json:"manifest,omitempty"`
+	// Note explains a synthetic entry that carries no document diff — the
+	// certificate rotation notices below.
+	Note string `json:"note,omitempty"`
 }
 
 type statusResponse struct {
@@ -104,7 +110,60 @@ func (h *Handler) computeStatus(c *gin.Context, appName string, cfg *store.AppCo
 	}
 	resp := statusOf(manifests, anchor, live)
 	resp.ReadyReplicas, resp.Replicas = workloadReplicas(appName, manifests, live)
+	if err := h.noteCertificateRotation(c, cli, cfg, manifests, &resp); err != nil {
+		return errorStatus(err)
+	}
 	return resp, nil
+}
+
+// noteCertificateRotation reports managed TLS secrets that no longer match
+// their platform certificate: the cert-hash annotation of the live secret is
+// compared against the certificate's current content hash. A mismatch means
+// the certificate was rotated and the config awaits a publish, so an
+// otherwise synced report is downgraded to pending; existing drift/pending
+// verdicts stand unchanged. A certificate that fails to resolve (deleted or
+// unreadable) becomes a rotation note instead of failing the whole check.
+func (h *Handler) noteCertificateRotation(c *gin.Context, cli client.Client, cfg *store.AppConfig, manifests []unstructured.Unstructured, resp *statusResponse) error {
+	for _, certName := range ingressCertificateNames(manifests) {
+		name := render.TLSSecretName(certName)
+		hash, err := h.deps.CertificateHash(certName)
+		if err != nil {
+			resp.appendRotationNote(cfg.Namespace, name,
+				fmt.Sprintf("certificate %q is unavailable: %v", certName, err))
+			continue
+		}
+		existing := syncops.BlankDoc(&unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "v1", "kind": "Secret",
+		}})
+		getErr := cli.Get(c.Request.Context(), client.ObjectKey{Namespace: cfg.Namespace, Name: name}, existing)
+		switch {
+		case getErr == nil:
+			if existing.GetAnnotations()[store.AnnotationKiteCertHash] == hash {
+				continue
+			}
+			resp.appendRotationNote(cfg.Namespace, name,
+				fmt.Sprintf("certificate %q has been updated; publish to rotate the managed TLS secret", certName))
+		case apierrors.IsNotFound(getErr):
+			resp.appendRotationNote(cfg.Namespace, name,
+				fmt.Sprintf("managed TLS secret of certificate %q is missing; publish to create it", certName))
+		default:
+			return fmt.Errorf("get secret %s/%s: %w", cfg.Namespace, name, getErr)
+		}
+	}
+	return nil
+}
+
+// appendRotationNote records one certificate rotation finding: synced
+// configs drop to pending (the cluster no longer runs the stored
+// certificate's material), any other verdict keeps its original judgment.
+func (resp *statusResponse) appendRotationNote(namespace, secretName, note string) {
+	if resp.Status == store.StatusSynced {
+		resp.Status = store.StatusPending
+	}
+	resp.Docs = append(resp.Docs, statusDoc{
+		DocDiff: syncops.DocDiff{Kind: "Secret", Namespace: namespace, Name: secretName},
+		Note:    note,
+	})
 }
 
 // workloadReplicas reads the live workload's replica counts for the persisted

@@ -125,6 +125,20 @@ function DriftDocCard({
   onView: (doc: ApplicationStatusDoc) => void
 }) {
   const { t } = useTranslation()
+  // Note-only docs (certificate rotation notices) carry no diff sides: a
+  // plain text row with nothing to open.
+  if (doc.note && !doc.live && !doc.manifest) {
+    return (
+      <div className="flex w-full items-center gap-2 rounded-lg border p-3">
+        <span className="font-mono text-xs font-medium">
+          {doc.kind}/{doc.name}
+        </span>
+        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+          {doc.note}
+        </span>
+      </div>
+    )
+  }
   const note = doc.missingIn
     ? doc.missingIn === 'cluster'
       ? t('applications.detail.docMissingInCluster')

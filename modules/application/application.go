@@ -63,6 +63,15 @@ type Deps interface {
 	// (host -> user/pass) for the managed image pull secret; git entries are
 	// ignored. An unknown credentialRef is an error.
 	PullSecretData(credentialRef string) (map[string]store.RegistryAuth, error)
+	// CertificateData resolves the named platform certificate to its TLS
+	// material: the normalized chain, the decrypted private key and the
+	// content hash the publish pipeline stamps onto managed TLS secrets. An
+	// unknown certificate is an error. The key is in-memory only: it must
+	// never be logged or persisted outside the upserted secret.
+	CertificateData(name string) (certPem, keyPem, contentHash string, err error)
+	// CertificateHash resolves only the named certificate's content hash for
+	// rotation checks; it must not load or decrypt the private key.
+	CertificateHash(name string) (string, error)
 }
 
 // RegisterRoutes mounts the module API under /applications. The host must call

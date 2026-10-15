@@ -23,6 +23,14 @@ const (
 	// manifest sets (the per-config image pull secret): no identity label on
 	// purpose, so sync adoption and the anchor-based drift never see it.
 	AnnotationKiteManaged = "kite.application/managed"
+	// AnnotationKiteCertificate names the platform certificate an Ingress's
+	// TLS block was rendered from; the publish pipeline resolves it to the
+	// managed TLS secret and status checks use it for rotation visibility.
+	AnnotationKiteCertificate = "kite.application/certificate"
+	// AnnotationKiteCertHash carries the certificate content hash the managed
+	// TLS secret was last written with; a mismatch means the certificate was
+	// rotated and the config awaits a publish.
+	AnnotationKiteCertHash = "kite.application/cert-hash"
 )
 
 // AsMap returns v as a JSON object tree node.

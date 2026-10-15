@@ -1,3 +1,4 @@
+import { CertificatesManagement } from '@/portal/application/components/certificates-management'
 import { SpaceQuotaSettings } from '@/portal/application/components/space-quota-settings'
 import { KcrossManagement } from '@/portal/kcross/kcross-management'
 import { useSpaces, useSyncSpaceParam } from '@/portal/space-context'
@@ -63,6 +64,7 @@ export function ApplicationSettingsPage() {
       ) : (
         <div className="space-y-6">
           <CredentialsManagement />
+          <CertificatesManagement />
           <BuildProvidersManagement />
           <BuildRuntimeSettings />
           <KcrossManagement />

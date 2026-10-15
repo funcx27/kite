@@ -672,6 +672,14 @@ func (h *Handler) applyPublish(ctx context.Context, id identity, app *store.App,
 			return deployResponse{}, err
 		}
 	}
+	// Managed TLS secrets ride the same funnels: every certificate the
+	// pending Ingresses reference is upserted before the Ingress itself
+	// applies, so the referenced secret never lags the rules.
+	if !dryRun {
+		if err := h.ensureTLSSecret(ctx, id, cli, cfg, manifests); err != nil {
+			return deployResponse{}, err
+		}
+	}
 
 	anchorByKey := docMap(anchor)
 	results := make([]deployDocResult, 0, len(manifests))
@@ -933,9 +941,12 @@ func pullSecretName(credentialRef string) string {
 }
 
 const (
-	pullSecretType     = "kubernetes.io/dockerconfigjson"
-	pullSecretDataKey  = ".dockerconfigjson"
-	pullSecretResource = "secrets"
+	pullSecretType    = "kubernetes.io/dockerconfigjson"
+	pullSecretDataKey = ".dockerconfigjson"
+	tlsSecretType     = "kubernetes.io/tls"
+	// secretsResource is the RBAC resource of both managed secret kinds
+	// (image pull secret and TLS secret).
+	secretsResource = "secrets"
 )
 
 // ensurePullSecret upserts the config namespace's managed image pull secret
@@ -992,9 +1003,9 @@ func (h *Handler) ensurePullSecret(ctx context.Context, id identity, cli client.
 	if existing != nil {
 		verb, action = "update", "update"
 	}
-	if !id.authorize(pullSecretResource, verb, cfg.Cluster, cfg.Namespace) {
+	if !id.authorize(secretsResource, verb, cfg.Cluster, cfg.Namespace) {
 		return fmt.Errorf("user does not have permission to %s %s in namespace %s on cluster %s",
-			verb, pullSecretResource, cfg.Namespace, cfg.Cluster)
+			verb, secretsResource, cfg.Namespace, cfg.Cluster)
 	}
 
 	secret := existing
@@ -1027,11 +1038,114 @@ func (h *Handler) ensurePullSecret(ctx context.Context, id identity, cli client.
 		applyErr = cli.Update(ctx, secret)
 	}
 	h.recordOperation(id, store.HistoryEntry{
-		Cluster: cfg.Cluster, ResourceType: pullSecretResource, ResourceName: name,
+		Cluster: cfg.Cluster, ResourceType: secretsResource, ResourceName: name,
 		Namespace: cfg.Namespace, Operation: action, YAML: redactedDoc(secret),
 	}, applyErr == nil, errString(applyErr))
 	if applyErr != nil {
 		return fmt.Errorf("%s secret %s/%s: %w", action, cfg.Namespace, name, applyErr)
+	}
+	return nil
+}
+
+// ingressCertificateNames lists the certificate names the manifest set's
+// Ingresses reference via the kite.application/certificate annotation, in
+// first-seen order.
+func ingressCertificateNames(docs []unstructured.Unstructured) []string {
+	seen := map[string]bool{}
+	var out []string
+	for i := range docs {
+		d := &docs[i]
+		if d.GetKind() != "Ingress" {
+			continue
+		}
+		name := d.GetAnnotations()[store.AnnotationKiteCertificate]
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	return out
+}
+
+// ensureTLSSecret upserts the managed kubernetes.io/tls secret of every
+// certificate the manifest set's Ingresses reference; no annotated Ingress
+// means no-op. A live secret whose cert-hash annotation already matches the
+// certificate's content hash is left untouched — the skip path of an
+// unrotated certificate. Like ensurePullSecret, the update path rewrites only
+// type/data and the managed annotations and keeps foreign fields of the live
+// secret.
+func (h *Handler) ensureTLSSecret(ctx context.Context, id identity, cli client.Client, cfg *store.AppConfig, manifests []unstructured.Unstructured) error {
+	for _, certName := range ingressCertificateNames(manifests) {
+		certPEM, keyPEM, contentHash, err := h.deps.CertificateData(certName)
+		if err != nil {
+			return fmt.Errorf("resolve certificate %q: %w", certName, err)
+		}
+		name := render.TLSSecretName(certName)
+		existing := syncops.BlankDoc(&unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "v1", "kind": "Secret",
+		}})
+		getErr := cli.Get(ctx, client.ObjectKey{Namespace: cfg.Namespace, Name: name}, existing)
+		switch {
+		case getErr == nil:
+		case apierrors.IsNotFound(getErr):
+			existing = nil
+		default:
+			return fmt.Errorf("get secret %s/%s: %w", cfg.Namespace, name, getErr)
+		}
+		if existing != nil && existing.GetAnnotations()[store.AnnotationKiteCertHash] == contentHash {
+			continue
+		}
+
+		verb, action := "create", "create"
+		if existing != nil {
+			verb, action = "update", "update"
+		}
+		if !id.authorize(secretsResource, verb, cfg.Cluster, cfg.Namespace) {
+			return fmt.Errorf("user does not have permission to %s %s in namespace %s on cluster %s",
+				verb, secretsResource, cfg.Namespace, cfg.Cluster)
+		}
+
+		secret := existing
+		if secret == nil {
+			secret = &unstructured.Unstructured{Object: map[string]interface{}{
+				"apiVersion": "v1",
+				"kind":       "Secret",
+				"metadata": map[string]interface{}{
+					"name":      name,
+					"namespace": cfg.Namespace,
+				},
+			}}
+		}
+		secret.Object["type"] = tlsSecretType
+		secret.Object["data"] = map[string]interface{}{
+			"tls.crt": base64.StdEncoding.EncodeToString([]byte(certPEM)),
+			"tls.key": base64.StdEncoding.EncodeToString([]byte(keyPEM)),
+		}
+		// A stale stringData would win over data server-side; the managed
+		// secret's payload lives in data only.
+		delete(secret.Object, "stringData")
+		annotations := secret.GetAnnotations()
+		if annotations == nil {
+			annotations = map[string]string{}
+		}
+		annotations[store.AnnotationKiteManaged] = "true"
+		annotations[store.AnnotationKiteCertHash] = contentHash
+		secret.SetAnnotations(annotations)
+
+		var applyErr error
+		if existing == nil {
+			applyErr = cli.Create(ctx, secret)
+		} else {
+			applyErr = cli.Update(ctx, secret)
+		}
+		h.recordOperation(id, store.HistoryEntry{
+			Cluster: cfg.Cluster, ResourceType: secretsResource, ResourceName: name,
+			Namespace: cfg.Namespace, Operation: action, YAML: redactedDoc(secret),
+		}, applyErr == nil, errString(applyErr))
+		if applyErr != nil {
+			return fmt.Errorf("%s secret %s/%s: %w", action, cfg.Namespace, name, applyErr)
+		}
 	}
 	return nil
 }

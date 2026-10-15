@@ -34,7 +34,11 @@ type AppSpec struct {
 	ConfigFiles  []ConfigFile `json:"configFiles,omitempty"`
 	Ports        []PortSpec   `json:"ports,omitempty"`
 	IngressClass string       `json:"ingressClass,omitempty"`
-	ExtraYAML    string       `json:"extraYaml,omitempty"`
+	// TLSCertificate names the platform certificate rendered into the
+	// Ingress's TLS block; rendering never resolves it — previews may name a
+	// certificate that does not exist yet.
+	TLSCertificate string `json:"tlsCertificate,omitempty"`
+	ExtraYAML      string `json:"extraYaml,omitempty"`
 }
 
 // WorkloadSpec carries the "运行配置" wizard fields (design §3).
@@ -200,6 +204,21 @@ func (s AppSpec) Validate() error {
 	}
 	if err := s.validatePorts(); err != nil {
 		return err
+	}
+	// TLS rides the Ingress, and the Ingress only exists for host-bearing
+	// ports — a certificate without a host is a picker mistake, not a render
+	// error the cluster would surface.
+	if s.TLSCertificate != "" {
+		hasHost := false
+		for _, p := range s.Ports {
+			if p.Host != "" {
+				hasHost = true
+				break
+			}
+		}
+		if !hasHost {
+			return fmt.Errorf("tlsCertificate %q requires at least one port with a host", s.TLSCertificate)
+		}
 	}
 	points := make(map[string]bool, len(s.MountPoints))
 	for _, m := range s.MountPoints {

@@ -44,6 +44,8 @@ export interface ApplicationSpec {
   configFiles?: ApplicationConfigFile[]
   ports?: ApplicationPortSpec[]
   ingressClass?: string
+  /** Certificate name rendered as an Ingress TLS block + managed kubernetes.io/tls Secret. */
+  tlsCertificate?: string
   extraYaml?: string
 }
 
@@ -246,6 +248,9 @@ export interface ApplicationOfflineResponse {
 export interface ApplicationStatusDoc extends ApplicationDocDiff {
   live?: ApplicationManifest
   manifest?: ApplicationManifest
+  /** Backend-generated notice for a synthetic entry with no diff content
+   * (certificate rotation findings). */
+  note?: string
 }
 
 export interface ApplicationStatusReport {
@@ -485,4 +490,47 @@ export interface SpaceQuotaStatus {
 
 export interface SpaceQuotaListResponse {
   quotas: SpaceQuotaStatus[]
+}
+
+// ── Certificates (pkg/certificate) ──
+
+// Metadata view shared by the user-side list (wizard picker) and the admin
+// list; the PEM chain and key are never part of it.
+export interface CertificateMeta {
+  id: number
+  name: string
+  description: string
+  commonName: string
+  dnsNames: string[]
+  issuer: string
+  notBefore: string
+  notAfter: string
+  fingerprint: string
+  createdAt: string
+}
+
+// Admin detail/edit round trip: adds the chain so the edit form can prefill
+// it; the key is write-only by design.
+export interface CertificateDetail extends CertificateMeta {
+  certPem: string
+  updatedAt: string
+}
+
+export interface CertificateListResponse {
+  certificates: CertificateMeta[]
+}
+
+export interface CreateCertificateRequest {
+  name: string
+  description?: string
+  certPem: string
+  keyPem: string
+}
+
+// Partial edit: certPem omitted = keep the stored chain; a changed certPem
+// requires keyPem; a lone keyPem must match the stored chain.
+export interface UpdateCertificateRequest {
+  description?: string
+  certPem?: string
+  keyPem?: string
 }

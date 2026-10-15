@@ -14,11 +14,15 @@ import type {
   ApplicationRollbackResponse,
   ApplicationRuntimeView,
   ApplicationStatusReport,
+  CertificateDetail,
+  CertificateListResponse,
   CreateApplicationRequest,
+  CreateCertificateRequest,
   SpaceQuotaInput,
   SpaceQuotaListResponse,
   SpaceQuotaUpsertResponse,
   UpdateApplicationRequest,
+  UpdateCertificateRequest,
 } from '@/portal/application/types'
 import type { APIRequestOptions } from '@kite-dev/plugin-sdk/api'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -48,6 +52,26 @@ async function applicationRequest<T>(
   options?: APIRequestOptions
 ): Promise<T> {
   const response = await apiClient.request(`/applications${path}`, options)
+  const body: unknown = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    const payload = (body ?? {}) as Record<string, unknown>
+    const message =
+      typeof payload.error === 'string'
+        ? payload.error
+        : `HTTP ${response.status}`
+    throw new ApplicationApiError(response.status, message, payload)
+  }
+  return body as T
+}
+
+// Same contract as applicationRequest for paths outside /applications: the
+// read-only certificate listing (/certificates) and the admin group
+// (/admin/certificates).
+async function platformRequest<T>(
+  path: string,
+  options?: APIRequestOptions
+): Promise<T> {
+  const response = await apiClient.request(path, options)
   const body: unknown = await response.json().catch(() => ({}))
   if (!response.ok) {
     const payload = (body ?? {}) as Record<string, unknown>
@@ -417,5 +441,101 @@ export const useDissociateSpaceMutation = () => {
       })
       void queryClient.invalidateQueries({ queryKey: ['namespaces'] })
     },
+  })
+}
+
+// ── Certificates ──
+
+// Read-only metadata listing every user may call — feeds the wizard's TLS
+// certificate picker.
+export const fetchCertificates = () =>
+  platformRequest<CertificateListResponse>('/certificates', { method: 'GET' })
+
+export const useCertificates = () => {
+  return useQuery({
+    queryKey: ['applications', 'certificates'],
+    queryFn: fetchCertificates,
+    select: (data) => data.certificates,
+    placeholderData: (prevData) => prevData,
+  })
+}
+
+// The admin list is the same shape on the admin group; kept as a separate
+// cache entry because non-admin users cannot reach it.
+const adminCertificatePath = (id: number) =>
+  `/admin/certificates/${encodeURIComponent(id)}`
+
+export const fetchAdminCertificates = () =>
+  platformRequest<CertificateListResponse>('/admin/certificates', {
+    method: 'GET',
+  })
+
+export const useAdminCertificates = () => {
+  return useQuery({
+    queryKey: ['applications', 'admin-certificates'],
+    queryFn: fetchAdminCertificates,
+    select: (data) => data.certificates,
+    placeholderData: (prevData) => prevData,
+  })
+}
+
+// Edit round trip: metadata plus the PEM chain; the key is never returned.
+export const fetchAdminCertificate = (id: number) =>
+  platformRequest<CertificateDetail>(adminCertificatePath(id), {
+    method: 'GET',
+  })
+
+export const createCertificate = (req: CreateCertificateRequest) =>
+  platformRequest<CertificateDetail>('/admin/certificates', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  })
+
+export const updateCertificate = (id: number, req: UpdateCertificateRequest) =>
+  platformRequest<CertificateDetail>(adminCertificatePath(id), {
+    method: 'PUT',
+    body: JSON.stringify(req),
+  })
+
+export const deleteCertificate = (id: number) =>
+  platformRequest<{ message: string }>(adminCertificatePath(id), {
+    method: 'DELETE',
+  })
+
+// Admin writes refresh both listings so the wizard's picker sees the change.
+const useInvalidateCertificates = () => {
+  const queryClient = useQueryClient()
+  return () => {
+    void queryClient.invalidateQueries({
+      queryKey: ['applications', 'admin-certificates'],
+    })
+    void queryClient.invalidateQueries({
+      queryKey: ['applications', 'certificates'],
+    })
+  }
+}
+
+export const useCreateCertificateMutation = () => {
+  const invalidate = useInvalidateCertificates()
+  return useMutation({
+    mutationFn: createCertificate,
+    onSuccess: invalidate,
+  })
+}
+
+export const useUpdateCertificateMutation = () => {
+  const invalidate = useInvalidateCertificates()
+  return useMutation({
+    mutationFn: ({ id, req }: { id: number; req: UpdateCertificateRequest }) =>
+      updateCertificate(id, req),
+    onSuccess: invalidate,
+  })
+}
+
+export const useDeleteCertificateMutation = () => {
+  const invalidate = useInvalidateCertificates()
+  return useMutation({
+    mutationFn: deleteCertificate,
+    onSuccess: invalidate,
   })
 }

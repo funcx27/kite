@@ -93,6 +93,7 @@ interface WizardState {
   configFiles: ApplicationConfigFile[]
   ports: ApplicationPortSpec[]
   ingressClass: string
+  tlsCertificate: string
   extraYaml: string
 }
 
@@ -127,6 +128,7 @@ function buildState(
     configFiles: spec?.configFiles ?? [],
     ports: spec?.ports ?? [],
     ingressClass: spec?.ingressClass ?? '',
+    tlsCertificate: spec?.tlsCertificate ?? '',
     extraYaml: spec?.extraYaml ?? '',
   }
 }
@@ -146,6 +148,7 @@ function buildSpec(state: WizardState): ApplicationSpec {
     configFiles: state.configFiles,
     ports: state.ports.filter((port) => port.port > 0),
     ingressClass: state.ingressClass || undefined,
+    tlsCertificate: state.tlsCertificate || undefined,
     extraYaml: state.extraYaml || undefined,
   }
 }
@@ -763,8 +766,9 @@ export function ApplicationWizard({
                 <PortsEditor
                   ports={state.ports}
                   ingressClass={state.ingressClass}
-                  onChange={(ports, ingressClass) =>
-                    patch({ ports, ingressClass })
+                  tlsCertificate={state.tlsCertificate}
+                  onChange={(ports, ingressClass, tlsCertificate) =>
+                    patch({ ports, ingressClass, tlsCertificate })
                   }
                 />
               )}

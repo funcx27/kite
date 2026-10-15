@@ -1,6 +1,8 @@
 package render
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"path"
 	"strconv"
@@ -360,8 +362,43 @@ func buildIngressDoc(app string, spec AppSpec, namespace string) *unstructured.U
 	obj.SetName(app)
 	obj.SetNamespace(namespace)
 	stampLabels(obj, app)
+	if spec.TLSCertificate != "" {
+		hostsIF := make([]interface{}, 0, len(hosts))
+		for _, h := range hosts {
+			hostsIF = append(hostsIF, h)
+		}
+		specMap["tls"] = []interface{}{map[string]interface{}{
+			"hosts":      hostsIF,
+			"secretName": TLSSecretName(spec.TLSCertificate),
+		}}
+		// The annotation is what the publish pipeline reads back: the TLS
+		// block alone could not tell a kite-managed secret from a hand-written
+		// one.
+		obj.SetAnnotations(map[string]string{store.AnnotationKiteCertificate: spec.TLSCertificate})
+	}
 	obj.Object["spec"] = specMap
 	return obj
+}
+
+// TLSSecretName derives the managed TLS secret's name from the certificate
+// name; the derivation mirrors the api package's pullSecretName (same prefix
+// scheme, truncation and hash suffix) so renders and publishes always agree
+// on the name.
+func TLSSecretName(certName string) string {
+	const (
+		prefix    = "kite-tls-"
+		maxLabel  = 63
+		hashChars = 8 // hex-encoded SHA-256 fragment
+	)
+	if certName == "" {
+		return ""
+	}
+	if len(prefix)+len(certName) <= maxLabel {
+		return prefix + certName
+	}
+	fragment := strings.TrimRight(certName[:maxLabel-len(prefix)-hashChars-1], "-")
+	sum := sha256.Sum256([]byte(certName))
+	return prefix + fragment + "-" + hex.EncodeToString(sum[:hashChars/2])
 }
 
 // buildConfigDocs renders the app's ConfigMap (non-secret files, data) and

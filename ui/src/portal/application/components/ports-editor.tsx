@@ -1,5 +1,10 @@
 import { useState } from 'react'
-import { ApplicationPortSpec } from '@/portal/application/types'
+import { useCertificates } from '@/portal/application/api'
+import {
+  ApplicationPortSpec,
+  CertificateMeta,
+} from '@/portal/application/types'
+import { format } from 'date-fns'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -16,10 +21,32 @@ import {
 interface PortsEditorProps {
   ports: ApplicationPortSpec[]
   ingressClass: string
-  onChange: (ports: ApplicationPortSpec[], ingressClass: string) => void
+  tlsCertificate: string
+  onChange: (
+    ports: ApplicationPortSpec[],
+    ingressClass: string,
+    tlsCertificate: string
+  ) => void
 }
 
 const PORT_TYPES = ['clusterip', 'nodeport', 'loadbalancer'] as const
+
+// shadcn Select rejects an empty-string item, so "disabled" rides a sentinel
+// value (same trick as the deploy dialog's pull-credential picker).
+const tlsCertificateNone = '__none__'
+
+// Wildcard-aware, case-insensitive match against the certificate's CommonName
+// + DNSNames: *.example.com covers every host ending in .example.com.
+function hostCovered(host: string, cert: CertificateMeta): boolean {
+  const domains = [cert.commonName, ...cert.dnsNames]
+    .filter(Boolean)
+    .map((domain) => domain.toLowerCase())
+  return domains.some(
+    (domain) =>
+      host === domain ||
+      (domain.startsWith('*.') && host.endsWith(domain.slice(1)))
+  )
+}
 
 // Wizard step 4 (design §8): one row per port — port + Service type + optional
 // external host/path. Service port names are auto-generated server side
@@ -29,31 +56,56 @@ const PORT_TYPES = ['clusterip', 'nodeport', 'loadbalancer'] as const
 export function PortsEditor({
   ports,
   ingressClass,
+  tlsCertificate,
   onChange,
 }: PortsEditorProps) {
   const { t } = useTranslation()
   const [openHostRows, setOpenHostRows] = useState<Record<number, boolean>>({})
+  const { data: certificates } = useCertificates()
+
+  // A tlsCertificate without any host fails spec validation, and hiding the
+  // picker with the last host removed would leave it unfixable from the form.
+  const tlsWithHost = (nextPorts: ApplicationPortSpec[]) =>
+    nextPorts.some((port) => port.host?.trim()) ? tlsCertificate : ''
 
   const update = (index: number, updates: Partial<ApplicationPortSpec>) => {
-    onChange(
-      ports.map((port, i) => (i === index ? { ...port, ...updates } : port)),
-      ingressClass
+    const next = ports.map((port, i) =>
+      i === index ? { ...port, ...updates } : port
     )
+    onChange(next, ingressClass, tlsWithHost(next))
   }
 
   const addPort = () => {
-    onChange([...ports, { port: 0, type: 'clusterip' }], ingressClass)
+    onChange(
+      [...ports, { port: 0, type: 'clusterip' }],
+      ingressClass,
+      tlsCertificate
+    )
     setOpenHostRows((prev) => ({ ...prev, [ports.length]: false }))
   }
 
   const removePort = (index: number) => {
-    onChange(
-      ports.filter((_, i) => i !== index),
-      ingressClass
-    )
+    const next = ports.filter((_, i) => i !== index)
+    onChange(next, ingressClass, tlsWithHost(next))
   }
 
   const needsIngressClass = ports.some((port) => port.host?.trim())
+
+  // Soft reminder: hosts the selected certificate does not cover. Advisory
+  // only — a mismatched pair still saves and publishes.
+  const selectedCert = (certificates ?? []).find(
+    (cert) => cert.name === tlsCertificate
+  )
+  const uncoveredHosts =
+    selectedCert !== undefined
+      ? [
+          ...new Set(
+            ports
+              .map((port) => port.host?.trim().toLowerCase())
+              .filter((host): host is string => !!host)
+          ),
+        ].filter((host) => !hostCovered(host, selectedCert))
+      : []
 
   return (
     <div className="rounded-lg border p-4">
@@ -177,16 +229,65 @@ export function PortsEditor({
       </div>
 
       {needsIngressClass && (
-        <div className="mt-4 w-56">
-          <Label className="text-sm">
-            {t('applications.wizard.ingressClass')}
-          </Label>
-          <Input
-            value={ingressClass}
-            onChange={(event) => onChange(ports, event.target.value)}
-            placeholder={t('applications.wizard.ingressClassPlaceholder')}
-            className="mt-1.5"
-          />
+        <div className="mt-4 flex flex-wrap gap-4">
+          <div className="w-56">
+            <Label className="text-sm">
+              {t('applications.wizard.ingressClass')}
+            </Label>
+            <Input
+              value={ingressClass}
+              onChange={(event) =>
+                onChange(ports, event.target.value, tlsCertificate)
+              }
+              placeholder={t('applications.wizard.ingressClassPlaceholder')}
+              className="mt-1.5"
+            />
+          </div>
+          <div className="w-72">
+            <Label className="text-sm">
+              {t('applications.wizard.tlsCertificate')}
+            </Label>
+            <Select
+              value={tlsCertificate || tlsCertificateNone}
+              onValueChange={(value) =>
+                onChange(
+                  ports,
+                  ingressClass,
+                  value === tlsCertificateNone ? '' : value
+                )
+              }
+            >
+              <SelectTrigger className="mt-1.5 w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={tlsCertificateNone}>
+                  {t('applications.wizard.tlsCertificatePlaceholder')}
+                </SelectItem>
+                {(certificates ?? []).map((cert) => (
+                  <SelectItem key={cert.name} value={cert.name}>
+                    {cert.name} · {cert.commonName || cert.dnsNames[0] || '—'} ·{' '}
+                    {format(new Date(cert.notAfter), 'yyyy-MM-dd')}
+                  </SelectItem>
+                ))}
+                {/* A spec naming a certificate that was deleted still shows
+                    its raw name instead of a blank select (same echo trick as
+                    the deploy dialog's pull-credential picker). */}
+                {tlsCertificate !== '' && selectedCert === undefined && (
+                  <SelectItem value={tlsCertificate}>
+                    {tlsCertificate}
+                  </SelectItem>
+                )}
+              </SelectContent>
+            </Select>
+            {uncoveredHosts.length > 0 && (
+              <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                {t('applications.wizard.tlsUncovered', {
+                  hosts: uncoveredHosts.join(', '),
+                })}
+              </p>
+            )}
+          </div>
         </div>
       )}
     </div>

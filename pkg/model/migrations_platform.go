@@ -9,5 +9,6 @@ func platformMigrations() []any {
 		KcrossBinding{},
 		BuildProvider{},
 		BuildRuntimeSetting{},
+		Certificate{},
 	}
 }
