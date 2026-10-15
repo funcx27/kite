@@ -29,6 +29,8 @@ func ExtractFields(app string, docs []unstructured.Unstructured) AppSpec {
 		if c := primaryContainer(&docs[w]); c != nil {
 			spec.Workload.Image, _, _ = unstructured.NestedString(c, "image")
 			spec.Workload.ImagePullPolicy, _, _ = unstructured.NestedString(c, "imagePullPolicy")
+			spec.Workload.Command, _, _ = unstructured.NestedStringSlice(c, "command")
+			spec.Workload.Args, _, _ = unstructured.NestedStringSlice(c, "args")
 			spec.Workload.Env = extractEnv(c)
 			spec.Workload.Requests = extractQuantity(c, "requests")
 			spec.Workload.Limits = extractQuantity(c, "limits")
@@ -512,6 +514,16 @@ func injectContainer(app string, c, podSpec map[string]interface{}, spec AppSpec
 		// Form-owned field: an empty value must remove a previously set
 		// policy, not preserve it across form round trips.
 		delete(c, "imagePullPolicy")
+	}
+	if cmd := stringList(spec.Workload.Command); len(cmd) > 0 {
+		c["command"] = cmd
+	} else {
+		delete(c, "command")
+	}
+	if args := stringList(spec.Workload.Args); len(args) > 0 {
+		c["args"] = args
+	} else {
+		delete(c, "args")
 	}
 	originals := envByName(c)
 	var env []interface{}

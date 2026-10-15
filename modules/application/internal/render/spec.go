@@ -52,6 +52,10 @@ type WorkloadSpec struct {
 	// ImagePullPolicy is optional; empty lets the kubelet default it
 	// (Always for :latest, IfNotPresent otherwise).
 	ImagePullPolicy string `json:"imagePullPolicy,omitempty"`
+	// Command overrides the image entrypoint, Args its arguments; empty
+	// means the image defaults apply.
+	Command []string `json:"command,omitempty"`
+	Args    []string `json:"args,omitempty"`
 }
 
 // EnvVar is one plain-value environment variable; valueFrom entries surface

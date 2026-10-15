@@ -17,6 +17,8 @@ export interface ApplicationWorkloadSpec {
   type: string // deployment | statefulset
   image: string
   replicas?: number
+  command?: string[]
+  args?: string[]
   env?: ApplicationEnvVar[]
   requests?: ApplicationResourceSpec
   limits?: ApplicationResourceSpec

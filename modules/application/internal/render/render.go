@@ -138,6 +138,12 @@ func buildWorkload(app string, spec AppSpec, namespace string) *unstructured.Uns
 	if spec.Workload.ImagePullPolicy != "" {
 		container["imagePullPolicy"] = spec.Workload.ImagePullPolicy
 	}
+	if cmd := stringList(spec.Workload.Command); len(cmd) > 0 {
+		container["command"] = cmd
+	}
+	if args := stringList(spec.Workload.Args); len(args) > 0 {
+		container["args"] = args
+	}
 	if env := envList(spec.Workload.Env); len(env) > 0 {
 		container["env"] = env
 	}
@@ -178,6 +184,16 @@ func envList(env []EnvVar) []interface{} {
 			continue
 		}
 		out = append(out, map[string]interface{}{"name": e.Name, "value": e.Value})
+	}
+	return out
+}
+
+// stringList converts a spec string slice into the JSON shape unstructured
+// containers carry ([]interface{}).
+func stringList(values []string) []interface{} {
+	out := make([]interface{}, 0, len(values))
+	for _, v := range values {
+		out = append(out, v)
 	}
 	return out
 }
