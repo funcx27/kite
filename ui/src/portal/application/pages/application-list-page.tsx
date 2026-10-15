@@ -216,7 +216,14 @@ export function ApplicationListPage() {
       id: 'status',
       header: t('applications.list.status'),
       cell: ({ row }) => {
-        const configs = row.original.configs
+        // Under an active cluster filter, show only the selected clusters'
+        // rows; the app-level filter keeps the row itself visible.
+        const configs =
+          clusterFilters.length > 0
+            ? row.original.configs.filter((config) =>
+                clusterFilters.includes(config.cluster)
+              )
+            : row.original.configs
         if (configs.length === 0) {
           return (
             <span

@@ -10,7 +10,7 @@ import {
   portalRuntimeBaseHtmlPlugin,
   portalSpaFallbackPlugin,
   withPortalChunks,
-} from './plugins/vite-plugin-portal'
+} from './plugins/vite-plugin-portal.ts'
 import { normalizeBasePath } from './src/lib/base-path.ts'
 
 const devSubPath = normalizeBasePath(process.env.KITE_BASE)
