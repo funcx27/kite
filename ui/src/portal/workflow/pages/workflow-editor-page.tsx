@@ -16,6 +16,7 @@ import {
   type Edge as FlowEdge,
   type NodeChange,
 } from '@xyflow/react'
+import { History } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
@@ -619,6 +620,16 @@ export function WorkflowEditorPage() {
           >
             {t('workflow.editor.params')}
           </Button>
+          {!isCreate && routeWorkflowId !== undefined && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => navigate(`/workflows/${routeWorkflowId}/runs`)}
+            >
+              <History className="h-4 w-4" />
+              {t('workflow.editor.viewRuns')}
+            </Button>
+          )}
           <Button
             variant="outline"
             size="sm"

@@ -81,6 +81,7 @@
       "paletteHint": "Nodes without incoming edges are start nodes (parallel starts allowed). Edges are dependencies; deleting a node cleans up its edges.",
       "params": "Params",
       "triggers": "Triggers",
+      "viewRuns": "View runs",
       "validate": "Validate",
       "save": "Save",
       "saving": "Saving…",

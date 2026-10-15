@@ -81,6 +81,7 @@
       "paletteHint": "无入边即起点（可多个并行）；连线建立依赖；删除节点自动清理连线。",
       "params": "参数",
       "triggers": "触发器",
+      "viewRuns": "查看运行记录",
       "validate": "校验",
       "save": "保存",
       "saving": "保存中…",
