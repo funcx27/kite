@@ -28,3 +28,25 @@ func kcrossPeerOnline(clusterID uint) bool {
 	}
 	return kcross.PeerOnline(context.Background(), binding.PeerID)
 }
+
+// kcrossOfflineGate 在线门控：绑定集群的 peer 离线时按“等待接入”处理——摘除已有
+// client、按 Enable 置错误态。返回 true 表示本集群本轮跳过（fail closed）。
+func kcrossOfflineGate(cm *ClusterManager, cluster *model.Cluster, current *ClientSet, currentExist bool) bool {
+	if model.GetKcrossBindingByCluster(cluster.ID) == nil || kcrossPeerOnline(cluster.ID) {
+		return false
+	}
+	if currentExist {
+		cm.mu.Lock()
+		delete(cm.clusters, cluster.Name)
+		cm.mu.Unlock()
+		current.K8sClient.Stop(cluster.Name)
+	}
+	cm.mu.Lock()
+	if cluster.Enable {
+		cm.errors[cluster.Name] = "waiting for kcross peer connection"
+	} else {
+		delete(cm.errors, cluster.Name)
+	}
+	cm.mu.Unlock()
+	return true
+}

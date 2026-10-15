@@ -4,7 +4,6 @@ import (
 	"embed"
 	"io/fs"
 	"net/http"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/zxh326/kite/pkg/common"
@@ -14,34 +13,6 @@ import (
 
 //go:embed static
 var staticFiles embed.FS
-
-// The portal SPA owns the single /portal prefix. The fallback must happen
-// here, server-side: the console router has a :resource/:name catch-all, so
-// portal routes like /portal/applications served as index.html would be
-// rendered as cluster resource pages by the console entry.
-func isPortalPath(path, base string) bool {
-	if !strings.HasPrefix(path, base) {
-		return false
-	}
-	rest := path[len(base):]
-	return rest == "/portal" || strings.HasPrefix(rest, "/portal/")
-}
-
-func serveSPAHTML(c *gin.Context, name, base string) {
-	content, err := staticFiles.ReadFile("static/" + name)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read " + name})
-		return
-	}
-
-	htmlContent := utils.InjectKiteBase(string(content), base)
-	if common.EnableAnalytics {
-		htmlContent = utils.InjectAnalytics(htmlContent)
-	}
-
-	c.Header("Content-Type", "text/html; charset=utf-8")
-	c.String(http.StatusOK, htmlContent)
-}
 
 func setupStatic(r *gin.Engine) {
 	base := common.Base
@@ -66,11 +37,22 @@ func setupStatic(r *gin.Engine) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "API endpoint not found"})
 			return
 		}
-
-		if isPortalPath(path, base) {
-			serveSPAHTML(c, "portal.html", base)
+		if servePortalSPA(c, path, base) { // static_portal.go
 			return
 		}
-		serveSPAHTML(c, "index.html", base)
+
+		content, err := staticFiles.ReadFile("static/index.html")
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read index.html"})
+			return
+		}
+
+		htmlContent := utils.InjectKiteBase(string(content), base)
+		if common.EnableAnalytics {
+			htmlContent = utils.InjectAnalytics(htmlContent)
+		}
+
+		c.Header("Content-Type", "text/html; charset=utf-8")
+		c.String(http.StatusOK, htmlContent)
 	})
 }

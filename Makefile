@@ -17,6 +17,8 @@ E2E_DEX_CONTAINER ?= kite-e2e-dex
 E2E_OAUTH_PORT ?= 5556
 SPEC ?=
 
+include platform.mk
+
 # Version information
 VERSION=$(shell scripts/get-version.sh)
 BUILD_DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -94,17 +96,12 @@ package-binaries: ## Package each kite binary file separately
 
 frontend: static ## Build frontend only
 
-# make's ** glob is not recursive, so ui/src/**/*.tsx missed deeper files and
-# stale binaries were served as "up to date"; collect sources with find.
-# .json/.css ride along: i18n-only or style-only edits must rebuild too.
-UI_SOURCES := $(shell find $(UI_DIR)/src \( -name '*.tsx' -o -name '*.ts' -o -name '*.json' -o -name '*.css' \) 2>/dev/null) $(UI_DIR)/index.html $(UI_DIR)/portal.html
 static: $(UI_SOURCES) $(UI_DIR)/package.json $(UI_DIR)/vite.config.ts
 	@echo "📦 Ensuring static files are built..."
 	cd $(UI_DIR) && pnpm run build
 
 backend: ${BINARY_NAME} ## Build backend only
 
-GO_SOURCES := $(shell find . -name '*.go' -not -path './ui/*' 2>/dev/null)
 $(BINARY_NAME): $(GO_SOURCES) go.mod static
 	@echo "🏗️ Building backend..."
 	CGO_ENABLED=0 go build -trimpath $(LDFLAGS) -o $(BINARY_NAME) .
@@ -146,9 +143,6 @@ format: ## Format code
 # Pre-commit checks
 pre-commit: format lint check-ui-boundaries ## Run pre-commit checks
 	@echo "✅ Pre-commit checks completed!"
-
-check-ui-boundaries: ## Check ui/src module boundary rules
-	./scripts/check-ui-boundaries.sh
 
 test: ## Run tests
 	@echo "🧪 Running tests..."

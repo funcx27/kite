@@ -3,25 +3,18 @@ package main
 import (
 	"net/http"
 
-	"github.com/funcx27/kite/modules/application"
-	"github.com/funcx27/kite/modules/workflow"
 	"github.com/gin-gonic/gin"
 	promclient "github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/zxh326/kite/pkg/ai"
 	"github.com/zxh326/kite/pkg/apikeys"
-	"github.com/zxh326/kite/pkg/applicationadapter"
 	"github.com/zxh326/kite/pkg/audit"
 	"github.com/zxh326/kite/pkg/auth"
-	"github.com/zxh326/kite/pkg/buildfleetadapter"
 	"github.com/zxh326/kite/pkg/cluster"
-	"github.com/zxh326/kite/pkg/credentialsadapter"
 	"github.com/zxh326/kite/pkg/helm"
 	"github.com/zxh326/kite/pkg/images"
-	"github.com/zxh326/kite/pkg/kcross"
 	"github.com/zxh326/kite/pkg/metrics"
 	"github.com/zxh326/kite/pkg/middleware"
-	"github.com/zxh326/kite/pkg/model"
 	"github.com/zxh326/kite/pkg/proxy"
 	"github.com/zxh326/kite/pkg/rbac"
 	"github.com/zxh326/kite/pkg/resources"
@@ -32,11 +25,10 @@ import (
 	"github.com/zxh326/kite/pkg/terminal"
 	"github.com/zxh326/kite/pkg/users"
 	"github.com/zxh326/kite/pkg/version"
-	"github.com/zxh326/kite/pkg/workflowadapter"
 	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
-func setupAPIRouter(r *gin.RouterGroup, cm *cluster.ClusterManager, buildfleet *buildfleetadapter.Deps, credDeps *credentialsadapter.Deps) {
+func setupAPIRouter(r *gin.RouterGroup, cm *cluster.ClusterManager) {
 	authHandler := auth.NewAuthHandler()
 	helmChartsHandler := helm.NewHelmChartHandler()
 
@@ -48,11 +40,8 @@ func setupAPIRouter(r *gin.RouterGroup, cm *cluster.ClusterManager, buildfleet *
 	registerAuthRoutes(r, authHandler)
 	registerUserRoutes(r, authHandler)
 	registerAdminRoutes(r, authHandler, cm, helmChartsHandler)
-	wfModule := registerProtectedRoutes(r, authHandler, cm, helmChartsHandler, buildfleet, credDeps)
-	// Public workflow webhook (design §7): the token in the path is the
-	// credential, so the route mounts outside session/RBAC middleware — the
-	// module owns the path shape.
-	wfModule.RegisterPublicRoutes(r)
+	registerProtectedRoutes(r, authHandler, cm, helmChartsHandler)
+	registerPlatformPublicRoutes(r, authHandler) // platform.go
 }
 
 func registerBaseRoutes(r *gin.RouterGroup) {
@@ -92,10 +81,6 @@ func registerUserRoutes(r *gin.RouterGroup, authHandler *auth.AuthHandler) {
 	userGroup.POST("/me/passkeys/finish", authHandler.RequireAuth(), users.FinishCurrentUserPasskeyRegistration)
 	userGroup.DELETE("/me/passkeys/:id", authHandler.RequireAuth(), users.DeleteCurrentUserPasskey)
 	userGroup.POST("/sidebar_preference", authHandler.RequireAuth(), users.UpdateSidebarPreference)
-	// Workflow assignee picker: RequireAuth only — the handler enforces
-	// admin or wildcard workflows access itself (non-resource shape, design §8).
-	v1UserGroup := r.Group("/api/v1/users")
-	v1UserGroup.GET("/directory", authHandler.RequireAuth(), users.ListUserDirectory)
 }
 
 func registerAdminRoutes(r *gin.RouterGroup, authHandler *auth.AuthHandler, cm *cluster.ClusterManager, helmChartsHandler *helm.HelmChartHandler) {
@@ -122,9 +107,7 @@ func registerAdminRoutes(r *gin.RouterGroup, authHandler *auth.AuthHandler, cm *
 	clusterAPI.PUT("/:id", cm.UpdateCluster)
 	clusterAPI.DELETE("/:id", cm.DeleteCluster)
 
-	// kcross 集成（设置/发现/绑定，全部在 pkg/kcross 内实现）
-	kcrossAPI := adminAPI.Group("/kcross")
-	kcross.RegisterRoutes(kcrossAPI)
+	registerPlatformAdminRoutes(adminAPI) // platform.go: kcross
 
 	rbacAPI := adminAPI.Group("/roles")
 	rbacAPI.GET("/", rbac.ListRoles)
@@ -162,46 +145,20 @@ func registerAdminRoutes(r *gin.RouterGroup, authHandler *auth.AuthHandler, cm *
 	helmChartsHandler.RegisterAdminRoutes(adminAPI)
 }
 
-func registerProtectedRoutes(r *gin.RouterGroup, authHandler *auth.AuthHandler, cm *cluster.ClusterManager, helmChartsHandler *helm.HelmChartHandler, buildfleet *buildfleetadapter.Deps, credDeps *credentialsadapter.Deps) *workflow.Module {
+func registerProtectedRoutes(r *gin.RouterGroup, authHandler *auth.AuthHandler, cm *cluster.ClusterManager, helmChartsHandler *helm.HelmChartHandler) {
 	api := r.Group("/api/v1")
 	api.GET("/clusters", authHandler.RequireAuth(), cm.GetClusters)
 	defaultAPI := api.Group("")
 	defaultAPI.Use(authHandler.RequireAuth(), middleware.ClusterMiddleware(cm))
-
-	appDeps := applicationadapter.NewDeps(cm, credDeps)
-	if err := applicationadapter.Migrate(model.DB); err != nil {
-		panic("failed to migrate application module: " + err.Error())
-	}
-	if err := credentialsadapter.Migrate(model.DB); err != nil {
-		panic("failed to migrate credentials module: " + err.Error())
-	}
-	// A typed-nil *buildfleetadapter.Deps would arrive as a non-nil
-	// interface: convert explicitly so BuildImage sees "not configured".
-	var fleetCap workflowadapter.FleetBuilder
-	if buildfleet != nil {
-		fleetCap = buildfleet
-	}
-	// appDeps backs both the application module API and the workflow
-	// adapter's DeployApp facade (same Deps wiring, same audit attribution).
-	wfDeps := workflowadapter.NewDeps(cm, fleetCap, credDeps, appDeps)
-	if err := workflowadapter.Migrate(model.DB); err != nil {
-		panic("failed to migrate workflow module: " + err.Error())
-	}
-	// Resume runs interrupted by a previous process (design §6 重启恢复);
-	// must run after Migrate so the module tables exist.
-	wfModule := workflow.New(wfDeps)
-	if err := wfModule.Start(); err != nil {
-		panic("failed to start workflow module: " + err.Error())
-	}
-	registerClusterProtectedRoutes(defaultAPI, helmChartsHandler, appDeps, buildfleet, wfModule, credDeps)
+	initPlatformRoutes(cm) // platform.go: adapters, migrations, run resume
+	registerClusterProtectedRoutes(defaultAPI, helmChartsHandler)
 
 	clusterAPI := api.Group("/_clusters/:cluster")
 	clusterAPI.Use(authHandler.RequireAuth(), middleware.ClusterMiddleware(cm))
-	registerClusterProtectedRoutes(clusterAPI, helmChartsHandler, appDeps, buildfleet, wfModule, credDeps)
-	return wfModule
+	registerClusterProtectedRoutes(clusterAPI, helmChartsHandler)
 }
 
-func registerClusterProtectedRoutes(api *gin.RouterGroup, helmChartsHandler *helm.HelmChartHandler, appDeps *applicationadapter.Deps, buildfleet *buildfleetadapter.Deps, wfModule *workflow.Module, credDeps *credentialsadapter.Deps) {
+func registerClusterProtectedRoutes(api *gin.RouterGroup, helmChartsHandler *helm.HelmChartHandler) {
 	api.GET("/overview", system.GetOverview)
 
 	metricsHandler := metrics.NewHandler()
@@ -237,18 +194,7 @@ func registerClusterProtectedRoutes(api *gin.RouterGroup, helmChartsHandler *hel
 	api.POST("/ai/chat", ai.HandleChat)
 	api.POST("/ai/continue", ai.HandleContinue)
 
-	application.RegisterRoutes(api, appDeps)
-	// Mounted before the RBAC middleware below: buildfleet URLs are
-	// non-resource shapes and authorize themselves against "builds".
-	if buildfleet != nil {
-		buildfleet.RegisterRoutes(api.Group("/buildfleet"))
-	}
-	// Same placement: workflow URLs are non-resource shapes and authorize
-	// themselves against the "workflows" pseudo-resource (design §8).
-	wfModule.RegisterRoutes(api)
-	// Same placement: credentials URLs are non-resource shapes and
-	// authorize themselves against the "credentials" pseudo-resource.
-	credDeps.RegisterRoutes(api)
+	registerPlatformModuleRoutes(api) // platform.go: mounts before the RBAC middleware below
 
 	api.Use(middleware.RBACMiddleware())
 	resources.RegisterRoutes(api)

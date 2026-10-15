@@ -6,7 +6,6 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -183,25 +182,6 @@ func (t *k8sProxyTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	return t.transport.RoundTrip(req)
 }
 
-// ClusterNames returns the sorted names of every cluster the manager knows
-// about, including ones whose client failed to load (those resolve to errors
-// for callers that go through GetClientSet).
-func (cm *ClusterManager) ClusterNames() []string {
-	cm.mu.RLock()
-	defer cm.mu.RUnlock()
-	names := make([]string, 0, len(cm.clusters)+len(cm.errors))
-	for name := range cm.clusters {
-		names = append(names, name)
-	}
-	for name := range cm.errors {
-		if _, ok := cm.clusters[name]; !ok {
-			names = append(names, name)
-		}
-	}
-	sort.Strings(names)
-	return names
-}
-
 func (cm *ClusterManager) GetClientSet(clusterName string) (*ClientSet, error) {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
@@ -340,20 +320,7 @@ func syncClusters(cm *ClusterManager, readyCh chan<- struct{}) error {
 			continue
 		}
 		// kcross 隧道接入的在线门控（绑定与指纹见 kcross_hook.go）
-		if model.GetKcrossBindingByCluster(cluster.ID) != nil && !kcrossPeerOnline(cluster.ID) {
-			if currentExist {
-				cm.mu.Lock()
-				delete(cm.clusters, cluster.Name)
-				cm.mu.Unlock()
-				current.K8sClient.Stop(cluster.Name)
-			}
-			cm.mu.Lock()
-			if cluster.Enable {
-				cm.errors[cluster.Name] = "waiting for kcross peer connection"
-			} else {
-				delete(cm.errors, cluster.Name)
-			}
-			cm.mu.Unlock()
+		if kcrossOfflineGate(cm, cluster, current, currentExist) {
 			continue
 		}
 		clusterAgentConfigChanged := cluster.ClusterAgent && currentExist && current.clusterAgentGeneration != cm.clusterAgentManager.Generation(cluster.ID)

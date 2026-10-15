@@ -22,25 +22,6 @@ type KiteConfig struct {
 	OAuth     []OAuthConfig    `yaml:"oauth"`
 	LDAP      *LDAPConfig      `yaml:"ldap"`
 	RBAC      *RBACConfig      `yaml:"rbac"`
-	// BuildFleet holds the raw buildfleet config subtree. It is a value
-	// Node because yaml.v3 v3.0.1 leaves *yaml.Node struct fields zeroed
-	// after Unmarshal (verified: value decodes, pointer stays Kind 0).
-	// It is applied by building the buildfleet runtime at startup, never
-	// persisted to the DB and never listed in AppliedSections.
-	BuildFleet yaml.Node `yaml:"buildfleet"`
-}
-
-// buildFleetNode is the raw buildfleet config subtree from the most recent
-// config file read; nil when the section is absent or null (module disabled).
-// The host builds the buildfleet runtime from it once at startup; config file
-// reloads replace the node but do not re-provision the module.
-var buildFleetNode *yaml.Node
-
-// BuildFleetConfig returns the raw buildfleet config subtree, or nil when the
-// buildfleet section is missing or empty. Values are already ${ENV_VAR}
-// expanded, matching the rest of the config file.
-func BuildFleetConfig() *yaml.Node {
-	return buildFleetNode
 }
 
 type AppliedSections map[string]bool
@@ -140,22 +121,9 @@ func readConfigFile(path string) (*KiteConfig, [sha256.Size]byte, error) {
 	if err := yaml.Unmarshal([]byte(expanded), &cfg); err != nil {
 		return nil, hash, fmt.Errorf("failed to parse config file %s: %w", path, err)
 	}
-	buildFleetNode = enabledNode(&cfg.BuildFleet)
+	captureBuildFleetNode(expanded) // config_buildfleet.go
 
 	return &cfg, hash, nil
-}
-
-// enabledNode normalizes "section absent" (zero Node), "section null"
-// (buildfleet:) and "empty mapping" (buildfleet: {}) to nil, so all three
-// mean the module is disabled. An empty mapping would otherwise fall through
-// to the module's built-in defaults and silently start a build service.
-func enabledNode(n *yaml.Node) *yaml.Node {
-	if n == nil || n.Kind == 0 ||
-		(n.Kind == yaml.ScalarNode && n.Tag == "!!null") ||
-		(n.Kind == yaml.MappingNode && len(n.Content) == 0) {
-		return nil
-	}
-	return n
 }
 
 func applyConfig(path string, cfg *KiteConfig) AppliedSections {

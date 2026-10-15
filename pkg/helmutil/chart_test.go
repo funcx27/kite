@@ -1,12 +1,6 @@
 package helmutil
 
 import (
-	"archive/tar"
-	"bytes"
-	"compress/gzip"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -16,26 +10,9 @@ import (
 )
 
 func TestLoadRepositoryArchiveFromRepository(t *testing.T) {
-	// Serve a minimal chart repository locally: the download path must stay
-	// covered without depending on an external host being reachable.
-	chartArchive := testChartArchive(t, "kite", "0.1.0")
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/index.yaml":
-			_, err := fmt.Fprintf(w, "apiVersion: v1\nentries:\n  kite:\n    - name: kite\n      version: 0.1.0\n      urls:\n        - kite-0.1.0.tgz\n")
-			require.NoError(t, err)
-		case "/kite-0.1.0.tgz":
-			_, err := w.Write(chartArchive)
-			require.NoError(t, err)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-
 	repository := model.HelmRepository{
 		Name: "kite",
-		URL:  server.URL,
+		URL:  "https://kite-org.github.io/kite/",
 	}
 	chartRepository, err := repo.NewChartRepository(&repo.Entry{
 		Name: repository.Name,
@@ -63,26 +40,4 @@ func TestLoadArchiveFromOCIRepository(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "kite", loadedChart.Metadata.Name)
 	require.NotEmpty(t, loadedChart.Metadata.Version)
-}
-
-// testChartArchive builds an in-memory chart archive (tar.gz with a
-// top-level <name>/ directory, as a repository would serve it).
-func testChartArchive(t *testing.T, name, version string) []byte {
-	t.Helper()
-	chartYAML := fmt.Sprintf("apiVersion: v2\nname: %s\nversion: %s\n", name, version)
-
-	var buf bytes.Buffer
-	gz := gzip.NewWriter(&buf)
-	tw := tar.NewWriter(gz)
-	require.NoError(t, tw.WriteHeader(&tar.Header{
-		Name:     name + "/Chart.yaml",
-		Mode:     0o644,
-		Size:     int64(len(chartYAML)),
-		Typeflag: tar.TypeReg,
-	}))
-	_, err := tw.Write([]byte(chartYAML))
-	require.NoError(t, err)
-	require.NoError(t, tw.Close())
-	require.NoError(t, gz.Close())
-	return buf.Bytes()
 }

@@ -104,11 +104,8 @@ func InitDB() {
 		PendingSession{},
 		HelmRepository{},
 		ScheduledTask{},
-		KcrossSetting{},
-		KcrossBinding{},
-		BuildProvider{},
-		BuildRuntimeSetting{},
 	}
+	models = append(models, platformMigrations()...) // migrations_platform.go
 	for _, model := range models {
 		err = DB.AutoMigrate(model)
 		if err != nil {
