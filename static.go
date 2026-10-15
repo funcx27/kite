@@ -15,28 +15,16 @@ import (
 //go:embed static
 var staticFiles embed.FS
 
-// platformPathPrefixes are SPA routes owned by the platform entry. The
-// fallback must happen here, server-side: the console router has a
-// :resource/:name catch-all, so serving index.html for these paths would
-// render them as cluster resource pages.
-var platformPathPrefixes = []string{
-	"/applications",
-	"/application-settings",
-	"/workflows",
-	"/buildfleet",
-}
-
-func isPlatformPath(path, base string) bool {
+// The portal SPA owns the single /portal prefix. The fallback must happen
+// here, server-side: the console router has a :resource/:name catch-all, so
+// portal routes like /portal/applications served as index.html would be
+// rendered as cluster resource pages by the console entry.
+func isPortalPath(path, base string) bool {
 	if !strings.HasPrefix(path, base) {
 		return false
 	}
 	rest := path[len(base):]
-	for _, prefix := range platformPathPrefixes {
-		if rest == prefix || strings.HasPrefix(rest, prefix+"/") {
-			return true
-		}
-	}
-	return false
+	return rest == "/portal" || strings.HasPrefix(rest, "/portal/")
 }
 
 func serveSPAHTML(c *gin.Context, name, base string) {
@@ -79,8 +67,8 @@ func setupStatic(r *gin.Engine) {
 			return
 		}
 
-		if isPlatformPath(path, base) {
-			serveSPAHTML(c, "platform.html", base)
+		if isPortalPath(path, base) {
+			serveSPAHTML(c, "portal.html", base)
 			return
 		}
 		serveSPAHTML(c, "index.html", base)

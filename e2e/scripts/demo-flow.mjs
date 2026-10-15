@@ -106,7 +106,7 @@ try {
   log('logged in')
 
   // ---------------------------------------------------------- create space
-  await page.goto(`${BASE}/applications`)
+  await page.goto(`${BASE}/portal/applications`)
   const openPicker = () =>
     page.locator('header').getByRole('button', { name: /Spaces/ }).click()
   const spaceItem = () => page.getByRole('button', { name: new RegExp(`^${SPACE}$`) })
@@ -148,8 +148,8 @@ try {
     await wiz.getByRole('button', { name: 'Next', exact: true }).click() // -> preview
     await shot(page, '04-wizard-preview')
     await wiz.getByRole('button', { name: 'Create & Publish' }).click()
-    // App detail URLs are /applications/:space/:name
-    await page.waitForURL(new RegExp(`/applications/${SPACE}/${APP}`))
+    // App detail URLs are /portal/applications/:space/:name
+    await page.waitForURL(new RegExp(`/portal/applications/${SPACE}/${APP}`))
     log('application created & published')
   } else {
     log('application already exists, skipping wizard')
@@ -157,7 +157,7 @@ try {
   await shot(page, '05-app-detail')
 
   // ---------------------------------------------- credentials (global settings)
-  await page.goto(`${BASE}/application-settings`)
+  await page.goto(`${BASE}/portal/settings`)
   await page.getByText('Git Credentials').waitFor()
   // let the credential list query settle before existence checks
   await page.waitForTimeout(2000)
@@ -205,7 +205,7 @@ try {
   await shot(page, '08-credentials-done')
 
   // ------------------------------------------------------ create workflow
-  await page.goto(`${BASE}/workflows`)
+  await page.goto(`${BASE}/portal/workflows`)
   await page.getByRole('heading', { name: 'Workflows' }).waitFor()
   // wait until the table query settles (row appears or empty state)
   await page.waitForFunction(
@@ -219,7 +219,7 @@ try {
   if (await wfRow.count()) {
     log('workflow already exists, skipping editor')
   } else {
-    await page.goto(`${BASE}/workflows/new`)
+    await page.goto(`${BASE}/portal/workflows/new`)
     // The editor has no space selector: definitions are global (ID identity)
     await page.getByPlaceholder(/Name \*/).fill(WF)
 
@@ -260,14 +260,14 @@ try {
     await page.waitForTimeout(800)
     await shot(page, '14-validated')
     await page.getByRole('button', { name: 'Save', exact: true }).click()
-    // Saving redirects to /workflows/:id (numeric ID identity)
-    await page.waitForURL(/\/workflows\/\d+/)
+    // Saving redirects to /portal/workflows/:id (numeric ID identity)
+    await page.waitForURL(/\/portal\/workflows\/\d+/)
     log('workflow saved')
   }
 
   // ------------------------------------------------------------- run it
   log('opening run action for workflow…')
-  await page.goto(`${BASE}/workflows`)
+  await page.goto(`${BASE}/portal/workflows`)
   const row = page.getByRole('row').filter({ hasText: WF })
   await row.waitFor()
   await row.getByRole('button', { name: 'Actions' }).click()
@@ -275,7 +275,7 @@ try {
   await shot(page, '15-run-dialog')
   await page.getByRole('button', { name: /Run$/ }).click()
   log('run clicked, waiting for run page…')
-  await page.waitForURL(/\/workflows\/\d+\/runs\/\d+/)
+  await page.waitForURL(/\/portal\/workflows\/\d+\/runs\/\d+/)
   const runId = page.url().match(/runs\/(\d+)/)[1]
   log(`run #${runId} started, waiting for completion…`)
 

@@ -36,15 +36,19 @@ function getManualChunk(id: string) {
     return 'monaco'
   }
 
+  // Console and portal copies must land in the same cacheable chunk.
   if (
     normalizedId.includes('/src/components/terminal-content.tsx') ||
+    normalizedId.includes('/src/portal/components/terminal-content.tsx') ||
     normalizedId.includes('/node_modules/@xterm/')
   ) {
     return 'terminal'
   }
 
+  // Console and portal copies must land in the same cacheable chunk.
   if (
     normalizedId.includes('/src/components/log-viewer-content.tsx') ||
+    normalizedId.includes('/src/portal/components/log-viewer-content.tsx') ||
     normalizedId.includes('/src/lib/ansi-parser.ts')
   ) {
     return 'log-viewer'
@@ -60,21 +64,16 @@ function getManualChunk(id: string) {
   return undefined
 }
 
-// Paths owned by the platform SPA entry. Must match the server-side fallback
-// prefixes in static.go.
-const platformRoutePrefixes = [
-  '/applications',
-  '/application-settings',
-  '/workflows',
-  '/buildfleet',
-]
+// Path prefix owned by the portal SPA entry. Must match the server-side
+// fallback rule in static.go.
+const portalRoutePrefix = '/portal'
 
 // The dev server's SPA fallback only knows about index.html; without this,
-// hard navigations to platform routes would boot the console entry, whose
+// hard navigations to portal routes would boot the console entry, whose
 // :resource catch-all would render them as cluster resource pages.
-function platformSpaFallbackPlugin(): Plugin {
+function portalSpaFallbackPlugin(): Plugin {
   return {
-    name: 'kite-platform-spa-fallback',
+    name: 'kite-portal-spa-fallback',
     apply: 'serve',
     configureServer(server) {
       server.middlewares.use((req, _res, next) => {
@@ -85,12 +84,11 @@ function platformSpaFallbackPlugin(): Plugin {
         const withoutBase = devSubPath
           ? pathname.slice(devSubPath.length)
           : pathname
-        const matches = platformRoutePrefixes.some(
-          (prefix) =>
-            withoutBase === prefix || withoutBase.startsWith(`${prefix}/`)
-        )
-        if (matches) {
-          req.url = `${devSubPath}/platform.html`
+        if (
+          withoutBase === portalRoutePrefix ||
+          withoutBase.startsWith(`${portalRoutePrefix}/`)
+        ) {
+          req.url = `${devSubPath}/portal.html`
         }
         next()
       })
@@ -111,7 +109,7 @@ function runtimeBaseHtmlPlugin(): Plugin {
       // Every HTML entry served at arbitrary SPA routes needs the runtime
       // base in its asset URLs; relative ./assets would resolve against the
       // current route instead of the deploy root.
-      for (const htmlName of ['index.html', 'platform.html']) {
+      for (const htmlName of ['index.html', 'portal.html']) {
         const htmlPath = path.join(buildOutDir, htmlName)
         if (!existsSync(htmlPath)) continue
         const html = readFileSync(htmlPath, 'utf8')
@@ -153,7 +151,7 @@ export default defineConfig(({ command }) => ({
       ],
     }),
     runtimeBaseHtmlPlugin(),
-    platformSpaFallbackPlugin(),
+    portalSpaFallbackPlugin(),
   ],
   envPrefix: ['VITE_', 'KITE_'],
   build: {
@@ -164,7 +162,7 @@ export default defineConfig(({ command }) => ({
     rolldownOptions: {
       input: {
         main: path.resolve(import.meta.dirname, 'index.html'),
-        platform: path.resolve(import.meta.dirname, 'platform.html'),
+        portal: path.resolve(import.meta.dirname, 'portal.html'),
       },
       output: {
         manualChunks: getManualChunk,

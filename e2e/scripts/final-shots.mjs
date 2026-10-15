@@ -34,16 +34,16 @@ const runsRes = await page.request.get(`${BASE}/api/v1/workflows/${wf.id}/runs?l
 const runId = (await runsRes.json()).runs?.[0]?.id
 if (!runId) throw new Error('no runs found for demo-pipeline')
 
-await page.goto(`${BASE}/workflows/${wf.id}/runs/${runId}`)
+await page.goto(`${BASE}/portal/workflows/${wf.id}/runs/${runId}`)
 await page.getByText('Build Image').first().waitFor()
 await page.waitForTimeout(1500)
 await page.screenshot({ path: `${ART}/16-run-final.png` })
 
-await page.goto(`${BASE}/applications/demo/demo-app/clusters/dev1`)
+await page.goto(`${BASE}/portal/applications/demo/demo-app/clusters/dev1`)
 await page.waitForTimeout(2500)
 await page.screenshot({ path: `${ART}/17-app-deployed.png` })
 
-await page.goto(`${BASE}/workflows`)
+await page.goto(`${BASE}/portal/workflows`)
 await page.waitForTimeout(2000)
 await page.screenshot({ path: `${ART}/18-workflow-list.png` })
 

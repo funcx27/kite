@@ -66,7 +66,7 @@ func (e *Engine) execNode(parent context.Context, state *runState, node spec.Nod
 		Run: map[string]any{
 			"number": state.run.RunNumber,
 			"status": state.run.Status,
-			"url":    fmt.Sprintf("/workflows/%d/runs/%d", state.wf.ID, state.run.ID),
+			"url": fmt.Sprintf("/portal/workflows/%d/runs/%d", state.wf.ID, state.run.ID),
 		},
 	}
 	rendered, err := spec.Resolve(node.Props, env)

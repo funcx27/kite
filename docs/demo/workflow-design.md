@@ -45,7 +45,7 @@ ui (React) ── /api/v1/workflows* ──> kite routes.go（挂载点，RBAC �
   - 风格与原语靠 **import 复用**而非复制：直接 import `ui/src/components/ui/` 的 shadcn 原语与既有 Tailwind 主题（import 不是编辑，不产生上游合并冲突面）；模块内部不依赖 kite 业务组件，复杂展示组件（日志流等）按需拷入模块目录自有演化。
   - i18n 资源模块自带，**不动共享 `en.json`/`zh.json`**——历次上游同步的最大冲突热点就此绕开。
   - 宿主共享文件仅两处追加式改动：`ui/src/routes.tsx`（单块：import 模块路由定义并展开，置于 `:resource` 通配之前）与 `ui/package.json`（`@xyflow/react` 依赖行）。
-  - 入口：不修改 kite 侧边栏代码。用 kite 既有**自定义侧边栏**能力配 `/workflows` 链接（零代码触点），或直接访问 URL；同工程同源，鉴权/主题/i18n 语言态天然继承。
+  - 入口：不修改 kite 侧边栏代码。用 kite 既有**自定义侧边栏**能力配 `/portal/workflows` 链接（零代码触点），或直接访问 URL；同工程同源，鉴权/主题/i18n 语言态天然继承。
 - 持久化：模块自带 GORM 模型，`routes.go` 装配处追加 `workflow.Migrate(DB)`（同 application 模式）。
 
 **上游同步回归检查点**（每次 merge 上游后必查，在既有三条之上新增）：
@@ -330,9 +330,9 @@ type Credential struct {
 - **工程形态**：kite `ui/` 工程内单一自包含目录 `ui/src/workflow/`——`pages/`（列表 / 详情含编辑器 / run 三页）、`components/`（画布、属性抽屉、日志流、参数表单等模块组件）、`api.ts`（自有 API 客户端，不动共享 `lib/api.ts`）、`types.ts`、`routes.tsx`（模块路由定义，导出给宿主单块接入）、`i18n/`（自带 zh/en 资源 + 轻量 hook，读宿主语言偏好）。TanStack Query、react-router、shadcn 原语直接复用宿主已有设施（import 复用）。
 - **路由**：`workflows`（列表）、`workflows/new`（创建，静态段优先于 `:id`）、`workflows/:id`（详情 + 编辑器）、`workflows/:id/runs`（run 列表）、`workflows/:id/runs/:runId`（run 视图），模块 `routes.tsx` 导出，宿主 `ui/src/routes.tsx` 单块插入（置于 `:resource` 通配之前，同 application 模式）。编辑器把全局空间**锁定并同步**为流水线的绑定空间（全部空间下点开空间流水线 → 自动切到该空间；平台流水线 → 全部空间；复制/fromApp 草稿同理），编辑期间空间选择器禁用；新建沿用进入时的空间上下文（全部空间下新建 = 平台工作流）；运行页等子页切换空间则跳回列表页（对齐应用模块）；名称可编辑改名（任意 unicode，1-63 字符）。
 - **编辑器**（详情页内）：React Flow 画布——左侧节点面板（四类可拖入）、中央画布（节点卡 + 贝塞尔连线 + 小地图）、右侧属性抽屉（按节点类型出表单，模板变量插入器）；顶部工具条：参数 / 触发器 / 校验 / 保存（校验规则见 §4，错误定位到节点）。画布 ⇄ YAML 双模切换进 Backlog（先画布单向）。
-- **run 视图**：只读画布按节点状态着色（绿成功/红失败/蓝运行/黄等待审批/灰跳过）+ 底部节点日志抽屉（SSE 实时流）；**审批节点内联操作**（通过/拒绝 + 评论框，仅 assignees 可见按钮）；头部：run 序号、触发者与来源（git SHA 链接）、参数 chips、耗时、取消/从失败节点重试按钮。notify 模板的 `{{run.url}}` 即 `/workflows/:id/runs/:runId` 深链。
+- **run 视图**：只读画布按节点状态着色（绿成功/红失败/蓝运行/黄等待审批/灰跳过）+ 底部节点日志抽屉（SSE 实时流）；**审批节点内联操作**（通过/拒绝 + 评论框，仅 assignees 可见按钮）；头部：run 序号、触发者与来源（git SHA 链接）、参数 chips、耗时、取消/从失败节点重试按钮。notify 模板的 `{{run.url}}` 即 `/portal/workflows/:id/runs/:runId` 深链。
 - 列表页：工作流名/描述/最近 run 状态与序号/触发器徽标（手动/webhook/cron）；行内「运行」（弹参数表单）与「编辑」。
-- 入口：kite 既有「自定义侧边栏」配 `/workflows` 链接（零代码触点），或直接 URL。
+- 入口：kite 既有「自定义侧边栏」配 `/portal/workflows` 链接（零代码触点），或直接 URL。
 
 ## 12. 里程碑
 

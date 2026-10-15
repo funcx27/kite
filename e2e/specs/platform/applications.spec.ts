@@ -8,7 +8,7 @@ test.describe('platform applications smoke', () => {
   test('shell, application list and settings render without crashing', async ({
     page,
   }) => {
-    await page.goto('/applications')
+    await page.goto('/portal/applications')
 
     // Platform shell: the workbench sidebar renders with its Workflows entry.
     await expect(page.getByRole('link', { name: 'Workflows' })).toBeVisible()
@@ -21,7 +21,7 @@ test.describe('platform applications smoke', () => {
     ).toBeVisible()
     await expect(page).toHaveTitle('Applications - Kite')
 
-    await page.goto('/application-settings')
+    await page.goto('/portal/settings')
 
     await expect(
       page.getByRole('heading', { name: 'Settings', exact: true })
@@ -31,7 +31,7 @@ test.describe('platform applications smoke', () => {
     ).toBeVisible()
 
     // Back to the list: the shell and page render again after the round trip.
-    await page.goto('/applications')
+    await page.goto('/portal/applications')
 
     await expect(page.getByRole('link', { name: 'Workflows' })).toBeVisible()
     await expect(page.getByLabel('Search applications...')).toBeVisible()
