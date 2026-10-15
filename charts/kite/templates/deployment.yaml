@@ -1,3 +1,5 @@
+{{- $plugins := .Values.plugins | default dict }}
+{{- $persistence := $plugins.persistence | default dict }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -55,6 +57,8 @@ spec:
             - secretRef:
                 name: {{ include "kite.secret" . }}
           env:
+            - name: PLUGIN_DIR
+              value: {{ $plugins.directory | default "/data/plugins" | quote }}
             {{- if .Values.host }}
             - name: HOST
               value: {{ .Values.host }}
@@ -105,6 +109,10 @@ spec:
             - name: {{ include "kite.fullname" . }}-storage
               mountPath: {{ .Values.db.sqlite.persistence.mountPath }}
           {{- end }}
+          {{- if $persistence.enabled }}
+            - name: {{ include "kite.fullname" . }}-plugins
+              mountPath: {{ $plugins.directory | default "/data/plugins" | quote }}
+          {{- end }}
       volumes:
       {{- if .Values.config.enabled }}
         - name: kite-config
@@ -126,6 +134,11 @@ spec:
       {{- else }}
           emptyDir: {}
       {{- end }}
+      {{- end }}
+      {{- if $persistence.enabled }}
+        - name: {{ include "kite.fullname" . }}-plugins
+          persistentVolumeClaim:
+            claimName: {{ $persistence.existingClaim | default (printf "%s-plugins" (include "kite.fullname" .)) }}
       {{- end }}
       {{- with .Values.volumes }}
       {{- toYaml . | nindent 8 }}

@@ -1,5 +1,4 @@
 import { useQuery } from '@tanstack/react-query'
-import type { CustomResourceDefinitionList } from 'kubernetes-types/apiextensions/v1'
 import type { ObjectMeta } from 'kubernetes-types/meta/v1'
 
 import { fetchAPI } from '@/lib/api/shared'
@@ -14,36 +13,45 @@ import { useCluster } from './use-cluster'
 
 export function useOwnerInfo(metadata?: ObjectMeta) {
   const owner = metadata?.ownerReferences?.[0]
-  const group = owner?.apiVersion.includes('/')
-    ? owner.apiVersion.split('/')[0]
-    : ''
   const standardType =
     owner && isStandardK8sResource(owner.kind)
       ? getResourceMetadata(owner.kind)?.type
       : undefined
   const { currentCluster } = useCluster()
-  const { data: crds } = useQuery({
-    queryKey: ['crds', 'owner-references', currentCluster],
-    queryFn: () =>
-      fetchAPI<CustomResourceDefinitionList>(
-        withCurrentClusterPath('/crds', currentCluster)
-      ),
+  const { data: ownerResource } = useQuery({
+    queryKey: [
+      'owner-resource',
+      currentCluster,
+      owner?.apiVersion,
+      owner?.kind,
+      metadata?.namespace,
+    ],
+    queryFn: () => {
+      const params = new URLSearchParams({
+        apiVersion: owner!.apiVersion,
+        kind: owner!.kind,
+      })
+      if (metadata?.namespace) params.set('namespace', metadata.namespace)
+      return fetchAPI<{
+        resource: string
+        scope: 'Namespaced' | 'Cluster'
+      }>(withCurrentClusterPath(`/resources/resolve?${params}`, currentCluster))
+    },
     enabled: !!owner && !standardType && !!currentCluster,
-    staleTime: 5000,
+    staleTime: 5 * 60 * 1000,
   })
 
   if (!owner) return null
 
-  const crd = crds?.items.find(
-    (item) => item.spec.group === group && item.spec.names.kind === owner.kind
-  )
   const path = standardType
     ? getResourceDetailPath(standardType, owner.name, metadata?.namespace)
-    : crd
+    : ownerResource
       ? getCRDResourcePath(
-          crd.spec.names.plural,
+          ownerResource.resource,
           owner.apiVersion,
-          crd.spec.scope === 'Namespaced' ? metadata?.namespace : undefined,
+          ownerResource.scope === 'Namespaced'
+            ? metadata?.namespace
+            : undefined,
           owner.name
         )
       : undefined

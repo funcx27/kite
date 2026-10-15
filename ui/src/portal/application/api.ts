@@ -20,9 +20,10 @@ import type {
   SpaceQuotaUpsertResponse,
   UpdateApplicationRequest,
 } from '@/portal/application/types'
+import type { APIRequestOptions } from '@kite-dev/plugin-sdk/api'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
-import { apiClient, type ApiRequestOptions } from '@/lib/api-client'
+import { apiClient } from '@/lib/api-client'
 
 // Typed API error preserving the JSON body, so callers can act on non-2xx
 // answers (409 previewToken / expectedRev mismatches, ...).
@@ -44,7 +45,7 @@ export class ApplicationApiError extends Error {
 
 async function applicationRequest<T>(
   path: string,
-  options?: ApiRequestOptions
+  options?: APIRequestOptions
 ): Promise<T> {
   const response = await apiClient.request(`/applications${path}`, options)
   const body: unknown = await response.json().catch(() => ({}))

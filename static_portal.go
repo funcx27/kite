@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/zxh326/kite/pkg/common"
 	"github.com/zxh326/kite/pkg/utils"
 )
 
@@ -34,9 +33,6 @@ func servePortalSPA(c *gin.Context, path, base string) bool {
 		return true
 	}
 	htmlContent := utils.InjectKiteBase(string(content), base)
-	if common.EnableAnalytics {
-		htmlContent = utils.InjectAnalytics(htmlContent)
-	}
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	c.String(http.StatusOK, htmlContent)
 	return true

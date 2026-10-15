@@ -104,6 +104,8 @@ func InitDB() {
 		PendingSession{},
 		HelmRepository{},
 		ScheduledTask{},
+		Plugin{},
+		PluginSetting{},
 	}
 	models = append(models, platformMigrations()...) // migrations_platform.go
 	for _, model := range models {

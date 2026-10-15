@@ -47,6 +47,55 @@ This document describes all available configuration options for the Kite Helm Ch
 | `db.sqlite.persistence.mountPath`         | Mount path inside container                               | `/data`             |
 | `db.sqlite.persistence.filename`          | SQLite filename inside mountPath                          | `kite.db`           |
 
+## Plugin Storage
+
+Available in Kite `v0.16.0` and later. The default plugin directory is `/data/plugins`, which shares SQLite's `/data` volume. Persistence is disabled by default.
+
+| Parameter | Description | Default |
+| --------- | ----------- | ------- |
+| `plugins.directory` | Plugin directory inside the container; sets `PLUGIN_DIR` | `/data/plugins` |
+| `plugins.persistence.enabled` | Mount a separate PVC for plugin files | `false` |
+| `plugins.persistence.existingClaim` | Use an existing PVC instead of creating one | `""` |
+| `plugins.persistence.storageClass` | StorageClass for the new PVC; empty uses the cluster default | `""` |
+| `plugins.persistence.accessModes` | Access modes for the new PVC | `["ReadWriteOnce"]` |
+| `plugins.persistence.size` | Storage requested for the new PVC | `1Gi` |
+
+::: warning
+If the plugin directory is not on persistent storage, recreating the Pod loses plugin files. Plugins installed from the official catalog are downloaded again, requiring access to the download source. Manually uploaded plugins must be uploaded again.
+
+Automatic downloads rely on installation records in the database. Persist the SQLite database or use an external database as well.
+:::
+
+With SQLite, enable database persistence and leave `plugins.persistence.enabled` set to `false`. The database and plugins share one PVC:
+
+```yaml
+deploymentStrategy:
+  type: Recreate
+
+db:
+  sqlite:
+    persistence:
+      pvc:
+        enabled: true
+```
+
+If you change `db.sqlite.persistence.mountPath`, also set `plugins.directory` to a subdirectory of that path to keep sharing the volume.
+
+With MySQL or PostgreSQL, enable a separate plugin PVC:
+
+```yaml
+deploymentStrategy:
+  type: Recreate
+
+plugins:
+  directory: /data/plugins
+  persistence:
+    enabled: true
+    size: 1Gi
+```
+
+Set `plugins.persistence.existingClaim` to reuse a PVC in Kite's namespace. With `ReadWriteOnce` storage, use `Recreate` for a single replica to avoid volume attachment conflicts during upgrades.
+
 ## Environment Variables
 
 | Parameter   | Description                              | Default |
@@ -61,16 +110,16 @@ Available in Kite `v0.10.0` and later.
 
 See [Configuration File](./config-file) for the full config file format, usage examples, and reference.
 
-| Parameter               | Description                                                                    | Default |
-| ----------------------- | ------------------------------------------------------------------------------ | ------- |
-| `config.enabled`        | Enable configuration file mode                                                 | `false` |
-| `config.existingSecret` | Name of an existing Secret containing a `config.yaml` key. Recommended approach. | `""`    |
-| `config.superUser`      | Inline super user configuration (created on first startup only)                | `{}`    |
-| `config.clusters`       | Inline cluster configurations (when no existingSecret)                         | `[]`    |
-| `config.oauth`          | Inline OAuth provider configurations                                           | `[]`    |
-| `config.ldap`           | Inline LDAP configuration                                                      | `{}`    |
-| `config.rbac.roles`     | Inline RBAC role definitions                                                   | `[]`    |
-| `config.rbac.roleMapping` | Inline RBAC role mappings                                                    | `[]`    |
+| Parameter                 | Description                                                                      | Default |
+| ------------------------- | -------------------------------------------------------------------------------- | ------- |
+| `config.enabled`          | Enable configuration file mode                                                   | `false` |
+| `config.existingSecret`   | Name of an existing Secret containing a `config.yaml` key. Recommended approach. | `""`    |
+| `config.superUser`        | Inline super user configuration (created on first startup only)                  | `{}`    |
+| `config.clusters`         | Inline cluster configurations (when no existingSecret)                           | `[]`    |
+| `config.oauth`            | Inline OAuth provider configurations                                             | `[]`    |
+| `config.ldap`             | Inline LDAP configuration                                                        | `{}`    |
+| `config.rbac.roles`       | Inline RBAC role definitions                                                     | `[]`    |
+| `config.rbac.roleMapping` | Inline RBAC role mappings                                                        | `[]`    |
 
 ## Service Account Configuration
 
@@ -131,7 +180,7 @@ rbac:
 ```yaml
 ingress:
   hosts:
-    - host: kite.zzde.me
+    - host: kitehq.dev
       paths:
         - path: /
           pathType: ImplementationSpecific

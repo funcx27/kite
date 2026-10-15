@@ -70,7 +70,7 @@ func (session *TerminalSession) Start(ctx context.Context, subResource string) e
 	} else {
 		req.VersionedParams(&corev1.PodExecOptions{
 			Container: session.container,
-			Command:   []string{"sh", "-c", "bash || sh"},
+			Command:   []string{"sh", "-c", "command -v bash >/dev/null 2>&1 && exec bash || exec sh"},
 			Stdin:     true,
 			Stdout:    true,
 			Stderr:    false,

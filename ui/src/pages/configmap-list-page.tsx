@@ -39,30 +39,31 @@ export function ConfigMapListPage() {
           </div>
         ),
       }),
-      columnHelper.accessor((row) => Object.keys(row.data || {}).join(', '), {
-        id: 'data',
-        header: 'Data Keys',
-        cell: ({ row }) => {
-          const data = row.original.data || {}
-          const keys = Object.keys(data)
-          if (keys.length === 0) {
-            return '-'
-          }
-          const keyList = keys.join(', ')
-          return (
-            <Tooltip>
-              <TooltipTrigger>
-                <span className="line-clamp-2 max-w-64 break-all text-left text-muted-foreground">
-                  {keyList}
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p className="max-w-sm break-all">{keyList}</p>
-              </TooltipContent>
-            </Tooltip>
-          )
-        },
-      }),
+      columnHelper.accessor(
+        (row) => Object.keys({ ...row.data, ...row.binaryData }).join(', '),
+        {
+          id: 'data',
+          header: 'Data Keys',
+          cell: ({ getValue }) => {
+            const keyList = getValue()
+            if (!keyList) {
+              return '-'
+            }
+            return (
+              <Tooltip>
+                <TooltipTrigger>
+                  <span className="line-clamp-2 max-w-64 break-all text-left text-muted-foreground">
+                    {keyList}
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="max-w-sm break-all">{keyList}</p>
+                </TooltipContent>
+              </Tooltip>
+            )
+          },
+        }
+      ),
       columnHelper.accessor('metadata.creationTimestamp', {
         header: 'Created',
         cell: ({ getValue }) => {

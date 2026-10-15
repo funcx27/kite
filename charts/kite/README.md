@@ -1,6 +1,6 @@
 # kite
 
-![Version: 0.15.1](https://img.shields.io/badge/Version-0.15.1-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: latest](https://img.shields.io/badge/AppVersion-latest-informational?style=flat-square)
+![Version: 0.16.0](https://img.shields.io/badge/Version-0.16.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: latest](https://img.shields.io/badge/AppVersion-latest-informational?style=flat-square)
 
 A Helm chart for Kubernetes Dashboard - Kite
 
@@ -19,7 +19,7 @@ helm install kite oci://ghcr.io/kite-org/charts/kite -n my-namespace --create-na
 ### Add Helm Repository
 
 ```bash
-helm repo add kite https://kite-org.github.io/kite/
+helm repo add kite https://charts.kitehq.dev
 helm repo update
 ```
 
@@ -50,4 +50,4 @@ helm uninstall kite -n kube-system
 
 ### Chart Values
 
-[Chart Values](https://kite.zzde.me/config/chart-values)
+[Chart Values](https://kitehq.dev/config/chart-values)
