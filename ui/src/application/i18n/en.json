@@ -424,8 +424,10 @@
     "variableValue": "Variable value"
   },
   "applicationSettings": {
+    "settings": "Settings",
     "description": "Manage settings for application mode",
     "viewGlobal": "View global settings",
-    "viewSpace": "View {{name}} space settings"
+    "viewSpace": "View {{name}} space settings",
+    "kcrossSettings": "kcross"
   }
 }

@@ -9,6 +9,7 @@ import { DeployDialog } from '@/application/components/deploy-dialog'
 import { HistoryDialog } from '@/application/components/history-dialog'
 import { OfflineDialog } from '@/application/components/offline-dialog'
 import { ApplicationStatusChip } from '@/application/components/status-badge'
+import { YamlDiffViewer } from '@/application/components/yaml-diff-viewer'
 import type {
   Application,
   ApplicationConfigSummary,
@@ -24,7 +25,6 @@ import { useCluster } from '@/hooks/use-cluster'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { YamlDiffViewer } from '@/components/yaml-diff-viewer'
 
 type DialogName = 'deploy' | 'deploy-copy' | 'offline' | 'history' | 'wizard'
 

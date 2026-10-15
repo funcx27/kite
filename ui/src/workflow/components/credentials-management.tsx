@@ -8,12 +8,12 @@
 import '@/workflow/i18n'
 
 import { useEffect, useState } from 'react'
+import { ActionTable } from '@/application/components/action-table'
 import { DockerIcon, GitIcon } from '@/application/components/brand-icons'
 import { IconPencil, IconPlus, IconTrash } from '@tabler/icons-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
-import { ActionTable } from '@/lib/action-table'
 import { formatDate } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'

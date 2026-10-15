@@ -5,6 +5,7 @@ import {
   updateApplication,
   useApplications,
 } from '@/application/api'
+import { ActionTable } from '@/application/components/action-table'
 import { ApplicationWizard } from '@/application/components/application-wizard'
 import {
   ApplicationConfigStatus,
@@ -30,7 +31,6 @@ import { useTranslation } from 'react-i18next'
 import { Link, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 
-import { ActionTable } from '@/lib/action-table'
 import { cn, formatDate, translateError } from '@/lib/utils'
 import { useCluster } from '@/hooks/use-cluster'
 import { usePageTitle } from '@/hooks/use-page-title'

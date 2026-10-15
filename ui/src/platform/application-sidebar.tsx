@@ -84,7 +84,7 @@ export function ApplicationSidebar(
           <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton
-                tooltip={t('nav.settings')}
+                tooltip={t('applicationSettings.settings')}
                 asChild
                 isActive={isActive('/application-settings')}
                 className="transition-all duration-200 hover:bg-accent/60 active:scale-95 data-[active=true]:bg-primary/10 data-[active=true]:text-primary data-[active=true]:shadow-sm"
@@ -94,7 +94,9 @@ export function ApplicationSidebar(
                   onClick={handleMenuItemClick}
                 >
                   <IconSettings className="text-sidebar-primary" />
-                  <span className="font-medium">{t('nav.settings')}</span>
+                  <span className="font-medium">
+                    {t('applicationSettings.settings')}
+                  </span>
                 </Link>
               </SidebarMenuButton>
             </SidebarMenuItem>

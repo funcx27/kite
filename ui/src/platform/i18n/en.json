@@ -1,5 +1,9 @@
 {
   "nav": {
     "applications": "Applications"
+  },
+  "sidebar": {
+    "expand": "Expand",
+    "collapse": "Collapse"
   }
 }

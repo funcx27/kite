@@ -44,9 +44,9 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { YamlDiffViewer } from '@/components/yaml-diff-viewer'
 
 import { ApplicationStatusChip } from './status-badge'
+import { YamlDiffViewer } from './yaml-diff-viewer'
 
 interface ClusterTabProps {
   app: Application

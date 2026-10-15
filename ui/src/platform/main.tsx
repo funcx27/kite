@@ -8,8 +8,12 @@ import {
   RouterProvider,
 } from 'react-router-dom'
 
-import '../App.css'
+// index.css must come first: its `@layer theme, base, components, utilities`
+// statement fixes the cascade-layer order, and App.css's `@layer utilities`
+// block would otherwise claim the first position and let base preflight
+// override every spacing utility.
 import '../index.css'
+import '../App.css'
 // Shared i18n first, then the platform shell's and each module's bundles; they
 // all register into the same 'translation' namespace before first render.
 import '../i18n'

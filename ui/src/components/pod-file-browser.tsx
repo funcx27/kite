@@ -42,9 +42,6 @@ interface PodFileBrowserProps {
   podName: string
   containers?: Container[]
   initContainers?: Container[]
-  /** Addresses a specific cluster, overriding the global switcher (e.g. an
-   *  application page whose cluster differs from it). */
-  cluster?: string
 }
 
 export function PodFileBrowser({
@@ -52,7 +49,6 @@ export function PodFileBrowser({
   podName,
   containers: _containers = [],
   initContainers = [],
-  cluster,
 }: PodFileBrowserProps) {
   const containers = useMemo(() => {
     return toSimpleContainer(initContainers, _containers)
@@ -70,9 +66,7 @@ export function PodFileBrowser({
     isLoading,
     refetch,
     error,
-  } = usePodFiles(namespace, podName, selectedContainer, currentPath, {
-    cluster,
-  })
+  } = usePodFiles(namespace, podName, selectedContainer, currentPath)
 
   const handleNavigate = (path: string) => {
     if (!path.startsWith('/')) {
@@ -98,13 +92,13 @@ export function PodFileBrowser({
   const handleDownload = (fileName: string) => {
     const filePath =
       currentPath === '/' ? `/${fileName}` : `${currentPath}/${fileName}`
-    podDownloadFile(namespace, podName, selectedContainer, filePath, cluster)
+    podDownloadFile(namespace, podName, selectedContainer, filePath)
   }
 
   const handlePreview = (fileName: string) => {
     const filePath =
       currentPath === '/' ? `/${fileName}` : `${currentPath}/${fileName}`
-    podPreviewFile(namespace, podName, selectedContainer, filePath, cluster)
+    podPreviewFile(namespace, podName, selectedContainer, filePath)
   }
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -117,8 +111,7 @@ export function PodFileBrowser({
         podName,
         selectedContainer,
         currentPath,
-        file,
-        cluster
+        file
       )
       refetch()
       toast.success(`Uploaded ${file.name} successfully`)

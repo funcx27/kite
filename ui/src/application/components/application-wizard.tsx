@@ -16,6 +16,7 @@ import type {
   ApplicationPortSpec,
   ApplicationSpec,
 } from '@/application/types'
+import { ImageEditor } from '@/platform/editors/image-editor'
 import { useSpaces } from '@/platform/space-context'
 import { useQueryClient } from '@tanstack/react-query'
 import * as yaml from 'js-yaml'
@@ -44,7 +45,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { ImageEditor } from '@/components/editors/image-editor'
 import { SimpleYamlEditor } from '@/components/simple-yaml-editor'
 
 import { ConfigFilesEditor } from './config-files-editor'

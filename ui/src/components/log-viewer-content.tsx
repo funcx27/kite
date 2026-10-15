@@ -63,8 +63,6 @@ export interface LogViewerProps {
   initContainers?: Container[]
   ephemeralContainers?: EphemeralContainer[]
   selectedContainerName?: string
-  /** Overrides the global current cluster (x-cluster-name addressing) */
-  cluster?: string
   onClose?: () => void
 }
 
@@ -84,7 +82,6 @@ export function LogViewer({
   initContainers,
   ephemeralContainers,
   selectedContainerName,
-  cluster,
   onClose,
   labelSelector,
 }: LogViewerProps) {
@@ -139,8 +136,6 @@ export function LogViewer({
   const decorationIdsRef = useRef<string[]>([])
   const normalizedFilterTermRef = useRef('')
   const pendingLogsRef = useRef<string[]>([])
-  // Every raw line received, unfiltered — the source a filter change replays.
-  const allLogsRef = useRef<string[]>([])
   const sortedPods = useMemo(() => {
     if (!pods) {
       return undefined
@@ -162,17 +157,6 @@ export function LogViewer({
   useEffect(() => {
     normalizedFilterTermRef.current = filterTerm.toLocaleLowerCase()
   }, [filterTerm])
-
-  // lineMatches tests one raw line against the filter with a throwaway ANSI
-  // parse; the streaming state chain stays in appendToEditor.
-  const lineMatches = useCallback((log: string): boolean => {
-    if (!normalizedFilterTermRef.current) return true
-    const { segments } = parseAnsi(log, {})
-    const plainText = segments.map((s) => s.text).join('')
-    return plainText
-      .toLocaleLowerCase()
-      .includes(normalizedFilterTermRef.current)
-  }, [])
 
   useEffect(() => {
     if (podName) {
@@ -242,9 +226,7 @@ export function LogViewer({
     handleThemeChange(TERMINAL_THEME_KEYS[nextIndex])
   }, [logTheme, handleThemeChange])
 
-  // appendToEditor parses one raw line against the streaming ANSI state and
-  // inserts it with its decorations. No filtering here.
-  const appendToEditor = useCallback((log: string) => {
+  const writeLogToEditor = useCallback((log: string) => {
     if (!editorRef.current) {
       pendingLogsRef.current.push(log)
       return
@@ -260,6 +242,14 @@ export function LogViewer({
     ansiStateRef.current = finalState
 
     const plainText = segments.map((s) => s.text).join('')
+
+    if (normalizedFilterTermRef.current) {
+      if (
+        !plainText.toLocaleLowerCase().includes(normalizedFilterTermRef.current)
+      ) {
+        return
+      }
+    }
 
     const lineCount = model.getLineCount()
     const lineMaxColumn = model.getLineMaxColumn(lineCount)
@@ -334,45 +324,6 @@ export function LogViewer({
     setLogCount((count) => count + 1)
   }, [])
 
-  // writeLogToEditor records every raw line (so a later filter change can
-  // replay them) and appends only the lines matching the current filter.
-  const writeLogToEditor = useCallback(
-    (log: string) => {
-      allLogsRef.current.push(log)
-      if (!lineMatches(log)) {
-        return
-      }
-      appendToEditor(log)
-    },
-    [appendToEditor, lineMatches]
-  )
-
-  // Re-filter the already-buffered lines when the term changes — the filter
-  // applies retroactively, not only to lines arriving afterwards. Debounced
-  // so typing rebuilds once; ANSI state replays from scratch over the kept
-  // subset (only multi-line color spans can shift shades, never content).
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      const editor = editorRef.current
-      const model = editor?.getModel()
-      if (!editor || !model) return
-      const wasAtBottom =
-        (editor.getVisibleRanges()[0]?.endLineNumber ?? 0) + 2 >=
-        model.getLineCount()
-      ansiStateRef.current = {}
-      decorationIdsRef.current = []
-      model.setValue('')
-      setLogCount(0)
-      for (const log of allLogsRef.current) {
-        if (lineMatches(log)) {
-          appendToEditor(log)
-        }
-      }
-      editor.revealLine(wasAtBottom ? model.getLineCount() : 1)
-    }, 150)
-    return () => clearTimeout(timer)
-  }, [filterTerm, lineMatches, appendToEditor])
-
   // Handle editor mount
   const handleEditorMount: OnMount = useCallback(
     (editor) => {
@@ -406,7 +357,6 @@ export function LogViewer({
     ansiStateRef.current = {}
     decorationIdsRef.current = []
     pendingLogsRef.current = []
-    allLogsRef.current = []
     if (editorRef.current) {
       const model = editorRef.current.getModel()
       if (model) {
@@ -423,7 +373,6 @@ export function LogViewer({
       previous: previous && !selectedContainerIsEphemeral,
       enabled: !!selectPodName,
       labelSelector,
-      cluster,
       onNewLog: appendLog,
       onClear: cleanLog,
     }),
@@ -435,7 +384,6 @@ export function LogViewer({
       selectedContainerIsEphemeral,
       selectPodName,
       labelSelector,
-      cluster,
       appendLog,
       cleanLog,
     ]
@@ -519,18 +467,8 @@ export function LogViewer({
 
   // Handle fullscreen toggle
   const toggleFullscreen = useCallback(() => {
-    setIsFullscreen((prev) => {
-      const next = !prev
-      // Neutralize the dialog's transform while fullscreen: a transformed
-      // ancestor is the containing block for position:fixed and would confine
-      // the log view to the dialog box. Toggling a body class instead of
-      // re-parenting keeps the log DOM node intact.
-      document.body.classList.toggle('fs-escape-active', next)
-      return next
-    })
+    setIsFullscreen((prev) => !prev)
   }, [])
-
-  useEffect(() => () => document.body.classList.remove('fs-escape-active'), [])
 
   const toggleWordWrap = useCallback(() => {
     setWordWrap((prev) => {
@@ -581,17 +519,10 @@ export function LogViewer({
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [toggleFullscreen, fontSize, handleFontSizeChange, toggleWordWrap])
 
-  // While fullscreen, the injected fs-escape-active rule below drops the
-  // dialog's transform so this fixed card covers the real viewport.
-  const card = (
+  return (
     <Card
       className={`h-full min-h-0 flex flex-col py-4 gap-0 ${isFullscreen ? 'fixed inset-0 z-50 m-0 rounded-none' : ''} ${wordWrap ? 'whitespace-pre-wrap' : 'whitespace-pre'} `}
     >
-      <style>
-        {
-          'body.fs-escape-active [role="dialog"]{translate:none !important;transform:none !important}'
-        }
-      </style>
       <style>{ANSI_CSS}</style>
       <CardHeader>
         <div className="flex min-w-0 flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -947,6 +878,4 @@ export function LogViewer({
       </CardContent>
     </Card>
   )
-
-  return card
 }

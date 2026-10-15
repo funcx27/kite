@@ -1,4 +1,5 @@
 import { SpaceQuotaSettings } from '@/application/components/space-quota-settings'
+import { KcrossManagement } from '@/kcross/kcross-management'
 import { useSpaces, useSyncSpaceParam } from '@/platform/space-context'
 import { BuildProvidersManagement } from '@/workflow/components/build-providers-management'
 import { BuildRuntimeSettings } from '@/workflow/components/build-runtime-settings'
@@ -22,7 +23,7 @@ export function ApplicationSettingsPage() {
   const { currentSpace, setCurrentSpace } = useSpaces()
   const [searchParams] = useSearchParams()
   useSyncSpaceParam()
-  usePageTitle(t('nav.settings'))
+  usePageTitle(t('applicationSettings.settings'))
 
   const rawSpace = searchParams.get('space')
   const space = rawSpace === null ? currentSpace : rawSpace || null
@@ -31,7 +32,7 @@ export function ApplicationSettingsPage() {
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-1">
-          <h1 className="text-3xl">{t('nav.settings')}</h1>
+          <h1 className="text-3xl">{t('applicationSettings.settings')}</h1>
           <p className="text-muted-foreground">
             {t('applicationSettings.description')}
           </p>
@@ -66,6 +67,7 @@ export function ApplicationSettingsPage() {
           <CredentialsManagement />
           <BuildProvidersManagement />
           <BuildRuntimeSettings />
+          <KcrossManagement />
         </div>
       )}
     </div>

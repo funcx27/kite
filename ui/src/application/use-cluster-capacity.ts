@@ -1,10 +1,10 @@
 // Cluster capacity reference for the space-quota editors: sums one target
 // cluster's node allocatable cpu/memory through the generic nodes API.
+import { withClusterPath } from '@/platform/lib/cluster-api'
 import { useQuery } from '@tanstack/react-query'
 import { Node, NodeList } from 'kubernetes-types/core/v1'
 
 import { apiClient } from '@/lib/api-client'
-import { clusterHeader } from '@/lib/current-cluster'
 
 // "500m" → 0.5, "2" → 2; undefined when the value does not parse.
 export function cpuQuantityToCores(q: string | undefined): number | undefined {
@@ -61,9 +61,9 @@ export function useClusterCapacity(cluster: string | undefined) {
   return useQuery({
     queryKey: ['cluster-capacity', cluster],
     queryFn: async (): Promise<ClusterCapacity> => {
-      const list = await apiClient.get<NodeList>('/nodes', {
-        headers: clusterHeader(cluster as string),
-      })
+      const list = await apiClient.get<NodeList>(
+        withClusterPath('/nodes', cluster)
+      )
       const items: Node[] = list.items ?? []
       let cpuCores = 0
       let memoryGiB = 0

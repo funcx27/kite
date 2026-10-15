@@ -1,6 +1,5 @@
 import { useCallback, useRef, useState } from 'react'
 import { Container } from 'kubernetes-types/core/v1'
-import { useTranslation } from 'react-i18next'
 
 import { formatDate } from '@/lib/utils'
 
@@ -18,19 +17,9 @@ import {
 interface ImageEditorProps {
   container: Container
   onUpdate: (updates: Partial<Container>) => void
-  /** Hide the "Default" (unset → kubelet decides) option and default the
-   *  select to IfNotPresent — used by the application wizard, where an
-   *  explicit policy is always written; raw-workload editors keep the
-   *  unset choice. */
-  hideDefaultPolicy?: boolean
 }
 
-export function ImageEditor({
-  container,
-  onUpdate,
-  hideDefaultPolicy = false,
-}: ImageEditorProps) {
-  const { t } = useTranslation()
+export function ImageEditor({ container, onUpdate }: ImageEditorProps) {
   const [showTagDropdown, setShowTagDropdown] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -79,7 +68,7 @@ export function ImageEditor({
   return (
     <div className="space-y-4">
       <div className="space-y-2 relative">
-        <Label htmlFor="container-image">{t('editors.containerImage')}</Label>
+        <Label htmlFor="container-image">Container Image</Label>
         <Input
           id="container-image"
           ref={inputRef}
@@ -114,37 +103,33 @@ export function ImageEditor({
           </div>
         )}
         <p className="text-sm text-muted-foreground">
-          {t('editors.imageHint')}
+          Specify the container image including tag (e.g., nginx:1.21,
+          node:16-alpine)
         </p>
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="image-pull-policy">{t('editors.pullPolicy')}</Label>
+        <Label htmlFor="image-pull-policy">Image Pull Policy</Label>
         <Select
-          value={
-            container.imagePullPolicy ||
-            (hideDefaultPolicy ? 'IfNotPresent' : 'default')
-          }
+          value={container.imagePullPolicy || 'default'}
           onValueChange={updateImagePullPolicy}
         >
-          <SelectTrigger id="image-pull-policy" className="w-56">
-            <SelectValue placeholder={t('editors.selectPullPolicy')} />
+          <SelectTrigger id="image-pull-policy" className="w-full">
+            <SelectValue placeholder="Select pull policy" />
           </SelectTrigger>
           <SelectContent>
-            {!hideDefaultPolicy && (
-              <SelectItem value="default">Default</SelectItem>
-            )}
+            <SelectItem value="default">Default</SelectItem>
             <SelectItem value="IfNotPresent">IfNotPresent</SelectItem>
             <SelectItem value="Always">Always</SelectItem>
             <SelectItem value="Never">Never</SelectItem>
           </SelectContent>
         </Select>
         <p className="text-sm text-muted-foreground">
-          <strong>IfNotPresent:</strong> {t('editors.pullHintIfNotPresent')}
+          <strong>IfNotPresent:</strong> Pull image only if not present locally
           <br />
-          <strong>Always:</strong> {t('editors.pullHintAlways')}
+          <strong>Always:</strong> Always pull the latest image
           <br />
-          <strong>Never:</strong> {t('editors.pullHintNever')}
+          <strong>Never:</strong> Never pull, use local image only
         </p>
       </div>
     </div>

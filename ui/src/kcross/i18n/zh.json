@@ -8,11 +8,6 @@
       "saved": "设置已保存"
     }
   },
-  "settings": {
-    "tabs": {
-      "kcross": "kcross 网关"
-    }
-  },
   "kcrossManagement": {
     "title": "kcross 网关",
     "enabled": "启用",

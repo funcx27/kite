@@ -25,7 +25,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { YamlDiffViewer } from '@/components/yaml-diff-viewer'
+
+import { YamlDiffViewer } from './yaml-diff-viewer'
 
 interface HistoryDialogProps {
   app: Application

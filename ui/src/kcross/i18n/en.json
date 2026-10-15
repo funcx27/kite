@@ -8,11 +8,6 @@
       "saved": "Settings saved"
     }
   },
-  "settings": {
-    "tabs": {
-      "kcross": "kcross"
-    }
-  },
   "kcrossManagement": {
     "title": "kcross Gateway",
     "enabled": "Enabled",

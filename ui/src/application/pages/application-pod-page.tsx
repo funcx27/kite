@@ -4,6 +4,10 @@ import {
   useApplication,
   useApplicationResources,
 } from '@/application/api'
+import { LogViewer } from '@/platform/log-viewer'
+import { PodFileBrowser } from '@/platform/pod-file-browser'
+import { PodMonitoring } from '@/platform/pod-monitoring'
+import { Terminal } from '@/platform/terminal-content'
 import { IconChevronDown, IconTrash } from '@tabler/icons-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import * as yaml from 'js-yaml'
@@ -23,11 +27,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { LogViewer } from '@/components/log-viewer'
-import { PodFileBrowser } from '@/components/pod-file-browser'
-import { PodMonitoring } from '@/components/pod-monitoring'
 import { SimpleYamlEditor } from '@/components/simple-yaml-editor'
-import { Terminal } from '@/components/terminal-content'
 
 type View = 'monitoring' | 'terminal' | 'logs' | 'files' | 'yaml'
 

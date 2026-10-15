@@ -1,6 +1,7 @@
 import '@/kcross/i18n'
 
 import { useMemo, useState } from 'react'
+import { ActionTable } from '@/application/components/action-table'
 import {
   KcrossPeer,
   testKcrossSetting,
@@ -23,7 +24,6 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { Cluster } from '@/types/api'
-import { ActionTable } from '@/lib/action-table'
 import { createCluster, deleteCluster } from '@/lib/api'
 import { fetchClusterList, updateCluster } from '@/lib/api/admin'
 import { Badge } from '@/components/ui/badge'

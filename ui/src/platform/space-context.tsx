@@ -9,12 +9,12 @@ import {
   useState,
 } from 'react'
 import { SPACE_LABEL_SELECTOR } from '@/application/lib'
+import { withClusterPath } from '@/platform/lib/cluster-api'
 import { useQueries } from '@tanstack/react-query'
 import { NamespaceList } from 'kubernetes-types/core/v1'
 import { useSearchParams } from 'react-router-dom'
 
 import { apiClient } from '@/lib/api-client'
-import { clusterHeader } from '@/lib/current-cluster'
 import { useCluster } from '@/hooks/use-cluster'
 
 const CURRENT_SPACE_STORAGE_KEY = 'current-space'
@@ -72,8 +72,10 @@ export function SpaceProvider({ children }: { children: React.ReactNode }) {
       queryKey: ['namespaces', 'spaces', cluster],
       queryFn: () =>
         apiClient.get<NamespaceList>(
-          `/namespaces/_all?labelSelector=${encodeURIComponent(SPACE_LABEL_SELECTOR)}`,
-          { headers: clusterHeader(cluster) }
+          withClusterPath(
+            `/namespaces/_all?labelSelector=${encodeURIComponent(SPACE_LABEL_SELECTOR)}`,
+            cluster
+          )
         ),
       staleTime: 30 * 1000,
       placeholderData: (prev: NamespaceList | undefined) => prev,

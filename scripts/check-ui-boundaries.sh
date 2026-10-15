@@ -12,7 +12,6 @@
 # Exemptions mirror ui/eslint.config.js:
 #   - src/platform/main.tsx — platform SPA entry, composition root
 #   - SHARED_OK — components verified to be used on both sides
-#   - settings-sections.tsx may import the kcross settings panel
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -22,7 +21,7 @@ MODULE_RE='^(application|workflow|buildfleet|kcross|platform)(/|$)'
 HOST_RE='^(App(\.tsx)?$|pages/|components/|contexts/|lib/)'
 
 # Keep in sync with SHARED_COMPONENT_ALLOWS in ui/eslint.config.js.
-SHARED_OK='^components/ui(/|$)|^components/(ai-chat/ai-chat-stream|appearance-provider|connection-indicator|delete-confirmation-dialog|editors/image-editor|header-shell|language-toggle|log-viewer|mode-toggle|pod-file-browser|pod-monitoring|settings/cluster-dialog|simple-yaml-editor|terminal-content|user-menu|yaml-diff-viewer)$'
+SHARED_OK='^components/ui(/|$)|^components/(account-settings-dialog|action-table|ai-chat/ai-chat-stream|appearance-provider|chart/cpu-usage-chart|chart/disk-io-usage-chart|chart/memory-usage-chart|chart/network-usage-chart|color-theme-provider|connection-indicator|delete-confirmation-dialog|error-message|language-toggle|mode-toggle|network-speed-indicator|selector/configmap-selector|selector/container-selector|selector/pod-selector|selector/secret-selector|settings/cluster-dialog|simple-yaml-editor|yaml-diff-viewer)$'
 
 fail=0
 
@@ -60,10 +59,6 @@ check_file() {
 
     if [[ "$rel" =~ $HOST_RE ]] && [[ "$resolved" =~ $MODULE_RE ]]; then
       # Direction B
-      if [ "$rel" = "components/settings/settings-sections.tsx" ] \
-        && [ "$resolved" = "kcross/kcross-management" ]; then
-        continue
-      fi
       echo "B  $rel:$lineno  ->  $spec  (resolves $resolved)" >&2
       fail=1
     fi

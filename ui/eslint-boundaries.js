@@ -19,22 +19,29 @@ const SHARED_COMPONENT_ALLOWS = [
   '!@/components/ui/**',
   '!@/components/ai-chat',
   '!@/components/ai-chat/ai-chat-stream',
+  '!@/components/account-settings-dialog',
+  '!@/components/action-table',
   '!@/components/appearance-provider',
+  '!@/components/chart',
+  '!@/components/chart/cpu-usage-chart',
+  '!@/components/chart/disk-io-usage-chart',
+  '!@/components/chart/memory-usage-chart',
+  '!@/components/chart/network-usage-chart',
+  '!@/components/color-theme-provider',
   '!@/components/connection-indicator',
   '!@/components/delete-confirmation-dialog',
-  '!@/components/editors',
-  '!@/components/editors/image-editor',
-  '!@/components/header-shell',
+  '!@/components/error-message',
   '!@/components/language-toggle',
-  '!@/components/log-viewer',
   '!@/components/mode-toggle',
-  '!@/components/pod-file-browser',
-  '!@/components/pod-monitoring',
+  '!@/components/network-speed-indicator',
+  '!@/components/selector',
+  '!@/components/selector/configmap-selector',
+  '!@/components/selector/container-selector',
+  '!@/components/selector/pod-selector',
+  '!@/components/selector/secret-selector',
   '!@/components/settings',
   '!@/components/settings/cluster-dialog',
   '!@/components/simple-yaml-editor',
-  '!@/components/terminal-content',
-  '!@/components/user-menu',
   '!@/components/yaml-diff-viewer',
 ]
 const MODULE_IMPORT_PATTERNS = [
@@ -98,28 +105,5 @@ export const boundaryConfigs = [
   {
     files: ['src/platform/main.tsx'],
     rules: { 'no-restricted-imports': 'off' },
-  },
-  // The console settings aggregator renders module settings panels; the kcross
-  // panel was wired here deliberately by split plan P3.
-  {
-    files: ['src/components/settings/settings-sections.tsx'],
-    rules: {
-      'no-restricted-imports': [
-        'error',
-        {
-          patterns: [
-            {
-              group: [
-                ...MODULE_IMPORT_PATTERNS,
-                '!@/kcross',
-                '!@/kcross/kcross-management',
-              ],
-              message:
-                'Host code must not import the feature modules; settings-sections may only reach the kcross settings panel.',
-            },
-          ],
-        },
-      ],
-    },
   },
 ]

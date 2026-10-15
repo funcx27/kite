@@ -12,7 +12,6 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { Role } from '@/types/api'
-import { Action, ActionTable } from '@/lib/action-table'
 import {
   assignRole,
   createRole,
@@ -25,6 +24,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { DeleteConfirmationDialog } from '@/components/delete-confirmation-dialog'
 
+import { Action, ActionTable } from '../action-table'
 import { Badge } from '../ui/badge'
 import { RBACAssignmentDialog } from './rbac-assignment-dialog'
 import { RBACDialog } from './rbac-dialog'

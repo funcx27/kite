@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Container, Pod } from 'kubernetes-types/core/v1'
 
 import { usePodMetrics } from '@/lib/api'
@@ -26,8 +26,6 @@ interface PodMonitoringProps {
   containers?: Container[]
   initContainers?: Container[]
   labelSelector?: string
-  /** Overrides the global current cluster (x-cluster-name addressing) */
-  cluster?: string
 }
 
 export function PodMonitoring({
@@ -38,7 +36,6 @@ export function PodMonitoring({
   containers: _containers = [],
   initContainers = [],
   labelSelector,
-  cluster,
 }: PodMonitoringProps) {
   const containers = useMemo(() => {
     return toSimpleContainer(initContainers, _containers)
@@ -51,13 +48,6 @@ export function PodMonitoring({
     string | undefined
   >(undefined)
   const [refreshInterval, setRefreshInterval] = useState(30 * 1000)
-
-  // selectedPod starts as the target pod but the user may override it via the
-  // pod selector; when the surrounding page points at another pod, follow it
-  // instead of keeping the stale mount-time value (charts would not switch).
-  useEffect(() => {
-    setSelectedPod(podName || undefined)
-  }, [podName])
 
   const queryPodName = useMemo(() => {
     return (
@@ -77,7 +67,6 @@ export function PodMonitoring({
       container: selectedContainer,
       refreshInterval: refreshInterval,
       labelSelector: labelSelector,
-      cluster,
     }
   )
 

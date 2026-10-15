@@ -408,7 +408,6 @@
     "events": "Events",
     "crds": "CRDs",
     "kubectl": "Kubectl Terminal",
-    "settings": "Settings",
     "serviceaccounts": "Service Accounts",
     "roles": "Roles",
     "rolebindings": "Role Bindings",

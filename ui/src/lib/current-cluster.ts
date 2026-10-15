@@ -28,21 +28,10 @@ export function appendCurrentClusterParam(
 }
 
 export function appendCurrentClusterHeader(headers: Record<string, string>) {
-  // A caller-provided header wins: it addresses a specific cluster (e.g. an
-  // application page whose cluster differs from the global switcher).
-  if (headers[CURRENT_CLUSTER_HEADER_KEY]) {
-    return
-  }
   const currentCluster = getCurrentCluster()
   if (currentCluster) {
     headers[CURRENT_CLUSTER_HEADER_KEY] = encodeURIComponent(currentCluster)
   }
-}
-
-// Header targeting one specific cluster, overriding the global switcher for
-// a single request (the backend prefers the header over the query param).
-export function clusterHeader(cluster: string): Record<string, string> {
-  return { [CURRENT_CLUSTER_HEADER_KEY]: encodeURIComponent(cluster) }
 }
 
 export function withCurrentClusterPath(

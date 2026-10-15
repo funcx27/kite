@@ -1,5 +1,4 @@
 import type { ComponentType, ReactNode } from 'react'
-import { KcrossManagement } from '@/kcross/kcross-management'
 import type { TFunction } from 'i18next'
 
 import { APIKeyManagement } from './apikey-management'
@@ -44,12 +43,6 @@ export const settingsSectionRegistry: SettingsSectionDefinition[] = [
     'settings.tabs.clusters',
     'Cluster',
     ClusterManagement
-  ),
-  createSettingsSectionDefinition(
-    'kcross',
-    'settings.tabs.kcross',
-    'kcross',
-    KcrossManagement
   ),
   createSettingsSectionDefinition(
     'oauth',

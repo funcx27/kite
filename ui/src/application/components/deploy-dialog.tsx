@@ -39,9 +39,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { YamlDiffViewer } from '@/components/yaml-diff-viewer'
 
 import { ApplicationStatusChip } from './status-badge'
+import { YamlDiffViewer } from './yaml-diff-viewer'
 
 interface DeployDialogProps {
   app: Application

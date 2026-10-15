@@ -2,9 +2,9 @@ import type { ReactNode } from 'react'
 
 import { Separator } from '@/components/ui/separator'
 
-// Shared chrome of the mode top bars (SiteHeader, ApplicationHeader): the
-// sticky bar shell, the right-aligned action cluster and the vertical
-// divider, so both headers keep the same spacing and separator style.
+// Chrome of the application-mode top bar (ApplicationHeader): the sticky bar
+// shell, the right-aligned action cluster and the vertical divider. Kept
+// matching the console SiteHeader layout for visual parity across modes.
 export function HeaderShell({ children }: { children: ReactNode }) {
   return (
     <header className="sticky top-0 z-50 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 flex h-(--header-height) shrink-0 items-center gap-2 border-b transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-(--header-height)">

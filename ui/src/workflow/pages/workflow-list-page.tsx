@@ -6,13 +6,13 @@
 // belong to it (bound or deploy-referenced); "all spaces" aggregates
 // everything, including unbound platform workflows.
 import { useMemo, useState } from 'react'
+import { ActionTable, type Action } from '@/application/components/action-table'
 import { useSpaces, useSyncSpaceParam } from '@/platform/space-context'
 import { Copy, History, Play } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 
-import { ActionTable, type Action } from '@/lib/action-table'
 import { formatDate } from '@/lib/utils'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { Badge } from '@/components/ui/badge'

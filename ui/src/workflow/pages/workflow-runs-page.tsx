@@ -4,10 +4,10 @@
 import { useTranslation } from 'react-i18next'
 import { Link, useParams } from 'react-router-dom'
 
-import { ActionTable } from '@/lib/action-table'
 import { formatDate } from '@/lib/utils'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { Badge } from '@/components/ui/badge'
+import { ActionTable } from '@/components/action-table'
 
 import { useRuns, useWorkflow } from '../api'
 import { RunStatusChip } from '../components/status-chip'
