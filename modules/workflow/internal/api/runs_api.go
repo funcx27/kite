@@ -29,6 +29,11 @@ type runSummary struct {
 	Params          json.RawMessage `json:"params,omitempty"`
 	StartedAt       *time.Time      `json:"startedAt"`
 	FinishedAt      *time.Time      `json:"finishedAt"`
+	// FailedNodes counts the run's failed nodes. A succeeded run with
+	// failures ran them under continue semantics (notify or onFailure=
+	// continue); the UI paints those "succeeded with warnings" instead of
+	// a plain green.
+	FailedNodes int `json:"failedNodes,omitempty"`
 }
 
 // TriggerRun admits a manual run (design §7): parameters are validated
@@ -107,12 +112,45 @@ func (h *Handler) ListRuns(c *gin.Context) {
 		h.fail(c, http.StatusInternalServerError, err, "")
 		return
 	}
+	failed := failedNodeCounts(h.store.DB(), runIDs(runs))
 	names := h.deps.UserNames(triggerUserIDs(runs))
 	out := make([]runSummary, 0, len(runs))
 	for _, r := range runs {
-		out = append(out, toRunSummary(r, names))
+		out = append(out, toRunSummary(r, names, failed[r.ID]))
 	}
 	c.JSON(http.StatusOK, gin.H{"runs": out, "total": len(out)})
+}
+
+func runIDs(runs []store.WorkflowRun) []uint {
+	ids := make([]uint, 0, len(runs))
+	for _, r := range runs {
+		ids = append(ids, r.ID)
+	}
+	return ids
+}
+
+// failedNodeCounts counts failed NodeRuns per run id in one grouped query.
+func failedNodeCounts(db *gorm.DB, ids []uint) map[uint]int {
+	failed := map[uint]int{}
+	if len(ids) == 0 {
+		return failed
+	}
+	var counts []struct {
+		RunID uint
+		N     int
+	}
+	if err := db.Model(&store.NodeRun{}).
+		Select("run_id, count(*) as n").
+		Where("run_id IN ? AND status = ?", ids, store.NodeFailed).
+		Group("run_id").Scan(&counts).Error; err != nil {
+		// The warning badge is derived display state; a counting failure
+		// degrades to plain statuses rather than failing the list.
+		return map[uint]int{}
+	}
+	for _, c := range counts {
+		failed[c.RunID] = c.N
+	}
+	return failed
 }
 
 func triggerUserIDs(runs []store.WorkflowRun) []uint {
@@ -123,7 +161,7 @@ func triggerUserIDs(runs []store.WorkflowRun) []uint {
 	return ids
 }
 
-func toRunSummary(r store.WorkflowRun, names map[uint]string) runSummary {
+func toRunSummary(r store.WorkflowRun, names map[uint]string, failedNodes int) runSummary {
 	return runSummary{
 		ID:              r.ID,
 		RunNumber:       r.RunNumber,
@@ -136,6 +174,7 @@ func toRunSummary(r store.WorkflowRun, names map[uint]string) runSummary {
 		Params:          json.RawMessage(r.Params),
 		StartedAt:       r.StartedAt,
 		FinishedAt:      r.FinishedAt,
+		FailedNodes:     failedNodes,
 	}
 }
 

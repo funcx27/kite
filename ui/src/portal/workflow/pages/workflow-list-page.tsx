@@ -467,7 +467,7 @@ function LatestRunCell({
         to={`/workflows/${id}/runs/${run.id}`}
         className="inline-flex items-center gap-1.5 text-sm hover:underline"
       >
-        <RunStatusChip status={run.status} />
+        <RunStatusChip status={run.status} failedNodes={run.failedNodes} />
         <span className="font-mono text-xs text-muted-foreground">
           #{run.runNumber}
         </span>

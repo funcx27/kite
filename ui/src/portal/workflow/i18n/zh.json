@@ -63,7 +63,9 @@
       "pending": "未开始",
       "skipped": "已跳过",
       "interrupted": "已中断",
-      "waitingApproval": "等待审批"
+      "waitingApproval": "等待审批",
+      "succeededWithWarnings": "成功（含警告）",
+      "warningTooltip": "{{count}} 个节点失败（continue 语义，未阻断流水线）"
     },
     "nodeTypes": {
       "build-image": "构建镜像",

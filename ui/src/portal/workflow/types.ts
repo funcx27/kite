@@ -127,6 +127,9 @@ export interface RunSummary {
   params?: Record<string, unknown>
   startedAt?: string | null
   finishedAt?: string | null
+  // Failed-node count for the warning badge on a succeeded run (continue
+  // semantics: notify nodes or onFailure=continue).
+  failedNodes?: number
 }
 
 export interface RunNodeView {

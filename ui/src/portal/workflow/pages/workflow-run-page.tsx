@@ -141,6 +141,12 @@ export function WorkflowRunPage() {
       (stream.nodeStatuses[n.nodeId] ?? n.status) === 'running'
   )
 
+  // Failed nodes under their live statuses: feeds the header's warning badge
+  // on a succeeded run (continue-semantics failures).
+  const failedCount = (run?.nodes ?? []).filter(
+    (n) => (stream.nodeStatuses[n.nodeId] ?? n.status) === 'failed'
+  ).length
+
   const mergedLogText = (node: RunNodeView): string => {
     const streamed = stream.logs[node.nodeId] ?? []
     if (streamed.length > 0) return streamed.join('\n')
@@ -172,7 +178,10 @@ export function WorkflowRunPage() {
         >
           {run.workflow}
         </Link>
-        <RunStatusChip status={runStatus ?? run.status} />
+        <RunStatusChip
+          status={runStatus ?? run.status}
+          failedNodes={failedCount}
+        />
         {siblingRuns.length > 0 ? (
           <Select
             value={String(run.id)}

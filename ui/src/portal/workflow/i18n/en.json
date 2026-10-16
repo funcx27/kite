@@ -63,7 +63,9 @@
       "pending": "Pending",
       "skipped": "Skipped",
       "interrupted": "Interrupted",
-      "waitingApproval": "Waiting approval"
+      "waitingApproval": "Waiting approval",
+      "succeededWithWarnings": "Succeeded (warnings)",
+      "warningTooltip": "{{count}} node(s) failed under continue semantics (pipeline not blocked)"
     },
     "nodeTypes": {
       "build-image": "Build Image",

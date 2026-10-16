@@ -59,7 +59,12 @@ export function WorkflowRunsPage() {
           {
             accessorKey: 'status',
             header: t('workflow.list.status'),
-            cell: ({ row }) => <RunStatusChip status={row.original.status} />,
+            cell: ({ row }) => (
+              <RunStatusChip
+                status={row.original.status}
+                failedNodes={row.original.failedNodes}
+              />
+            ),
           },
           {
             accessorKey: 'revisionRev',
