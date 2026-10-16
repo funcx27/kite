@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -66,8 +68,17 @@ func (e *Engine) execNode(parent context.Context, state *runState, node spec.Nod
 		Run: map[string]any{
 			"number": state.run.RunNumber,
 			"status": state.run.Status,
-			"url": fmt.Sprintf("/portal/workflows/%d/runs/%d", state.wf.ID, state.run.ID),
+			"url":    fmt.Sprintf("/portal/workflows/%d/runs/%d", state.wf.ID, state.run.ID),
 		},
+	}
+	// git.* variables resolve via ls-remote before the full render — the
+	// commit must be known while the props still carry the {{git.*}} tokens.
+	// Only build nodes referencing git.* pay the round trip.
+	if node.Type == spec.NodeBuildImage && usesGitVars(node.Props) {
+		if err := e.injectGitVars(ctx, state.run, node, &env); err != nil {
+			e.completeNode(state.run.ID, node.ID, row.ID, row.Attempt, store.NodeFailed, nil, err, "")
+			return
+		}
 	}
 	rendered, err := spec.Resolve(node.Props, env)
 	if err != nil {
@@ -111,6 +122,56 @@ func (e *Engine) execNode(parent context.Context, state *runState, node spec.Nod
 		return
 	}
 	e.completeNode(state.run.ID, node.ID, row.ID, row.Attempt, store.NodeSucceeded, outputs, nil, logs.tail())
+}
+
+// usesGitVars reports whether the props reference any git.* template variable.
+func usesGitVars(props spec.Props) bool {
+	return slices.ContainsFunc(spec.TemplateRefs(props), func(ref string) bool {
+		return strings.HasPrefix(ref, "git.")
+	})
+}
+
+// injectGitVars resolves the node's git source to its commit SHA and populates
+// env.Git for the subsequent full render. The source fields render first
+// (they may carry {{params.*}}); the credential ref gets the same usage gate
+// the build runner applies.
+func (e *Engine) injectGitVars(ctx context.Context, run store.WorkflowRun, node spec.Node, env *spec.ResolveEnv) error {
+	raw, ok := node.Props["git"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("git template variables require a git source")
+	}
+	rendered, err := spec.Resolve(spec.Props{
+		"url":              raw["url"],
+		"ref":              raw["ref"],
+		"gitCredentialRef": node.Props["gitCredentialRef"],
+	}, *env)
+	if err != nil {
+		return fmt.Errorf("resolve git source: %w", err)
+	}
+	str := func(key string) string {
+		s, _ := rendered[key].(string)
+		return s
+	}
+	url, ref, credRef := str("url"), str("ref"), str("gitCredentialRef")
+	if url == "" {
+		return fmt.Errorf("git template variables require a git source url")
+	}
+	if credRef != "" && !e.deps.AuthorizeUser(run.TriggeredBy, credentialsResource, "get", "", "") {
+		return fmt.Errorf("user %d does not have permission to use credential %q", run.TriggeredBy, credRef)
+	}
+	commit, err := e.deps.ResolveGitCommit(ctx, url, ref, credRef)
+	if err != nil {
+		return fmt.Errorf("resolve git commit: %w", err)
+	}
+	if commit == "" {
+		shownRef := ref
+		if shownRef == "" {
+			shownRef = "HEAD"
+		}
+		return fmt.Errorf("could not resolve commit of %s@%s via ls-remote", url, shownRef)
+	}
+	env.Git = map[string]any{"commit": commit, "shortCommit": commit[:min(7, len(commit))]}
+	return nil
 }
 
 // completeNode writes a node's terminal state via a conditional update,

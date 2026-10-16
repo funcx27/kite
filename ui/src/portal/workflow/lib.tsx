@@ -199,7 +199,7 @@ export function isValidNodeNodeId(id: string): boolean {
 // Known output keys per node type, feeding the steps.* template refs
 // (mirrors the runners' outputs in engine/runner.go).
 export const outputKeysByType: Record<WorkflowNodeType, string[]> = {
-  'build-image': ['imageRef', 'digest', 'imageRefWithDigest'],
+  'build-image': ['imageRef', 'digest', 'imageRefWithDigest', 'commit'],
   'deploy-app': ['revision', 'preview'],
   approval: [],
   notify: ['delivered'],
@@ -207,13 +207,18 @@ export const outputKeysByType: Record<WorkflowNodeType, string[]> = {
 
 // Template refs offered on a node's fields (autocomplete options and drawer
 // chips): the workflow params, the run fields and the outputs of every other
-// node.
+// node. gitScope adds the git.* refs — only valid on a build-image node with
+// a git source, so the caller gates it.
 export function buildTemplateRefs(
   params: ParamSpec[],
   nodes: WorkflowNode[],
-  currentNodeId?: string
+  currentNodeId?: string,
+  gitScope?: boolean
 ): string[] {
   const refs = params.map((p) => `params.${p.name}`)
+  if (gitScope) {
+    refs.push('git.commit', 'git.shortCommit')
+  }
   refs.push('run.number', 'run.status', 'run.url')
   for (const other of nodes) {
     if (other.id === currentNodeId) continue

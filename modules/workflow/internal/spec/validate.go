@@ -83,8 +83,28 @@ func Validate(s DAGSpec, params []ParamSpec) []string {
 
 	for _, n := range s.Nodes {
 		errs = append(errs, validateTemplates(n, ids, paramNames)...)
+		errs = append(errs, validateGitMode(n)...)
 	}
 	return errs
+}
+
+// validateGitMode rejects unknown git fetch modes at save time; an absent or
+// empty mode means the default server-side fetch.
+func validateGitMode(n Node) []string {
+	git, ok := n.Props["git"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	mode, ok := git["mode"].(string)
+	if !ok {
+		return nil
+	}
+	switch mode {
+	case "", "server", "runtime":
+		return nil
+	default:
+		return []string{fmt.Sprintf("node %q: unknown git mode %q", n.ID, mode)}
+	}
 }
 
 // validateAcyclic runs a DFS from every node and reports the first cycle
@@ -207,8 +227,17 @@ func validateTemplates(n Node, nodeIDs, paramNames map[string]bool) []string {
 			default:
 				errs = append(errs, fmt.Sprintf("node %q: unknown run variable %q", n.ID, ref))
 			}
+		case len(seg) == 2 && seg[0] == "git":
+			switch seg[1] {
+			case "commit", "shortCommit":
+			default:
+				errs = append(errs, fmt.Sprintf("node %q: unknown git variable %q", n.ID, ref))
+			}
+			if _, ok := n.Props["git"].(map[string]any); !ok {
+				errs = append(errs, fmt.Sprintf("node %q: git.* template variables require a git source", n.ID))
+			}
 		default:
-			errs = append(errs, fmt.Sprintf("node %q: malformed template reference %q (want params.<name>, steps.<id>.outputs.<key> or run.<number|status|url>)", n.ID, ref))
+			errs = append(errs, fmt.Sprintf("node %q: malformed template reference %q (want params.<name>, steps.<id>.outputs.<key>, run.<number|status|url> or git.<commit|shortCommit>)", n.ID, ref))
 		}
 	}
 	if n.Type != "" && !isKnownNodeType(n.Type) {

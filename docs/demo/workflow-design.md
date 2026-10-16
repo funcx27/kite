@@ -243,6 +243,7 @@ WorkflowBinding(id, workflow_id FK→workflows ON DELETE CASCADE, kind, target)
 ```
 
 - v1 内置变量：`{{run.number}}`、`{{run.status}}`、`{{run.url}}`（run 视图深链）。
+- `{{git.commit}}` / `{{git.shortCommit}}`：build-image 节点 git 源经 ls-remote 解析的 commit SHA（仅构建节点可用）。
 - 通知失败不阻断流水线（onFailure 恒为 continue，UI 灰提示）；这是「尽力而为」节点的语义。
 - 站内待办：审批等待在列表页/run 视图有醒目徽标，无需通知系统。
 

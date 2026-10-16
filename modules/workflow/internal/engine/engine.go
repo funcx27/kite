@@ -43,6 +43,9 @@ type Executors interface {
 	BuildImage(ctx context.Context, req exec.BuildRequest, onLog func(string)) (exec.BuildResult, error)
 	DeployApp(ctx context.Context, req exec.DeployRequest, onLog func(string)) (exec.DeployResult, error)
 	Notify(ctx context.Context, req exec.NotifyRequest) error
+	// ResolveGitCommit resolves a git ref to its commit SHA (ls-remote,
+	// best-effort): an empty result means the commit could not be resolved.
+	ResolveGitCommit(ctx context.Context, url, ref, gitCredentialRef string) (string, error)
 }
 
 // Deps is what the engine needs beyond the host capabilities: identity-based

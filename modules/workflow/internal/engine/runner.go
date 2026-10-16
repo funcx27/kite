@@ -69,7 +69,7 @@ func (r buildRunner) Run(ctx context.Context, rendered spec.Props, run store.Wor
 	var httpSource *exec.HTTPSource
 	switch {
 	case p.Git != nil && p.Git.URL != "":
-		source = &exec.GitSource{URL: p.Git.URL, Ref: p.Git.Ref, Subdir: p.Git.Subdir}
+		source = &exec.GitSource{URL: p.Git.URL, Ref: p.Git.Ref, Subdir: p.Git.Subdir, Mode: p.Git.Mode}
 	case p.HTTP != nil && p.HTTP.URL != "":
 		httpSource = &exec.HTTPSource{URL: p.HTTP.URL}
 	default:
@@ -116,6 +116,9 @@ func buildOutputs(res exec.BuildResult) map[string]any {
 	out := map[string]any{
 		"imageRef": res.ImageRef,
 		"digest":   res.Digest,
+	}
+	if res.Commit != "" {
+		out["commit"] = res.Commit
 	}
 	if res.ImageRef != "" && res.Digest != "" {
 		base := res.ImageRef

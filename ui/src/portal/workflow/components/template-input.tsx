@@ -26,6 +26,8 @@ export interface TemplateInputProps {
   nodes: WorkflowNode[]
   // Owning node id: its own outputs are excluded from the steps.* options.
   currentNodeId?: string
+  // Offers the git.* refs (build-image nodes with a git source only).
+  gitScope?: boolean
   multiline?: boolean
   placeholder?: string
   rows?: number
@@ -48,6 +50,7 @@ export function TemplateInput({
   params,
   nodes,
   currentNodeId,
+  gitScope,
   multiline = false,
   placeholder,
   rows,
@@ -62,13 +65,14 @@ export function TemplateInput({
   const [trigger, setTrigger] = useState<TriggerSpan | null>(null)
 
   const refs = useMemo(
-    () => buildTemplateRefs(params, nodes, currentNodeId),
-    [params, nodes, currentNodeId]
+    () => buildTemplateRefs(params, nodes, currentNodeId, gitScope),
+    [params, nodes, currentNodeId, gitScope]
   )
   const groups = useMemo(() => {
     const pick = (prefix: string) => refs.filter((r) => r.startsWith(prefix))
     return [
       { label: t('workflow.template.groupParams'), refs: pick('params.') },
+      { label: t('workflow.template.groupGit'), refs: pick('git.') },
       { label: t('workflow.template.groupRun'), refs: pick('run.') },
       { label: t('workflow.template.groupSteps'), refs: pick('steps.') },
     ].filter((group) => group.refs.length > 0)

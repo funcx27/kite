@@ -5,12 +5,14 @@
 // back to free text when the list cannot serve a pick.
 import { useMemo, useRef, useState } from 'react'
 import { useApplications, useSpaceQuotas } from '@/portal/application/api'
+import { DockerfileEditorDialog } from '@/portal/components/editors/dockerfile-editor-dialog'
 import { useSpaces } from '@/portal/space-context'
 import {
   IconAdjustmentsHorizontal,
   IconCheck,
   IconChevronDown,
   IconChevronRight,
+  IconMaximize,
   IconTrash,
   IconX,
 } from '@tabler/icons-react'
@@ -162,9 +164,13 @@ export function PropertyDrawer({
     }
   }
 
+  // git.* refs exist only on a build-image node whose props carry a git
+  // source object (values may be template strings; only presence matters).
+  const gitScope = node?.type === 'build-image' && !!node?.props?.git
+
   const templateVars = useMemo(
-    () => buildTemplateRefs(params, nodes, node?.id),
-    [params, nodes, node?.id]
+    () => buildTemplateRefs(params, nodes, node?.id, gitScope),
+    [params, nodes, node?.id, gitScope]
   )
 
   // Splice token at the focused input's caret; append when the selection is
@@ -234,7 +240,7 @@ export function PropertyDrawer({
       props: { ...(node.props ?? {}), space, app },
     })
 
-  const templateInputVars = { params, nodes, currentNodeId: node.id }
+  const templateInputVars = { params, nodes, currentNodeId: node.id, gitScope }
 
   return (
     <div className="flex h-full flex-col">
@@ -370,15 +376,21 @@ function DrawerHeader({
 function Field({
   label,
   hint,
+  labelExtra,
   children,
 }: {
   label: string
   hint?: string
+  /** Right-aligned slot on the label row (e.g. the Dockerfile zoom button). */
+  labelExtra?: React.ReactNode
   children: React.ReactNode
 }) {
   return (
     <div className="space-y-1.5">
-      <Label className="text-xs">{label}</Label>
+      <div className="flex items-center justify-between">
+        <Label className="text-xs">{label}</Label>
+        {labelExtra}
+      </div>
       {children}
       {hint && (
         <p className="text-[11px] leading-4 text-muted-foreground">{hint}</p>
@@ -394,11 +406,13 @@ interface PropsFormShared {
   patchNode: (updates: Partial<WorkflowNode>) => void
   onFocusField: (field: string) => void
   // Autocomplete inputs for TemplateInput fields: params, sibling nodes and
-  // the owning node id (its own outputs stay out of the suggestions).
+  // the owning node id (its own outputs stay out of the suggestions). gitScope
+  // offers the git.* refs (build-image nodes with a git source only).
   templateVars: {
     params: ParamSpec[]
     nodes: WorkflowNode[]
     currentNodeId: string
+    gitScope?: boolean
   }
 }
 
@@ -545,6 +559,8 @@ function BuildPropsForm({
       args !== '' ||
       ((node.props?.platforms as string[] | undefined)?.length ?? 0) > 0
   )
+  // The form is keyed by node.id, so this open flag resets per node.
+  const [dockerfileEditorOpen, setDockerfileEditorOpen] = useState(false)
 
   const setGit = (key: string, value: string) => {
     const git = { ...((node.props?.git as Record<string, unknown>) ?? {}) }
@@ -597,6 +613,29 @@ function BuildPropsForm({
           />
         </Field>
       )}
+      {sourceKind === 'git' && (
+        <Field
+          label={t('workflow.props.gitMode')}
+          hint={t('workflow.props.gitModeHint')}
+        >
+          <Select
+            value={readNestedString(node, 'git', 'mode') || 'server'}
+            onValueChange={(v) => setGit('mode', v === 'server' ? '' : v)}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="server">
+                {t('workflow.props.gitModeServer')}
+              </SelectItem>
+              <SelectItem value="runtime">
+                {t('workflow.props.gitModeRuntime')}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </Field>
+      )}
       <Field label={t('workflow.props.dockerfile')}>
         <TemplateInput
           {...templateVars}
@@ -639,7 +678,22 @@ function BuildPropsForm({
             />
           </Field>
         )}
-        <Field label={t('workflow.props.dockerfileContent')}>
+        <Field
+          label={t('workflow.props.dockerfileContent')}
+          labelExtra={
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 text-muted-foreground"
+              aria-label={t('workflow.props.dockerfileEnlarge')}
+              title={t('workflow.props.dockerfileEnlarge')}
+              onClick={() => setDockerfileEditorOpen(true)}
+            >
+              <IconMaximize className="h-3.5 w-3.5" />
+            </Button>
+          }
+        >
           <TemplateInput
             {...templateVars}
             multiline
@@ -678,6 +732,19 @@ function BuildPropsForm({
           />
         </Field>
       </AdvancedCollapsible>
+      <DockerfileEditorDialog
+        open={dockerfileEditorOpen}
+        onOpenChange={setDockerfileEditorOpen}
+        value={readStringProp(node, 'dockerfileContent')}
+        onCommit={(draft) =>
+          patchProps('dockerfileContent', draft || undefined)
+        }
+        title={t('workflow.props.dockerfileContent')}
+        hint={t('workflow.dockerfileEditor.templateHint')}
+        lineCountLabel={(count) =>
+          t('workflow.dockerfileEditor.lines', { count })
+        }
+      />
     </div>
   )
 }

@@ -212,7 +212,27 @@ func (d *Deps) BuildImage(ctx context.Context, req exec.BuildRequest, onLog func
 		// the REST facade redacts audit rows.
 		return exec.BuildResult{}, fmt.Errorf("build image: %s", credentialsadapter.RedactCredentials(err.Error()))
 	}
-	return exec.BuildResult{ImageRef: res.ImageRef, Digest: res.Digest}, nil
+	return exec.BuildResult{ImageRef: res.ImageRef, Digest: res.Digest, Commit: res.Commit}, nil
+}
+
+// ResolveGitCommit answers ref -> commit SHA for a workflow build node's
+// git.* template variables: one ls-remote round trip through gitctx, which
+// carries its own 5s timeout (ctx keeps the Deps signature). Credential
+// injection goes through the same FleetCredentialInjector as builds; an
+// unconfigured fleet does not affect ref resolution.
+func (d *Deps) ResolveGitCommit(ctx context.Context, url, ref, gitCredentialRef string) (string, error) {
+	src := gitctx.Source{URL: url, Ref: ref}
+	if gitCredentialRef != "" {
+		if d.creds == nil {
+			return "", fmt.Errorf("credential %q cannot be resolved: credential center is not wired", gitCredentialRef)
+		}
+		freq := fleet.Request{Git: &src}
+		if err := d.creds.InjectFleetCredentials(&freq, gitCredentialRef, ""); err != nil {
+			return "", err
+		}
+		src = *freq.Git
+	}
+	return gitctx.ResolveCommit(src), nil
 }
 
 // ProviderNames lists the buildfleet provider names for the workflow
@@ -253,7 +273,7 @@ func (d *Deps) toFleetRequest(req exec.BuildRequest) (fleet.Request, error) {
 	}
 	switch {
 	case req.Git != nil && req.Git.URL != "":
-		freq.Git = &gitctx.Source{URL: req.Git.URL, Ref: req.Git.Ref, Subdir: req.Git.Subdir}
+		freq.Git = &gitctx.Source{URL: req.Git.URL, Ref: req.Git.Ref, Subdir: req.Git.Subdir, Mode: req.Git.Mode}
 	case req.HTTP != nil && req.HTTP.URL != "":
 		freq.HTTP = &httpctx.Source{URL: req.HTTP.URL}
 	default:

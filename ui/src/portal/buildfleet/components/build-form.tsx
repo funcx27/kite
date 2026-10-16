@@ -1,6 +1,12 @@
 import { useState } from 'react'
 import { BuildRequest } from '@/portal/buildfleet/types'
-import { IconLoader2, IconPlus, IconTrash } from '@tabler/icons-react'
+import { DockerfileEditorDialog } from '@/portal/components/editors/dockerfile-editor-dialog'
+import {
+  IconLoader2,
+  IconMaximize,
+  IconPlus,
+  IconTrash,
+} from '@tabler/icons-react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -40,8 +46,11 @@ export function BuildForm({ running, onSubmit }: BuildFormProps) {
   const [gitUrl, setGitUrl] = useState('')
   const [gitRef, setGitRef] = useState('')
   const [gitSubdir, setGitSubdir] = useState('')
+  // 'server' is the API default and stays unset on the request.
+  const [gitMode, setGitMode] = useState('server')
   const [httpUrl, setHttpUrl] = useState('')
   const [dockerfileContent, setDockerfileContent] = useState('')
+  const [dockerfileEditorOpen, setDockerfileEditorOpen] = useState(false)
   const [args, setArgs] = useState<BuildArg[]>([])
   const [platforms, setPlatforms] = useState('')
   const [outputRef, setOutputRef] = useState('')
@@ -63,6 +72,7 @@ export function BuildForm({ running, onSubmit }: BuildFormProps) {
       const git: BuildRequest['git'] = { url: gitUrl.trim() }
       if (gitRef.trim()) git.ref = gitRef.trim()
       if (gitSubdir.trim()) git.subdir = gitSubdir.trim()
+      if (gitMode === 'runtime') git.mode = 'runtime'
       request.git = git
     } else {
       request.http = { url: httpUrl.trim() }
@@ -161,10 +171,44 @@ export function BuildForm({ running, onSubmit }: BuildFormProps) {
           </div>
         )}
 
+        {sourceType === 'git' && (
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="buildfleet-git-mode">
+              {t('buildfleet.form.gitMode')}
+            </Label>
+            <Select value={gitMode} onValueChange={setGitMode}>
+              <SelectTrigger id="buildfleet-git-mode">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="server">
+                  {t('buildfleet.form.gitModeServer')}
+                </SelectItem>
+                <SelectItem value="runtime">
+                  {t('buildfleet.form.gitModeRuntime')}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
         <div className="flex flex-col gap-2">
-          <Label htmlFor="buildfleet-dockerfile">
-            {t('buildfleet.form.dockerfile')}
-          </Label>
+          <div className="flex items-center justify-between">
+            <Label htmlFor="buildfleet-dockerfile">
+              {t('buildfleet.form.dockerfile')}
+            </Label>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 text-muted-foreground"
+              aria-label={t('buildfleet.form.dockerfileEnlarge')}
+              title={t('buildfleet.form.dockerfileEnlarge')}
+              onClick={() => setDockerfileEditorOpen(true)}
+            >
+              <IconMaximize className="h-3.5 w-3.5" />
+            </Button>
+          </div>
           <Textarea
             id="buildfleet-dockerfile"
             value={dockerfileContent}
@@ -247,6 +291,16 @@ export function BuildForm({ running, onSubmit }: BuildFormProps) {
           {running ? t('buildfleet.form.building') : t('buildfleet.form.start')}
         </Button>
       </CardContent>
+      <DockerfileEditorDialog
+        open={dockerfileEditorOpen}
+        onOpenChange={setDockerfileEditorOpen}
+        value={dockerfileContent}
+        onCommit={setDockerfileContent}
+        title={t('buildfleet.form.dockerfile')}
+        lineCountLabel={(count) =>
+          t('buildfleet.form.dockerfileLines', { count })
+        }
+      />
     </Card>
   )
 }

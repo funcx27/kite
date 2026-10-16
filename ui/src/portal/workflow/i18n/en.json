@@ -124,17 +124,22 @@
       "git": "Git Source",
       "gitUrl": "Repository URL",
       "gitRef": "Ref (branch / tag / SHA)",
+      "gitMode": "Fetch Mode",
+      "gitModeHint": "server = Kite clones and uploads the build context; runtime = the build runtime (buildkitd) fetches the repo itself",
+      "gitModeServer": "Server (default)",
+      "gitModeRuntime": "Runtime (buildkitd)",
       "gitSubdir": "Subdirectory",
       "http": "HTTP Tarball Source",
       "httpUrl": "Tarball URL",
       "dockerfile": "Dockerfile Path",
       "dockerfileContent": "Inline Dockerfile",
+      "dockerfileEnlarge": "Open in large editor",
       "args": "Docker build args (--build-arg)",
       "argsHint": "key=value per line",
       "platforms": "Platforms",
       "platformsHint": "Target build platforms, multi-select; empty follows the build node's native platform",
       "outputRef": "Output Image Ref",
-      "outputRefHint": "Supports templates like registry/app:{{params.tag}}",
+      "outputRefHint": "Supports templates like registry/app:{{params.tag}} or registry/app:{{git.shortCommit}}",
       "gitCredentialRef": "Git Credential",
       "gitCredentialRefHint": "Name of a stored git credential; empty = anonymous fetch",
       "registryCredentialRef": "Registry Credential",
@@ -179,8 +184,13 @@
     },
     "template": {
       "groupParams": "Params",
+      "groupGit": "Git Source",
       "groupRun": "Run",
       "groupSteps": "Step Outputs"
+    },
+    "dockerfileEditor": {
+      "lines": "{{count}} lines",
+      "templateHint": "Supports templates like {{params.tag}}"
     },
     "params": {
       "title": "Workflow Parameters",

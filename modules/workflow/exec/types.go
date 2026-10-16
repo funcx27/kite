@@ -33,12 +33,18 @@ type BuildRequest struct {
 type BuildResult struct {
 	ImageRef string `json:"imageRef"`
 	Digest   string `json:"digest"`
+	// Commit is the actually-resolved git commit of the build; empty when the
+	// source was not git or the commit is unknown.
+	Commit string `json:"commit,omitempty"`
 }
 
 // GitSource points the build at a git checkout.
 type GitSource struct {
-	URL    string `json:"url"`
-	Ref    string `json:"ref,omitempty"`
+	URL string `json:"url"`
+	Ref string `json:"ref,omitempty"`
+	// Mode selects the fetch side: "server" (default, daemon-side fetch) |
+	// "runtime" (buildkitd fetches).
+	Mode   string `json:"mode,omitempty"`
 	Subdir string `json:"subdir,omitempty"`
 }
 

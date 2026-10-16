@@ -67,6 +67,9 @@ type Deps interface {
 	DeployApp(ctx context.Context, req exec.DeployRequest, onLog func(string)) (exec.DeployResult, error)
 	// Notify delivers one webhook notification (design §5.4).
 	Notify(ctx context.Context, req exec.NotifyRequest) error
+	// ResolveGitCommit resolves a git ref to its commit SHA (ls-remote,
+	// best-effort): an empty result means the commit could not be resolved.
+	ResolveGitCommit(ctx context.Context, url, ref, gitCredentialRef string) (string, error)
 
 	// ProviderFor resolves the build-cluster provider of a namespace (exact
 	// match, then the global default row); ok=false when nothing is

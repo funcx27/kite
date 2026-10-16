@@ -124,17 +124,22 @@
       "git": "Git 源",
       "gitUrl": "仓库地址",
       "gitRef": "Ref（分支 / tag / SHA）",
+      "gitMode": "拉取模式",
+      "gitModeHint": "server = Kite 服务端克隆并上传构建上下文；runtime = 构建运行时 buildkitd 直接拉取仓库",
+      "gitModeServer": "服务端拉取（默认）",
+      "gitModeRuntime": "Runtime 拉取（buildkitd）",
       "gitSubdir": "子目录",
       "http": "HTTP 压缩包源",
       "httpUrl": "压缩包地址",
       "dockerfile": "Dockerfile 路径",
       "dockerfileContent": "内联 Dockerfile",
+      "dockerfileEnlarge": "放大编辑",
       "args": "Docker 构建参数（--build-arg）",
       "argsHint": "每行一条 key=value",
       "platforms": "平台",
       "platformsHint": "构建的目标平台，可多选；留空跟随构建节点的原生平台",
       "outputRef": "输出镜像",
-      "outputRefHint": "支持模板，如 registry/app:{{params.tag}}",
+      "outputRefHint": "支持模板，如 registry/app:{{params.tag}} 或 registry/app:{{git.shortCommit}}",
       "gitCredentialRef": "Git 凭证",
       "gitCredentialRefHint": "已保存的 git 凭证名称；留空匿名拉取",
       "registryCredentialRef": "Registry 凭证",
@@ -179,8 +184,13 @@
     },
     "template": {
       "groupParams": "参数",
+      "groupGit": "Git 源",
       "groupRun": "运行",
       "groupSteps": "节点输出"
+    },
+    "dockerfileEditor": {
+      "lines": "{{count}} 行",
+      "templateHint": "支持模板变量，如 {{params.tag}}"
     },
     "params": {
       "title": "工作流参数",

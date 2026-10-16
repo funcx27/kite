@@ -14,6 +14,10 @@ type ResolveEnv struct {
 	// an absent node (not succeeded or unknown) is a resolution failure.
 	Steps map[string]map[string]any
 	Run   map[string]any
+	// Git holds git-scope variables, populated only for build-image nodes
+	// with a git source (commit resolved via ls-remote before the full
+	// render; nil for every other node).
+	Git map[string]any
 }
 
 // TemplateRefs lists every {{ path }} reference appearing in the props tree,
@@ -151,7 +155,16 @@ func lookup(path string, env ResolveEnv) (any, error) {
 			return nil, fmt.Errorf("template references unknown run variable %q", path)
 		}
 		return v, nil
+	case len(seg) == 2 && seg[0] == "git":
+		if env.Git == nil {
+			return nil, fmt.Errorf("template references git variable %q but the node has no resolved git source", path)
+		}
+		v, ok := env.Git[seg[1]]
+		if !ok {
+			return nil, fmt.Errorf("template references unknown git variable %q", path)
+		}
+		return v, nil
 	default:
-		return nil, fmt.Errorf("malformed template reference %q (want params.<name>, steps.<id>.outputs.<key> or run.<number|status|url>)", path)
+		return nil, fmt.Errorf("malformed template reference %q (want params.<name>, steps.<id>.outputs.<key>, run.<number|status|url> or git.<commit|shortCommit>)", path)
 	}
 }

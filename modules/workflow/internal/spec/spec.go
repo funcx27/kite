@@ -74,8 +74,11 @@ type BuildProps struct {
 
 // GitSource points the build at a git checkout.
 type GitSource struct {
-	URL    string `json:"url"`
-	Ref    string `json:"ref,omitempty"`
+	URL string `json:"url"`
+	Ref string `json:"ref,omitempty"`
+	// Mode selects the fetch side: "server" (default, daemon-side fetch) |
+	// "runtime" (buildkitd fetches).
+	Mode   string `json:"mode,omitempty"`
 	Subdir string `json:"subdir,omitempty"`
 }
 
