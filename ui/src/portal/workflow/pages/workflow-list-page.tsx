@@ -7,6 +7,7 @@
 // everything, including unbound platform workflows.
 import { useMemo, useState } from 'react'
 import { ActionTable, type Action } from '@/portal/components/action-table'
+import { downloadTextFile } from '@/portal/components/download'
 import { useSpaces, useSyncSpaceParam } from '@/portal/space-context'
 import { Copy, History, Play } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -17,6 +18,7 @@ import { formatDate } from '@/lib/utils'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -34,14 +36,18 @@ import {
 } from '@/components/ui/select'
 
 import {
+  fetchWorkflow,
   useDeleteWorkflowMutation,
   useLatestRuns,
-  useWorkflow,
   useWorkflows,
 } from '../api'
-import { RunParamsDialog, WebhookTokenDialog } from '../components/run-dialogs'
+import {
+  RunParamsDialogHost,
+  WebhookTokenDialog,
+} from '../components/run-dialogs'
 import { RunStatusChip } from '../components/status-chip'
 import type { RunSummary, TriggerRunResponse, WorkflowListItem } from '../types'
+import { draftToWorkflowYaml, workflowYamlFilename } from '../yaml'
 
 // Union of one deploy-target field across the given workflows, sorted.
 function aggregateUnique(
@@ -111,6 +117,40 @@ function WorkflowList() {
     null
   )
   const deleteMutation = useDeleteWorkflowMutation()
+  // Row export: the list item lacks spec/params/triggers, so fetch the
+  // detail and dump the same envelope document the editor's YAML mode uses.
+  const [exportingId, setExportingId] = useState<number | null>(null)
+  // One workflow → one <name>.workflow.yaml download; shared by the row
+  // action and the batch export below.
+  const exportWorkflow = async (id: number) => {
+    const detail = await fetchWorkflow(id)
+    downloadTextFile(
+      workflowYamlFilename(detail.name),
+      draftToWorkflowYaml({
+        name: detail.name,
+        description: detail.description,
+        spaces: detail.spaces ?? [],
+        params: detail.params ?? [],
+        triggers: detail.triggers ?? {},
+        spec: detail.spec ?? { nodes: [], edges: [] },
+      }),
+      'text/yaml'
+    )
+  }
+  const handleExport = async (wf: WorkflowListItem) => {
+    setExportingId(wf.id)
+    try {
+      await exportWorkflow(wf.id)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setExportingId(null)
+    }
+  }
+  // Checkbox column selection (row ids); the header checkbox and the batch
+  // export both scope to the currently filtered rows.
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  const [batchExporting, setBatchExporting] = useState(false)
 
   const workflowList = useMemo(() => workflows ?? [], [workflows])
   // Filter options aggregate the current list's deploy targets (deduped and
@@ -168,6 +208,40 @@ function WorkflowList() {
     statusFilter,
     latestById,
   ])
+
+  const toggleRow = (id: number, checked: boolean) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (checked) next.add(id)
+      else next.delete(id)
+      return next
+    })
+
+  const toggleAllFiltered = (checked: boolean) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      for (const wf of filtered) {
+        if (checked) next.add(wf.id)
+        else next.delete(wf.id)
+      }
+      return next
+    })
+
+  const handleBatchExport = async () => {
+    const targets = filtered.filter((wf) => selectedIds.has(wf.id))
+    if (targets.length === 0) return
+    setBatchExporting(true)
+    try {
+      // Sequential on purpose: browsers collapse parallel download clicks.
+      for (const wf of targets) {
+        await exportWorkflow(wf.id)
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBatchExporting(false)
+    }
+  }
 
   const onTriggered = (run: TriggerRunResponse) => {
     if (runTarget) {
@@ -236,14 +310,58 @@ function WorkflowList() {
             </SelectContent>
           </Select>
         </div>
-        <Button onClick={() => navigate('/workflows/new')}>
-          ＋ {t('workflow.list.create')}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            disabled={batchExporting || selectedIds.size === 0}
+            onClick={() => void handleBatchExport()}
+          >
+            {t('workflow.list.batchExport')}
+          </Button>
+          {/* Import lands on the YAML-mode create editor: paste or pick the
+              exported .workflow.yaml file there. */}
+          <Button
+            variant="outline"
+            onClick={() => navigate('/workflows/new?yaml=1')}
+          >
+            {t('workflow.list.import')}
+          </Button>
+          <Button onClick={() => navigate('/workflows/new')}>
+            ＋ {t('workflow.list.create')}
+          </Button>
+        </div>
       </div>
 
       <ActionTable<WorkflowListItem>
         data={filtered}
         columns={[
+          {
+            id: 'select',
+            header: () => {
+              const allSelected =
+                filtered.length > 0 &&
+                filtered.every((wf) => selectedIds.has(wf.id))
+              const someSelected = filtered.some((wf) => selectedIds.has(wf.id))
+              return (
+                <Checkbox
+                  checked={allSelected || (someSelected && 'indeterminate')}
+                  onCheckedChange={(checked) =>
+                    toggleAllFiltered(checked === true)
+                  }
+                  aria-label={t('workflow.list.selectAll')}
+                />
+              )
+            },
+            cell: ({ row }) => (
+              <Checkbox
+                checked={selectedIds.has(row.original.id)}
+                onCheckedChange={(checked) =>
+                  toggleRow(row.original.id, checked === true)
+                }
+                aria-label={t('workflow.list.selectRow')}
+              />
+            ),
+          },
           {
             accessorKey: 'name',
             header: t('workflow.list.name'),
@@ -339,6 +457,12 @@ function WorkflowList() {
                 navigate(`/workflows/${wf.id}`),
             },
             {
+              label: t('workflow.list.export'),
+              onClick: (wf: WorkflowListItem) => {
+                if (exportingId === null) void handleExport(wf)
+              },
+            },
+            {
               label: t('common.actions.delete'),
               onClick: (wf: WorkflowListItem) => setDeleteTarget(wf),
             },
@@ -410,32 +534,6 @@ function WorkflowList() {
         </DialogContent>
       </Dialog>
     </div>
-  )
-}
-
-// Manual trigger needs the params schema, which the list API omits; the
-// dialog host loads the detail for the picked workflow.
-function RunParamsDialogHost({
-  id,
-  name,
-  onOpenChange,
-  onTriggered,
-}: {
-  id: number
-  name: string
-  onOpenChange: (open: boolean) => void
-  onTriggered: (run: TriggerRunResponse) => void
-}) {
-  const { data: workflow } = useWorkflow(id)
-  return (
-    <RunParamsDialog
-      id={id}
-      name={name}
-      params={workflow?.params ?? []}
-      open={workflow !== undefined}
-      onOpenChange={onOpenChange}
-      onTriggered={onTriggered}
-    />
   )
 }
 

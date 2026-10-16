@@ -105,6 +105,7 @@ const PARAM_PRESETS: {
     default: 'latest',
     descKey: 'workflow.params.presetImageTagDesc',
   },
+  { name: 'registry', descKey: 'workflow.params.presetRegistryDesc' },
 ]
 
 export function ParamsDialog({

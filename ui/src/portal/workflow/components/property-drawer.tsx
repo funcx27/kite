@@ -58,6 +58,14 @@ import { isValidNodeNodeId, nodeTypeAccent } from '../lib'
 import type { DAGSpec, ParamSpec, WorkflowNode } from '../types'
 import { TemplateInput } from './template-input'
 
+// Session-only deploy-target lock staged by the editor's application entry
+// (?fromApp): every deploy-app form shows the locked app/cluster values
+// grayed out instead of offering picks. Never part of the spec.
+export interface DeployTargetLock {
+  app: string
+  cluster?: string
+}
+
 export interface PropertyDrawerProps {
   node: WorkflowNode | null
   params: ParamSpec[]
@@ -65,6 +73,7 @@ export interface PropertyDrawerProps {
   nodes: WorkflowNode[]
   // Current editor edges: steps.* suggestions skip the node's DAG descendants.
   edges?: DAGSpec['edges']
+  lockedTarget?: DeployTargetLock
   onChange: (node: WorkflowNode) => void
   onDelete: () => void
 }
@@ -140,6 +149,7 @@ export function PropertyDrawer({
   params,
   nodes,
   edges,
+  lockedTarget,
   onChange,
   onDelete,
 }: PropertyDrawerProps) {
@@ -239,6 +249,7 @@ export function PropertyDrawer({
             patchProps={patchProps}
             patchNode={patchNode}
             onSelectApp={patchAppTarget}
+            lockedTarget={lockedTarget}
             templateVars={templateInputVars}
           />
         )}
@@ -689,9 +700,11 @@ function DeployPropsForm({
   patchProps,
   patchNode,
   onSelectApp,
+  lockedTarget,
   templateVars,
 }: PropsFormShared & {
   onSelectApp: (space: string, app: string) => void
+  lockedTarget?: DeployTargetLock
 }) {
   const { t } = useTranslation()
   const { clusters } = useCluster()
@@ -708,6 +721,12 @@ function DeployPropsForm({
   const savedSpace = readStringProp(node, 'space')
   const savedApp = readStringProp(node, 'app')
   const savedCluster = readStringProp(node, 'cluster')
+  // Session lock: the disabled controls only display the locked values —
+  // they never write back, so the lock stays out of the spec.
+  const lockedApp = lockedTarget?.app
+  const lockedCluster = lockedTarget?.cluster
+  const displayApp = lockedApp ?? savedApp
+  const displayCluster = lockedCluster ?? savedCluster
   // A node that never saved a space defaults to the workflow's (locked)
   // space, so picking an app immediately records the intended (space, app)
   // pair; a saved space always wins so legacy nodes keep deploying where
@@ -784,8 +803,8 @@ function DeployPropsForm({
     spaceQuotasFailed,
   ])
   const clusterEcho =
-    savedCluster && !clusterOptions.some((c) => c.name === savedCluster)
-      ? savedCluster
+    displayCluster && !clusterOptions.some((c) => c.name === displayCluster)
+      ? displayCluster
       : undefined
   const [advancedOpen, setAdvancedOpen] = useState(
     node.onFailure !== undefined ||
@@ -801,13 +820,18 @@ function DeployPropsForm({
       >
         <Input value={selectedSpace} disabled />
       </Field>
-      <Field label={t('workflow.props.app')}>
+      <Field
+        label={t('workflow.props.app')}
+        hint={
+          lockedApp !== undefined ? t('workflow.props.lockedHint') : undefined
+        }
+      >
         <AppCombobox
-          value={savedApp}
-          label={savedApp}
+          value={displayApp}
+          label={displayApp}
           options={options}
           echoValue={appEcho}
-          disabled={selectedSpace === ''}
+          disabled={lockedApp !== undefined || selectedSpace === ''}
           onSelect={(option) => onSelectApp(selectedSpace, option.value)}
           placeholder={
             selectedSpace === ''
@@ -821,8 +845,9 @@ function DeployPropsForm({
       </Field>
       <Field label={t('workflow.props.cluster')}>
         <Select
-          value={savedCluster}
+          value={displayCluster}
           onValueChange={(v) => patchProps('cluster', v)}
+          disabled={lockedCluster !== undefined}
         >
           <SelectTrigger className="w-full">
             <SelectValue placeholder={t('workflow.props.clusterPlaceholder')} />

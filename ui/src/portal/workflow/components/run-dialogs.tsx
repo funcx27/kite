@@ -33,6 +33,7 @@ import {
   fetchWebhookToken,
   resetWebhookToken,
   useTriggerRunMutation,
+  useWorkflow,
 } from '../api'
 import type { ParamSpec, TriggerRunResponse } from '../types'
 
@@ -188,6 +189,34 @@ export function RunParamsDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+// Dialog host for inline run triggers from list surfaces (workflow list,
+// application detail's related-workflows hub): the list API omits the params
+// schema, so the host loads the workflow detail first and opens once the
+// params are known.
+export function RunParamsDialogHost({
+  id,
+  name,
+  onOpenChange,
+  onTriggered,
+}: {
+  id: number
+  name: string
+  onOpenChange: (open: boolean) => void
+  onTriggered: (run: TriggerRunResponse) => void
+}) {
+  const { data: workflow } = useWorkflow(id)
+  return (
+    <RunParamsDialog
+      id={id}
+      name={name}
+      params={workflow?.params ?? []}
+      open={workflow !== undefined}
+      onOpenChange={onOpenChange}
+      onTriggered={onTriggered}
+    />
   )
 }
 

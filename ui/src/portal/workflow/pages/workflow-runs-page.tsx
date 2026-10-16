@@ -2,11 +2,12 @@
 // revision, trigger, operator, start time and duration; the run number links
 // to the run view.
 import { useTranslation } from 'react-i18next'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 
 import { formatDate } from '@/lib/utils'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { ActionTable } from '@/components/action-table'
 
 import { useRuns, useWorkflow } from '../api'
@@ -15,7 +16,17 @@ import { formatDuration } from '../lib'
 
 export function WorkflowRunsPage() {
   const { t } = useTranslation()
+  const navigate = useNavigate()
   const { id = '' } = useParams()
+  // ?returnTo=<app route> (application entry): the header shows a back
+  // control to the app. '/'-rooted only — a //host value would be a
+  // protocol-relative redirect.
+  const [searchParams] = useSearchParams()
+  const returnToRaw = searchParams.get('returnTo')
+  const returnTo =
+    returnToRaw?.startsWith('/') && !returnToRaw.startsWith('//')
+      ? returnToRaw
+      : null
   const workflowId = Number(id)
   const valid = Number.isInteger(workflowId) && workflowId > 0
   const { data: workflow } = useWorkflow(valid ? workflowId : undefined)
@@ -26,6 +37,13 @@ export function WorkflowRunsPage() {
 
   const runs = data?.runs ?? []
 
+  // Keep ?returnTo on run links so the run view keeps its back-to-app
+  // control.
+  const runHref = (runId: number) =>
+    returnTo
+      ? `/workflows/${id}/runs/${runId}?returnTo=${encodeURIComponent(returnTo)}`
+      : `/workflows/${id}/runs/${runId}`
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -33,10 +51,19 @@ export function WorkflowRunsPage() {
           <h1 className="text-2xl font-bold">
             {t('workflow.list.runsTitle', { name: displayName })}
           </h1>
-          <p className="text-sm text-muted-foreground">
+          <p className="flex items-center gap-2 text-sm text-muted-foreground">
             <Link to={`/workflows/${id}`} className="hover:underline">
               ← {displayName}
             </Link>
+            {returnTo && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => navigate(returnTo)}
+              >
+                ← {t('workflow.run.backToApp')}
+              </Button>
+            )}
           </p>
         </div>
       </div>
@@ -49,7 +76,7 @@ export function WorkflowRunsPage() {
             header: t('workflow.list.runCol'),
             cell: ({ row }) => (
               <Link
-                to={`/workflows/${id}/runs/${row.original.id}`}
+                to={runHref(row.original.id)}
                 className="font-mono font-medium hover:underline"
               >
                 #{row.original.runNumber}

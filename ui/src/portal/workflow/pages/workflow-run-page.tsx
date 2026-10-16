@@ -3,14 +3,20 @@
 // with auto reconnect), inline approval actions with comment, cancel/retry,
 // and a run-level event feed from the same stream.
 import { useMemo, useState } from 'react'
+import { IconChevronRight } from '@tabler/icons-react'
 import { useTranslation } from 'react-i18next'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import { formatDate } from '@/lib/utils'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
 import {
   Select,
@@ -52,6 +58,24 @@ export function WorkflowRunPage() {
   const runIdNumber = Number(runId)
   const navigate = useNavigate()
   const { t } = useTranslation()
+  // ?returnTo=<app route> (application entry): the header shows a back
+  // control to the app. '/'-rooted only — a //host value would be a
+  // protocol-relative redirect.
+  const [searchParams] = useSearchParams()
+  const returnToRaw = searchParams.get('returnTo')
+  const returnTo =
+    returnToRaw?.startsWith('/') && !returnToRaw.startsWith('//')
+      ? returnToRaw
+      : null
+  // Secondary hops keep ?returnTo so the runs list and a sibling run view
+  // still show the back-to-app control.
+  const runsHref = returnTo
+    ? `/workflows/${id}/runs?returnTo=${encodeURIComponent(returnTo)}`
+    : `/workflows/${id}/runs`
+  const runHref = (runId: number | string) =>
+    returnTo
+      ? `/workflows/${id}/runs/${runId}?returnTo=${encodeURIComponent(returnTo)}`
+      : `/workflows/${id}/runs/${runId}`
   const invalidate = useInvalidateWorkflow()
   const {
     data: run,
@@ -172,10 +196,16 @@ export function WorkflowRunPage() {
     <div className="flex h-[calc(100dvh-11rem)] flex-col gap-3">
       {/* Run header */}
       <div className="flex flex-wrap items-center gap-2.5">
-        <Link
-          to={`/workflows/${id}/runs`}
-          className="text-sm font-semibold hover:underline"
-        >
+        {returnTo && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => navigate(returnTo)}
+          >
+            ← {t('workflow.run.backToApp')}
+          </Button>
+        )}
+        <Link to={runsHref} className="text-sm font-semibold hover:underline">
           {run.workflow}
         </Link>
         <RunStatusChip
@@ -185,9 +215,7 @@ export function WorkflowRunPage() {
         {siblingRuns.length > 0 ? (
           <Select
             value={String(run.id)}
-            onValueChange={(value) =>
-              navigate(`/workflows/${id}/runs/${value}`)
-            }
+            onValueChange={(value) => navigate(runHref(value))}
           >
             <SelectTrigger
               className="h-7 w-36 font-mono text-xs"
@@ -497,8 +525,8 @@ function ApprovalCard({
   )
 }
 
-// Node summary between drawer header and logs: error and outputs (inputs are
-// the rendered props — useful when a template misfired).
+// Node summary between drawer header and logs: error, outputs and inputs
+// (inputs are the rendered props — useful when a template misfired).
 function NodeMeta({ node }: { node: RunNodeView }) {
   const { t } = useTranslation()
   return (
@@ -518,6 +546,19 @@ function NodeMeta({ node }: { node: RunNodeView }) {
             {JSON.stringify(node.outputs)}
           </code>
         </div>
+      )}
+      {node.inputs && Object.keys(node.inputs).length > 0 && (
+        <Collapsible className="group rounded-md border text-xs">
+          <CollapsibleTrigger className="flex w-full items-center gap-1.5 rounded-t-md px-3 py-2 text-left font-medium text-muted-foreground transition-colors hover:bg-muted/70">
+            <IconChevronRight className="h-3.5 w-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
+            {t('workflow.run.inputs')}
+          </CollapsibleTrigger>
+          <CollapsibleContent className="max-h-64 overflow-y-auto border-t px-3 py-2">
+            <pre className="break-all whitespace-pre-wrap font-mono">
+              {JSON.stringify(node.inputs, null, 2)}
+            </pre>
+          </CollapsibleContent>
+        </Collapsible>
       )}
     </div>
   )
