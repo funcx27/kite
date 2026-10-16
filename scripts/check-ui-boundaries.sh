@@ -30,7 +30,7 @@ SHARED_OK='^components/ui(/|$)|^components/(account-settings-dialog|action-table
 
 # Keep in sync with CROSS_MODULE_WHITELIST in ui/eslint-boundaries.js; the
 # reasons for each entry are documented there.
-CROSS_MODULE_OK_application='^portal/workflow/api$|^portal/workflow/components/(build-providers-management|build-runtime-settings|credentials-management|space-build-settings)$|^portal/kcross/kcross-management$'
+CROSS_MODULE_OK_application='^portal/workflow/api$|^portal/workflow/types$|^portal/workflow/components/(build-providers-management|build-runtime-settings|credentials-management|run-dialogs|space-build-settings|status-chip)$|^portal/kcross/kcross-management$'
 CROSS_MODULE_OK_workflow='^portal/application/api$|^portal/application/components/brand-icons$'
 CROSS_MODULE_OK_buildfleet=''
 CROSS_MODULE_OK_kcross=''

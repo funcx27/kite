@@ -6,6 +6,7 @@ import {
   useApplications,
 } from '@/portal/application/api'
 import { ApplicationWizard } from '@/portal/application/components/application-wizard'
+import { ImportDialog } from '@/portal/application/components/import-dialog'
 import {
   ApplicationConfigStatus,
   StatusDotGlyph,
@@ -26,6 +27,7 @@ import {
   Search,
   Server,
   Trash2,
+  Upload,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate } from 'react-router-dom'
@@ -78,6 +80,7 @@ export function ApplicationListPage() {
   const [clusterFilters, setClusterFilters] = useState<string[]>([])
   const [refreshing, setRefreshing] = useState(false)
   const [wizardOpen, setWizardOpen] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<Application | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [describeTarget, setDescribeTarget] = useState<Application | null>(null)
@@ -320,12 +323,22 @@ export function ApplicationListPage() {
             >
               {t('applications.list.refreshStatus')}
             </Button>
-            {/* 创建绑定当前空间：全部空间视图（currentSpace=null）不显示入口，
-                先在侧边栏/页头选择或创建空间 */}
+            {/* 创建/导入绑定当前空间：全部空间视图（currentSpace=null）不显示
+                入口，先在侧边栏/页头选择或创建空间 */}
             {currentSpace && (
-              <Button onClick={() => setWizardOpen(true)}>
-                ＋ {t('applications.list.create')}
-              </Button>
+              <>
+                <Button
+                  variant="outline"
+                  onClick={() => setImportOpen(true)}
+                  title={t('applications.list.importHint')}
+                >
+                  <Upload className="h-3.5 w-3.5" />
+                  {t('applications.list.import')}
+                </Button>
+                <Button onClick={() => setWizardOpen(true)}>
+                  ＋ {t('applications.list.create')}
+                </Button>
+              </>
             )}
           </div>
         </div>
@@ -413,6 +426,8 @@ export function ApplicationListPage() {
           navigate(`/applications/${app.namespace}/${app.name}`)
         }}
       />
+
+      <ImportDialog open={importOpen} onOpenChange={setImportOpen} />
 
       <Dialog
         open={deleteTarget !== null}

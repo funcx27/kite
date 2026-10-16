@@ -56,6 +56,9 @@ const MODULE_IMPORT_PATTERNS = ['@/portal', '@/portal/**']
 //     and space quotas
 //   - the application settings page composes the workflow build/credential
 //     settings sections and the kcross management section
+//   - the application detail page's related-workflows hub renders workflow
+//     rows (WorkflowListItem) with the latest run's status chip and triggers
+//     inline runs (RunParamsDialog)
 //   - workflow settings reuse the application brand icons (DockerIcon,
 //     GitIcon); a move into @/portal/components would remove this entry
 const PORTAL_MODULES = ['application', 'workflow', 'buildfleet', 'kcross']
@@ -65,7 +68,10 @@ const CROSS_MODULE_WHITELIST = {
     '@/portal/workflow/components/build-providers-management',
     '@/portal/workflow/components/build-runtime-settings',
     '@/portal/workflow/components/credentials-management',
+    '@/portal/workflow/components/run-dialogs',
     '@/portal/workflow/components/space-build-settings',
+    '@/portal/workflow/components/status-chip',
+    '@/portal/workflow/types',
     '@/portal/kcross/kcross-management',
   ],
   workflow: [

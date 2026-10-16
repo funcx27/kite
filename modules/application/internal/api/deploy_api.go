@@ -181,25 +181,36 @@ func (h *Handler) bindDeployRequest(c *gin.Context, req *deployRequest) bool {
 // under the same optimistic rev check — but never touches the cluster, so the
 // config lands in the pending state (含待发布修改) until a later publish pushes
 // it. The pull credential does not ride a save: the managed secret only
-// upserts with a publish.
+// upserts with a publish. A missing config enters create mode: the base set
+// (the request's manifests or the rendered draft) becomes the row and its
+// rev1 — the app import's save-only path — still without resolving the
+// cluster.
 func (h *Handler) saveOnlyConfig(c *gin.Context, app *store.App, id identity, cluster string, req *deployRequest) {
 	if req.CopyFrom != "" {
 		h.fail(c, http.StatusBadRequest, nil, "copyFrom is only valid when the config does not exist yet")
 		return
 	}
+	req.CredentialRef = nil
 	cfg, err := h.findConfig(app.ID, cluster)
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		h.fail(c, http.StatusNotFound, nil, "config not found for cluster "+cluster)
+	switch {
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		if !h.authorize(c, "create", cluster, app.Namespace) {
+			return
+		}
+		// The row was born in this request, so its first revision is rev1
+		// (AppendRevisionTx numbers from 0) and no expectedRev can apply.
+		if _, ok := h.createDeployTarget(c, app, id, cluster, req); !ok {
+			return
+		}
+		c.JSON(http.StatusOK, deployResponse{Success: true, SaveOnly: true, Results: []deployDocResult{}, LatestRev: 1})
 		return
-	}
-	if err != nil {
+	case err != nil:
 		h.fail(c, http.StatusInternalServerError, err, "")
 		return
 	}
 	if !h.authorize(c, "update", cfg.Cluster, cfg.Namespace) {
 		return
 	}
-	req.CredentialRef = nil
 	_, latestRev, ok := h.deployManifests(c, id, app, cfg, *req)
 	if !ok {
 		return
@@ -308,10 +319,11 @@ func (h *Handler) stageCreateTarget(c *gin.Context, app *store.App, cluster stri
 }
 
 // encodeCreateBase builds and encodes the create-mode base set: a copyFrom
-// deep copy or the Render(App.Spec) draft, with the requested pull credential
-// reference injected; source is the revision source for the first snapshot.
+// deep copy, the request's own manifests, or the Render(App.Spec) draft, with
+// the requested pull credential reference injected; source is the revision
+// source for the first snapshot.
 func (h *Handler) encodeCreateBase(c *gin.Context, app *store.App, req *deployRequest) ([]byte, string, bool) {
-	docs, err := h.baseConfigDocs(app, req.CopyFrom)
+	docs, err := h.baseConfigDocs(app, req)
 	switch {
 	case err == nil:
 	case errors.Is(err, gorm.ErrRecordNotFound):
@@ -326,8 +338,11 @@ func (h *Handler) encodeCreateBase(c *gin.Context, app *store.App, req *deployRe
 		return nil, "", false
 	}
 	source := store.RevSourceRender
-	if req.CopyFrom != "" {
+	switch {
+	case req.CopyFrom != "":
 		source = store.RevSourceCopy
+	case req.Manifests != nil:
+		source = store.RevSourceYAML
 	}
 	render.InjectPullSecret(docs, pullSecretName(req.credentialRefValue()))
 	data, err := store.EncodeManifests(docs)
@@ -340,17 +355,22 @@ func (h *Handler) encodeCreateBase(c *gin.Context, app *store.App, req *deployRe
 
 // baseConfigDocs builds a new config's initial manifest set: a deep copy of
 // the copyFrom cluster's stored manifests (secret bytes ride the stored value,
-// never the client), or the render of the app's draft spec. A missing copyFrom
-// config reports gorm.ErrRecordNotFound.
-func (h *Handler) baseConfigDocs(app *store.App, copyFrom string) ([]unstructured.Unstructured, error) {
-	if copyFrom == "" {
-		return renderAppSpec(app)
+// never the client), the request's own manifests when it carries them (app
+// import seeds a draft-only app whose spec has nothing to render), or the
+// render of the app's draft spec. A missing copyFrom config reports
+// gorm.ErrRecordNotFound.
+func (h *Handler) baseConfigDocs(app *store.App, req *deployRequest) ([]unstructured.Unstructured, error) {
+	if req.CopyFrom != "" {
+		src, err := h.findConfig(app.ID, req.CopyFrom)
+		if err != nil {
+			return nil, err
+		}
+		return store.DecodeManifests(src.Manifests)
 	}
-	src, err := h.findConfig(app.ID, copyFrom)
-	if err != nil {
-		return nil, err
+	if req.Manifests != nil {
+		return store.DecodeManifests(req.Manifests)
 	}
-	return store.DecodeManifests(src.Manifests)
+	return renderAppSpec(app)
 }
 
 // createConfigRow runs createConfigTx on its own transaction and records the

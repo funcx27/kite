@@ -1,5 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
-import { useApplication, useApplicationConfig } from '@/portal/application/api'
+import { Fragment, useEffect, useMemo, useState } from 'react'
+import {
+  fetchApplicationConfig,
+  useApplication,
+  useApplicationConfig,
+} from '@/portal/application/api'
 import {
   ApplicationWizard,
   type ApplicationWizardMode,
@@ -15,12 +19,41 @@ import type {
   ApplicationConfigSummary,
   ApplicationPendingChange,
 } from '@/portal/application/types'
-import { useWorkflows } from '@/portal/workflow/api'
+import { downloadTextFile } from '@/portal/components/download'
+import {
+  useInvalidateWorkflow,
+  useRun,
+  useRunActionMutation,
+  useRuns,
+  useWorkflows,
+} from '@/portal/workflow/api'
+import { RunParamsDialogHost } from '@/portal/workflow/components/run-dialogs'
+import { RunStatusChip } from '@/portal/workflow/components/status-chip'
+import type {
+  DAGSpec,
+  NodeRunStatus,
+  WorkflowListItem,
+  WorkflowNode,
+} from '@/portal/workflow/types'
 import * as yaml from 'js-yaml'
-import { Pencil, Plus } from 'lucide-react'
+import {
+  AlertTriangle,
+  Check,
+  ChevronRight,
+  CircleDashed,
+  Download,
+  Loader2,
+  Pencil,
+  Play,
+  Plus,
+  RotateCcw,
+  X,
+} from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
+import { toast } from 'sonner'
 
+import { formatDate, translateError } from '@/lib/utils'
 import { useCluster } from '@/hooks/use-cluster'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { Button } from '@/components/ui/button'
@@ -45,6 +78,7 @@ export function ApplicationDetailPage() {
     cluster: string
   }>()
   const navigate = useNavigate()
+  const location = useLocation()
   const { currentCluster } = useCluster()
   const { data: app, isLoading, error } = useApplication(space, name)
   usePageTitle(app ? `${app.namespace} / ${app.name}` : t('nav.applications'))
@@ -83,6 +117,33 @@ export function ApplicationDetailPage() {
 
   const undeployed = configs.length === 0
 
+  const [exporting, setExporting] = useState(false)
+  // The stored manifests of the active cluster tab as a multi-document YAML
+  // file. The API view is already server-side redacted, so "***" secret
+  // markers are what lands in the file.
+  const exportConfig = async () => {
+    if (!app || !current) return
+    setExporting(true)
+    try {
+      const config = await fetchApplicationConfig(
+        app.namespace,
+        app.name,
+        current.cluster
+      )
+      downloadTextFile(
+        `${app.namespace}-${app.name}-${current.cluster}.yaml`,
+        // js-yaml has no dumpAll; join per-document dumps with the
+        // multi-document separator (same shape the backend writes).
+        config.manifests.map((doc) => yaml.dump(doc)).join('---\n'),
+        'text/yaml'
+      )
+    } catch (err) {
+      toast.error(translateError(err, t))
+    } finally {
+      setExporting(false)
+    }
+  }
+
   const openWizardForEdit = () => {
     setWizardMode('cluster')
     setOpenDialog('wizard')
@@ -120,29 +181,55 @@ export function ApplicationDetailPage() {
           <span className="text-sm text-muted-foreground">
             {app.description || '—'}
           </span>
+          <div className="ml-auto flex items-center gap-2 self-center">
+            <span className="text-xs text-muted-foreground/70">
+              {t('applications.detail.exportMaskedHint')}
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={undeployed || !current || exporting}
+              title={t('applications.detail.exportMaskedHint')}
+              onClick={() => void exportConfig()}
+            >
+              <Download className="h-3.5 w-3.5" />
+              {t('applications.detail.export')}
+            </Button>
+          </div>
         </div>
       </div>
 
+      {/* The app's pipeline hub sits under the cluster tabs (above the tab
+          content); the undeployed empty state keeps it after the basic info.
+          returnTo pins the current app route so the workflow pages can bounce
+          the user back here. */}
       {undeployed ? (
-        <div className="flex flex-col items-center gap-2 rounded-xl border bg-card px-6 py-16 text-center">
-          <ApplicationStatusChip status="undeployed" />
-          <div className="text-sm text-muted-foreground">
-            {t('applications.detail.undeployedTitle')}
+        <>
+          <RelatedWorkflows
+            app={app}
+            cluster={current?.cluster ?? currentCluster}
+            returnTo={`${location.pathname}${location.search}`}
+          />
+          <div className="flex flex-col items-center gap-2 rounded-xl border bg-card px-6 py-16 text-center">
+            <ApplicationStatusChip status="undeployed" />
+            <div className="text-sm text-muted-foreground">
+              {t('applications.detail.undeployedTitle')}
+            </div>
+            <div className="text-xs text-muted-foreground/70">
+              {t('applications.detail.undeployedHint')}
+            </div>
+            <Button
+              size="sm"
+              className="mt-2"
+              onClick={() => {
+                setCopySource(null)
+                setOpenDialog('deploy')
+              }}
+            >
+              {t('applications.detail.firstPublish')}
+            </Button>
           </div>
-          <div className="text-xs text-muted-foreground/70">
-            {t('applications.detail.undeployedHint')}
-          </div>
-          <Button
-            size="sm"
-            className="mt-2"
-            onClick={() => {
-              setCopySource(null)
-              setOpenDialog('deploy')
-            }}
-          >
-            {t('applications.detail.firstPublish')}
-          </Button>
-        </div>
+        </>
       ) : (
         <>
           {configs.length > 0 && (
@@ -156,6 +243,11 @@ export function ApplicationDetailPage() {
               </TabsList>
             </Tabs>
           )}
+          <RelatedWorkflows
+            app={app}
+            cluster={current?.cluster ?? currentCluster}
+            returnTo={`${location.pathname}${location.search}`}
+          />
           {current &&
             (current.spaceUnlinked ? (
               <UnlinkedClusterPanel
@@ -186,11 +278,6 @@ export function ApplicationDetailPage() {
             ))}
         </>
       )}
-
-      <RelatedWorkflows
-        app={app}
-        cluster={current?.cluster ?? currentCluster}
-      />
 
       {current && (
         <>
@@ -343,19 +430,23 @@ function UnlinkedClusterPanel({
 
 // Related workflows: workflows whose deploy-app nodes target this app
 // (aggregated server-side into WorkflowListItem.apps as "space/name"
-// composites). Deliberately light — the name links into the runs list (the
-// primary question is "how is this app's pipeline doing"), the editor is an
-// icon action, no run data fetched.
+// composites) — the app page's pipeline hub: trigger a run inline, jump to
+// the runs list or the editor, and see the latest run at each row's tail.
+// Cross-page links carry fromApp/fromSpace/cluster/returnTo so the target
+// page can send the user back to this app.
 function RelatedWorkflows({
   app,
   cluster,
+  returnTo,
 }: {
   app: Application
   cluster?: string | null
+  returnTo: string
 }) {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const { data: workflows, isLoading } = useWorkflows()
+  const [runTarget, setRunTarget] = useState<WorkflowListItem | null>(null)
   const related = useMemo(
     () =>
       (workflows ?? []).filter(
@@ -370,14 +461,22 @@ function RelatedWorkflows({
     [workflows, app.namespace, app.name, cluster]
   )
 
-  const createWorkflow = () => {
+  // Shared query params for every workflow-page hop from this app.
+  const workflowParams = () => {
     const params = new URLSearchParams({
       fromApp: app.name,
       fromSpace: app.namespace,
+      returnTo,
     })
     if (cluster) params.set('cluster', cluster)
-    navigate(`/workflows/new?${params.toString()}`)
+    return params
   }
+  const paramsQuery = workflowParams().toString()
+
+  const createWorkflow = () => navigate(`/workflows/new?${paramsQuery}`)
+
+  const editWorkflow = (wf: WorkflowListItem) =>
+    navigate(`/workflows/${wf.id}?${paramsQuery}`)
 
   return (
     <section className="rounded-xl border bg-card">
@@ -407,37 +506,258 @@ function RelatedWorkflows({
       ) : (
         <ul className="divide-y px-4 py-1">
           {related.map((wf) => (
-            <li
+            <RelatedWorkflowRow
               key={wf.id}
-              className="flex items-center justify-between gap-3 py-2"
-            >
-              <div className="min-w-0">
-                <Link
-                  to={`/workflows/${wf.id}/runs`}
-                  className="font-mono text-sm font-medium hover:underline"
-                >
-                  {wf.name}
-                </Link>
-                {wf.description && (
-                  <span className="ml-2 truncate text-xs text-muted-foreground">
-                    {wf.description}
-                  </span>
-                )}
-              </div>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7"
-                aria-label={t('common.actions.edit')}
-                title={t('common.actions.edit')}
-                onClick={() => navigate(`/workflows/${wf.id}`)}
-              >
-                <Pencil className="h-3.5 w-3.5" />
-              </Button>
-            </li>
+              wf={wf}
+              paramsQuery={paramsQuery}
+              onRun={() => setRunTarget(wf)}
+              onEdit={() => editWorkflow(wf)}
+            />
           ))}
         </ul>
       )}
+      {runTarget && (
+        <RunParamsDialogHost
+          id={runTarget.id}
+          name={runTarget.name}
+          onOpenChange={(open) => {
+            if (!open) setRunTarget(null)
+          }}
+          onTriggered={() => setRunTarget(null)}
+        />
+      )}
     </section>
   )
+}
+
+// One related-workflow row: the name links into the runs list with the same
+// fromApp/fromSpace/cluster/returnTo params as the edit link; the tail shows
+// the latest run's status chip and finish time. A latest run that has not
+// reached a succeeded terminal state expands the node step bar under the
+// name (only those rows fetch the run detail); succeeded rows keep the chip.
+function RelatedWorkflowRow({
+  wf,
+  paramsQuery,
+  onRun,
+  onEdit,
+}: {
+  wf: WorkflowListItem
+  paramsQuery: string
+  onRun: () => void
+  onEdit: () => void
+}) {
+  const { t } = useTranslation()
+  const { data } = useRuns(wf.id, 1)
+  const latest = data?.runs[0]
+  return (
+    <li className="py-2">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <Link
+            to={`/workflows/${wf.id}/runs?${paramsQuery}`}
+            className="font-mono text-sm font-medium hover:underline"
+          >
+            {wf.name}
+          </Link>
+          {wf.description && (
+            <span className="ml-2 truncate text-xs text-muted-foreground">
+              {wf.description}
+            </span>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {latest && (
+            <span className="mr-1 flex items-center gap-1.5">
+              <RunStatusChip
+                status={latest.status}
+                failedNodes={latest.failedNodes}
+              />
+              <span className="text-xs text-muted-foreground">
+                {latest.finishedAt ? formatDate(latest.finishedAt) : '—'}
+              </span>
+            </span>
+          )}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            aria-label={t('workflow.list.run')}
+            title={t('workflow.list.run')}
+            onClick={onRun}
+          >
+            <Play className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            aria-label={t('common.actions.edit')}
+            title={t('common.actions.edit')}
+            onClick={onEdit}
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </div>
+      {latest && latest.status !== 'succeeded' && (
+        <RunProgressPreview runId={latest.id} />
+      )}
+    </li>
+  )
+}
+
+// Run progress preview for a non-succeeded latest run: the run graph's nodes
+// in topological order, each as name + status icon. Retry posts the existing
+// /runs/:id/retry mutation and lets its query invalidation refresh the bar
+// (useInvalidateWorkflow also covers the runs list so the tail chip follows).
+function RunProgressPreview({ runId }: { runId: number }) {
+  const { t } = useTranslation()
+  const invalidate = useInvalidateWorkflow()
+  const { data: run } = useRun(runId)
+  const { retry } = useRunActionMutation()
+  if (!run) return null
+  const statusByNode = new Map(run.nodes.map((n) => [n.nodeId, n.status]))
+  // Same gate as the engine (modules/workflow/internal/engine/actions.go):
+  // only failed/cancelled runs accept a retry.
+  const retryable = run.status === 'failed' || run.status === 'cancelled'
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-x-1 gap-y-1">
+      {topoOrder(run.graph).map((node, index) => (
+        <Fragment key={node.id}>
+          {index > 0 && (
+            <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground/40" />
+          )}
+          <RunStepNode
+            node={node}
+            status={statusByNode.get(node.id)}
+            retryable={retryable}
+            retrying={retry.isPending}
+            onRetry={() =>
+              retry.mutate(run.id, {
+                onSuccess: () => {
+                  invalidate()
+                  toast.success(t('workflow.run.retryConfirmed'))
+                },
+                onError: (err) => toast.error(err.message),
+              })
+            }
+          />
+        </Fragment>
+      ))}
+    </div>
+  )
+}
+
+// One step: node name plus a status icon. A continue-semantics failure
+// (notify nodes are forced continue) does not block the run, so it paints as
+// a warning instead of an error — the node-level class behind the run-level
+// "succeeded (warnings)" badge. The retry icon mirrors the run page's gate:
+// disabled unless the engine would accept the retry.
+function RunStepNode({
+  node,
+  status,
+  retryable,
+  retrying,
+  onRetry,
+}: {
+  node: WorkflowNode
+  status: NodeRunStatus | undefined
+  retryable: boolean
+  retrying: boolean
+  onRetry: () => void
+}) {
+  const { t } = useTranslation()
+  const warning =
+    status === 'failed' &&
+    (node.type === 'notify' || node.onFailure === 'continue')
+  return (
+    <span
+      className="flex items-center gap-1 text-xs"
+      title={status ? t(`workflow.statuses.${status}`) : undefined}
+    >
+      <StepStatusIcon status={status} warning={warning} />
+      <span className="max-w-40 truncate">
+        {warning
+          ? t('applications.detail.runNodeWithWarnings', {
+              name: node.name || node.id,
+            })
+          : node.name || node.id}
+      </span>
+      {status === 'failed' && !warning && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-5 w-5"
+          aria-label={t('workflow.run.retry')}
+          title={
+            retryable
+              ? t('workflow.run.retry')
+              : t('workflow.run.retryDisabledHint')
+          }
+          disabled={!retryable || retrying}
+          onClick={onRetry}
+        >
+          <RotateCcw className="h-3 w-3" />
+        </Button>
+      )}
+    </span>
+  )
+}
+
+// Status icon of one step; statuses not reached in a non-succeeded run
+// (pending/skipped/cancelled/interrupted) render as the not-reached circle.
+function StepStatusIcon({
+  status,
+  warning,
+}: {
+  status: NodeRunStatus | undefined
+  warning: boolean
+}) {
+  if (status === 'succeeded')
+    return <Check className="h-3.5 w-3.5 shrink-0 text-green-500" />
+  if (status === 'running')
+    return (
+      <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-blue-500" />
+    )
+  if (status === 'failed') {
+    return warning ? (
+      <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+    ) : (
+      <X className="h-3.5 w-3.5 shrink-0 text-red-500" />
+    )
+  }
+  return <CircleDashed className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+}
+
+// Topological order of the run graph (Kahn); ties keep definition order so
+// the bar renders stably. The server validates acyclicity; any leftovers
+// (defensive) append in definition order.
+function topoOrder(graph: DAGSpec): WorkflowNode[] {
+  const indegree = new Map<string, number>(graph.nodes.map((n) => [n.id, 0]))
+  const successors: Record<string, string[]> = {}
+  for (const edge of graph.edges) {
+    if (!indegree.has(edge.from) || !indegree.has(edge.to)) continue
+    indegree.set(edge.to, (indegree.get(edge.to) ?? 0) + 1)
+    successors[edge.from] = [...(successors[edge.from] ?? []), edge.to]
+  }
+  const byId = new Map(graph.nodes.map((n) => [n.id, n]))
+  const queue = graph.nodes
+    .filter((n) => indegree.get(n.id) === 0)
+    .map((n) => n.id)
+  const ordered: WorkflowNode[] = []
+  while (queue.length > 0) {
+    const id = queue.shift() as string
+    const node = byId.get(id)
+    if (node) ordered.push(node)
+    for (const successor of successors[id] ?? []) {
+      const remaining = (indegree.get(successor) ?? 0) - 1
+      indegree.set(successor, remaining)
+      if (remaining === 0) queue.push(successor)
+    }
+  }
+  if (ordered.length < graph.nodes.length) {
+    const seen = new Set(ordered.map((n) => n.id))
+    ordered.push(...graph.nodes.filter((n) => !seen.has(n.id)))
+  }
+  return ordered
 }

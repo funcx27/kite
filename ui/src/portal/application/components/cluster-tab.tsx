@@ -20,9 +20,14 @@ import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 
-import { formatBytes, formatDate, translateError } from '@/lib/utils'
+import { cn, formatBytes, formatDate, translateError } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
 import {
   Dialog,
   DialogContent,
@@ -210,6 +215,9 @@ export function ClusterTab({
   // Resolve writes a revision, so the apply button routes through a confirm
   // dialog that spells out the side split before committing.
   const [confirmApply, setConfirmApply] = useState(false)
+  // Warning events are high-noise: folded by default, the count on the
+  // trigger header keeps the signal visible.
+  const [eventsOpen, setEventsOpen] = useState(false)
 
   useEffect(() => () => window.clearTimeout(confirmTimer.current), [])
 
@@ -753,47 +761,61 @@ export function ClusterTab({
             )}
           </div>
 
-          {/* Warning events */}
-          <div className="overflow-hidden rounded-xl border bg-card">
-            <div className="border-b px-5 py-3 text-sm font-semibold">
+          {/* Warning events: folded by default (count stays on the trigger) */}
+          <Collapsible
+            open={eventsOpen}
+            onOpenChange={setEventsOpen}
+            className="overflow-hidden rounded-xl border bg-card"
+          >
+            <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 px-5 py-3 text-left text-sm font-semibold">
               {t('applications.detail.events', {
                 count: runtime?.events?.items.length ?? 0,
               })}
-            </div>
-            <div className="divide-y">
-              {(runtime?.events?.items ?? []).map((event, index) => (
-                <div
-                  key={index}
-                  className="flex items-center gap-3 px-5 py-2.5 text-sm"
-                >
-                  <Badge variant="destructive" className="shrink-0">
-                    Warning
-                  </Badge>
-                  <span className="font-mono text-xs text-muted-foreground">
-                    {event.reason || '—'}
-                  </span>
-                  <span className="text-muted-foreground">
-                    {event.message || '—'}
-                  </span>
-                  <span className="ml-auto shrink-0 text-xs text-muted-foreground">
-                    {event.count
-                      ? t('applications.detail.eventCount', {
-                          count: event.count,
-                        })
-                      : ''}{' '}
-                    {event.lastTimestamp ? formatDate(event.lastTimestamp) : ''}
-                  </span>
-                </div>
-              ))}
-              {(runtime?.events?.items.length ?? 0) === 0 && (
-                <div className="px-5 py-6 text-center text-sm text-muted-foreground">
-                  {runtime?.events?.unauthorized
-                    ? t('applications.detail.unauthorized')
-                    : t('applications.detail.noEvents')}
-                </div>
-              )}
-            </div>
-          </div>
+              <ChevronRight
+                className={cn(
+                  'h-4 w-4 shrink-0 text-muted-foreground transition-transform',
+                  eventsOpen && 'rotate-90'
+                )}
+              />
+            </CollapsibleTrigger>
+            <CollapsibleContent className="border-t">
+              <div className="divide-y">
+                {(runtime?.events?.items ?? []).map((event, index) => (
+                  <div
+                    key={index}
+                    className="flex items-center gap-3 px-5 py-2.5 text-sm"
+                  >
+                    <Badge variant="destructive" className="shrink-0">
+                      Warning
+                    </Badge>
+                    <span className="font-mono text-xs text-muted-foreground">
+                      {event.reason || '—'}
+                    </span>
+                    <span className="text-muted-foreground">
+                      {event.message || '—'}
+                    </span>
+                    <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                      {event.count
+                        ? t('applications.detail.eventCount', {
+                            count: event.count,
+                          })
+                        : ''}{' '}
+                      {event.lastTimestamp
+                        ? formatDate(event.lastTimestamp)
+                        : ''}
+                    </span>
+                  </div>
+                ))}
+                {(runtime?.events?.items.length ?? 0) === 0 && (
+                  <div className="px-5 py-6 text-center text-sm text-muted-foreground">
+                    {runtime?.events?.unauthorized
+                      ? t('applications.detail.unauthorized')
+                      : t('applications.detail.noEvents')}
+                  </div>
+                )}
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
         </>
       )}
 
