@@ -17,7 +17,7 @@ import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { Textarea } from '@/components/ui/textarea'
 
 import { buildTemplateRefs } from '../lib'
-import type { ParamSpec, WorkflowNode } from '../types'
+import type { DAGSpec, ParamSpec, WorkflowNode } from '../types'
 
 export interface TemplateInputProps {
   value: string
@@ -28,6 +28,8 @@ export interface TemplateInputProps {
   currentNodeId?: string
   // Offers the git.* refs (build-image nodes with a git source only).
   gitScope?: boolean
+  // Editor edges: steps.* suggestions skip the node's DAG descendants.
+  edges?: DAGSpec['edges']
   multiline?: boolean
   placeholder?: string
   rows?: number
@@ -51,6 +53,7 @@ export function TemplateInput({
   nodes,
   currentNodeId,
   gitScope,
+  edges,
   multiline = false,
   placeholder,
   rows,
@@ -65,8 +68,8 @@ export function TemplateInput({
   const [trigger, setTrigger] = useState<TriggerSpan | null>(null)
 
   const refs = useMemo(
-    () => buildTemplateRefs(params, nodes, currentNodeId, gitScope),
-    [params, nodes, currentNodeId, gitScope]
+    () => buildTemplateRefs(params, nodes, currentNodeId, gitScope, edges),
+    [params, nodes, currentNodeId, gitScope, edges]
   )
   const groups = useMemo(() => {
     const pick = (prefix: string) => refs.filter((r) => r.startsWith(prefix))

@@ -205,23 +205,38 @@ export const outputKeysByType: Record<WorkflowNodeType, string[]> = {
   notify: ['delivered'],
 }
 
-// Template refs offered on a node's fields (autocomplete options and drawer
-// chips): the workflow params, the run fields and the outputs of every other
-// node. gitScope adds the git.* refs — only valid on a build-image node with
-// a git source, so the caller gates it.
+// Template refs offered on a node's fields (autocomplete options): the
+// workflow params, the run fields and the outputs of the nodes that can
+// finish before it runs — itself and its DAG descendants excluded, since the
+// runtime only resolves steps.* against already-succeeded nodes.
 export function buildTemplateRefs(
   params: ParamSpec[],
   nodes: WorkflowNode[],
   currentNodeId?: string,
-  gitScope?: boolean
+  gitScope?: boolean,
+  edges: DAGSpec['edges'] = []
 ): string[] {
   const refs = params.map((p) => `params.${p.name}`)
   if (gitScope) {
     refs.push('git.commit', 'git.shortCommit')
   }
   refs.push('run.number', 'run.status', 'run.url')
+  const unreachable = new Set<string>()
+  if (currentNodeId) {
+    unreachable.add(currentNodeId)
+    const queue = [currentNodeId]
+    while (queue.length > 0) {
+      const cur = queue.shift() as string
+      for (const e of edges) {
+        if (e.from === cur && !unreachable.has(e.to)) {
+          unreachable.add(e.to)
+          queue.push(e.to)
+        }
+      }
+    }
+  }
   for (const other of nodes) {
-    if (other.id === currentNodeId) continue
+    if (unreachable.has(other.id)) continue
     for (const key of outputKeysByType[other.type] ?? []) {
       refs.push(`steps.${other.id}.outputs.${key}`)
     }

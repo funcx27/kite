@@ -54,8 +54,8 @@ import { Separator } from '@/components/ui/separator'
 
 import { useCredentials, useUserDirectory } from '../api'
 import type { UserDirectoryEntry } from '../api'
-import { buildTemplateRefs, isValidNodeNodeId, nodeTypeAccent } from '../lib'
-import type { ParamSpec, WorkflowNode } from '../types'
+import { isValidNodeNodeId, nodeTypeAccent } from '../lib'
+import type { DAGSpec, ParamSpec, WorkflowNode } from '../types'
 import { TemplateInput } from './template-input'
 
 export interface PropertyDrawerProps {
@@ -63,6 +63,8 @@ export interface PropertyDrawerProps {
   params: ParamSpec[]
   // All current editor nodes: feeds steps.<id>.outputs.<key> template chips.
   nodes: WorkflowNode[]
+  // Current editor edges: steps.* suggestions skip the node's DAG descendants.
+  edges?: DAGSpec['edges']
   onChange: (node: WorkflowNode) => void
   onDelete: () => void
 }
@@ -85,7 +87,6 @@ function CredentialRefField({
   noneLabel,
   currentLabel,
   patchProps,
-  onFocusField,
 }: {
   propKey: string
   saved: string
@@ -95,7 +96,6 @@ function CredentialRefField({
   noneLabel: string
   currentLabel: string
   patchProps: (key: string, value: unknown) => void
-  onFocusField: (field: string) => void
 }) {
   const credentialEcho = saved && !names.includes(saved) ? saved : undefined
   return (
@@ -129,7 +129,6 @@ function CredentialRefField({
         <Input
           value={saved}
           onChange={(e) => patchProps(propKey, e.target.value || undefined)}
-          onFocus={() => onFocusField(propKey)}
         />
       )}
     </Field>
@@ -140,74 +139,17 @@ export function PropertyDrawer({
   node,
   params,
   nodes,
+  edges,
   onChange,
   onDelete,
 }: PropertyDrawerProps) {
   const { t } = useTranslation()
-  // The template-var chips insert into the field the user focused last, at
-  // that input's current caret position.
+  // '__id__' while the node-id input holds focus — gates its charset hint.
   const focusedField = useRef<string | null>(null)
-  const focusedInput = useRef<HTMLInputElement | HTMLTextAreaElement | null>(
-    null
-  )
-
-  // Focus events bubble, so one capture handler on the form container keeps
-  // the focused DOM element; its selectionStart/End stay readable at chip
-  // click time even though the input has lost focus.
-  const recordFocusedInput = (e: React.FocusEvent) => {
-    const target = e.target
-    if (
-      target instanceof HTMLInputElement ||
-      target instanceof HTMLTextAreaElement
-    ) {
-      focusedInput.current = target
-    }
-  }
 
   // git.* refs exist only on a build-image node whose props carry a git
   // source object (values may be template strings; only presence matters).
   const gitScope = node?.type === 'build-image' && !!node?.props?.git
-
-  const templateVars = useMemo(
-    () => buildTemplateRefs(params, nodes, node?.id, gitScope),
-    [params, nodes, node?.id, gitScope]
-  )
-
-  // Splice token at the focused input's caret; append when the selection is
-  // unavailable (e.g. inputs whose selectionStart reports null).
-  const spliceAtCursor = (current: string, token: string): string => {
-    const el = focusedInput.current
-    const start = el?.selectionStart
-    const end = el?.selectionEnd
-    if (start === null || start === undefined || end === null) {
-      return current + token
-    }
-    return current.slice(0, start) + token + current.slice(end)
-  }
-
-  const insertVar = (token: string) => {
-    if (!node || !focusedField.current) return
-    const field = focusedField.current
-    if (field === '__name__') {
-      onChange({ ...node, name: spliceAtCursor(node.name, token) })
-      return
-    }
-    if (field.includes('.')) {
-      const [group, key] = field.split('.')
-      const nested = {
-        ...((node.props?.[group] as Record<string, unknown>) ?? {}),
-      }
-      nested[key] = spliceAtCursor(String(nested[key] ?? ''), token)
-      onChange({ ...node, props: { ...(node.props ?? {}), [group]: nested } })
-      return
-    }
-    setStringProp(
-      node,
-      field,
-      spliceAtCursor(readStringProp(node, field), token),
-      onChange
-    )
-  }
 
   if (!node) {
     return (
@@ -240,7 +182,13 @@ export function PropertyDrawer({
       props: { ...(node.props ?? {}), space, app },
     })
 
-  const templateInputVars = { params, nodes, currentNodeId: node.id, gitScope }
+  const templateInputVars = {
+    params,
+    nodes,
+    currentNodeId: node.id,
+    gitScope,
+    edges,
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -249,10 +197,7 @@ export function PropertyDrawer({
         sub={t(`workflow.nodeTypes.${node.type}`)}
         accent={nodeTypeAccent[node.type]}
       />
-      <div
-        className="flex-1 space-y-4 overflow-y-auto px-4 py-3"
-        onFocusCapture={recordFocusedInput}
-      >
+      <div className="flex-1 space-y-4 overflow-y-auto px-4 py-3">
         <Field label={t('workflow.editor.nodeId')}>
           <Input
             value={node.id}
@@ -274,7 +219,6 @@ export function PropertyDrawer({
           <Input
             value={node.name}
             onChange={(e) => onChange({ ...node, name: e.target.value })}
-            onFocus={() => (focusedField.current = '__name__')}
           />
         </Field>
         <Separator />
@@ -285,7 +229,6 @@ export function PropertyDrawer({
             node={node}
             patchProps={patchProps}
             patchNode={patchNode}
-            onFocusField={(f) => (focusedField.current = f)}
             templateVars={templateInputVars}
           />
         )}
@@ -296,7 +239,6 @@ export function PropertyDrawer({
             patchProps={patchProps}
             patchNode={patchNode}
             onSelectApp={patchAppTarget}
-            onFocusField={(f) => (focusedField.current = f)}
             templateVars={templateInputVars}
           />
         )}
@@ -306,7 +248,6 @@ export function PropertyDrawer({
             node={node}
             patchProps={patchProps}
             patchNode={patchNode}
-            onFocusField={(f) => (focusedField.current = f)}
             templateVars={templateInputVars}
           />
         )}
@@ -316,27 +257,9 @@ export function PropertyDrawer({
             node={node}
             patchProps={patchProps}
             patchNode={patchNode}
-            onFocusField={(f) => (focusedField.current = f)}
             templateVars={templateInputVars}
           />
         )}
-      </div>
-      <div className="border-t px-4 py-2.5">
-        <div className="mb-1.5 text-[11px] font-medium text-muted-foreground">
-          {t('workflow.editor.templateVars')}
-        </div>
-        <div className="flex max-h-24 flex-wrap gap-1.5 overflow-y-auto">
-          {templateVars.map((value) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => insertVar(`{{${value}}}`)}
-              className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            >
-              {value}
-            </button>
-          ))}
-        </div>
       </div>
       <div className="border-t px-4 py-2.5">
         <Button
@@ -404,7 +327,6 @@ interface PropsFormShared {
   patchProps: (key: string, value: unknown) => void
   /** Patches node-level fields (onFailure/timeout) on the current snapshot. */
   patchNode: (updates: Partial<WorkflowNode>) => void
-  onFocusField: (field: string) => void
   // Autocomplete inputs for TemplateInput fields: params, sibling nodes and
   // the owning node id (its own outputs stay out of the suggestions). gitScope
   // offers the git.* refs (build-image nodes with a git source only).
@@ -413,21 +335,13 @@ interface PropsFormShared {
     nodes: WorkflowNode[]
     currentNodeId: string
     gitScope?: boolean
+    edges?: DAGSpec['edges']
   }
 }
 
 function readStringProp(node: WorkflowNode, key: string): string {
   const value = node.props?.[key]
   return typeof value === 'string' ? value : ''
-}
-
-function setStringProp(
-  node: WorkflowNode,
-  key: string,
-  value: string,
-  onChange: (n: WorkflowNode) => void
-) {
-  onChange({ ...node, props: { ...(node.props ?? {}), [key]: value } })
 }
 
 // AdvancedCollapsible folds a props form's low-frequency fields behind a
@@ -482,6 +396,30 @@ function SharedAdvancedFields({
   patchNode: (updates: Partial<WorkflowNode>) => void
 }) {
   const { t } = useTranslation()
+  // Notify nodes run with forced continue semantics (engine
+  // effectiveOnFailure): a policy select would be dead config, so it
+  // becomes an explanatory note (design §5.4 UI 灰提示).
+  if (node.type === 'notify') {
+    return (
+      <div className="space-y-3">
+        <p className="text-[11px] leading-4 text-muted-foreground">
+          {t('workflow.editor.notifyFailureNote')}
+        </p>
+        <Field
+          label={t('workflow.editor.timeout')}
+          hint={t('workflow.editor.timeoutHint')}
+        >
+          <Input
+            value={node.timeout ?? ''}
+            onChange={(e) =>
+              patchNode({ timeout: e.target.value || undefined })
+            }
+            placeholder="24h"
+          />
+        </Field>
+      </div>
+    )
+  }
   return (
     <div className="grid grid-cols-2 gap-3">
       <Field label={t('workflow.editor.onFailure')}>
@@ -524,7 +462,6 @@ function BuildPropsForm({
   node,
   patchProps,
   patchNode,
-  onFocusField,
   templateVars,
 }: PropsFormShared) {
   const { t } = useTranslation()
@@ -580,7 +517,6 @@ function BuildPropsForm({
         noneLabel={t('workflow.props.credentialRefNone')}
         currentLabel={t('workflow.props.currentValue')}
         patchProps={patchProps}
-        onFocusField={onFocusField}
       />
       <CredentialRefField
         propKey="registryCredentialRef"
@@ -591,14 +527,12 @@ function BuildPropsForm({
         noneLabel={t('workflow.props.credentialRefNone')}
         currentLabel={t('workflow.props.currentValue')}
         patchProps={patchProps}
-        onFocusField={onFocusField}
       />
       <Field label={t('workflow.props.gitUrl')}>
         <TemplateInput
           {...templateVars}
           value={gitUrl}
           onValueChange={(v) => setGit('url', v)}
-          onFocus={() => onFocusField('git.url')}
           placeholder="https://github.com/org/repo.git"
         />
       </Field>
@@ -608,7 +542,6 @@ function BuildPropsForm({
             {...templateVars}
             value={readNestedString(node, 'git', 'ref')}
             onValueChange={(v) => setGit('ref', v)}
-            onFocus={() => onFocusField('git.ref')}
             placeholder="main"
           />
         </Field>
@@ -641,7 +574,6 @@ function BuildPropsForm({
           {...templateVars}
           value={readStringProp(node, 'dockerfile')}
           onValueChange={(v) => patchProps('dockerfile', v || undefined)}
-          onFocus={() => onFocusField('dockerfile')}
           placeholder="Dockerfile"
         />
       </Field>
@@ -653,7 +585,6 @@ function BuildPropsForm({
           {...templateVars}
           value={readStringProp(node, 'outputRef')}
           onValueChange={(v) => patchProps('outputRef', v || undefined)}
-          onFocus={() => onFocusField('outputRef')}
         />
       </Field>
       <AdvancedCollapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
@@ -664,7 +595,6 @@ function BuildPropsForm({
               {...templateVars}
               value={readNestedString(node, 'git', 'subdir')}
               onValueChange={(v) => setGit('subdir', v)}
-              onFocus={() => onFocusField('git.subdir')}
             />
           </Field>
         )}
@@ -674,7 +604,6 @@ function BuildPropsForm({
               {...templateVars}
               value={readStringProp(node, 'httpUrl')}
               onValueChange={(v) => patchProps('httpUrl', v || undefined)}
-              onFocus={() => onFocusField('httpUrl')}
             />
           </Field>
         )}
@@ -703,7 +632,6 @@ function BuildPropsForm({
             onValueChange={(v) =>
               patchProps('dockerfileContent', v || undefined)
             }
-            onFocus={() => onFocusField('dockerfileContent')}
           />
         </Field>
         <Field
@@ -717,7 +645,6 @@ function BuildPropsForm({
             className="font-mono text-xs"
             value={args}
             onValueChange={(v) => patchProps('args', parseArgs(v))}
-            onFocus={() => onFocusField('args')}
           />
         </Field>
         <Field
@@ -762,7 +689,6 @@ function DeployPropsForm({
   patchProps,
   patchNode,
   onSelectApp,
-  onFocusField,
   templateVars,
 }: PropsFormShared & {
   onSelectApp: (space: string, app: string) => void
@@ -926,7 +852,6 @@ function DeployPropsForm({
           {...templateVars}
           value={readStringProp(node, 'image')}
           onValueChange={(v) => patchProps('image', v || undefined)}
-          onFocus={() => onFocusField('image')}
           placeholder="{{steps.build1.outputs.imageRef}}"
         />
       </Field>
@@ -939,7 +864,6 @@ function DeployPropsForm({
         noneLabel={t('workflow.props.credentialRefNone')}
         currentLabel={t('workflow.props.currentValue')}
         patchProps={patchProps}
-        onFocusField={onFocusField}
       />
       <AdvancedCollapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
         <SharedAdvancedFields node={node} patchNode={patchNode} />
@@ -1047,7 +971,6 @@ function ApprovalPropsForm({
   node,
   patchProps,
   patchNode,
-  onFocusField,
   templateVars,
 }: PropsFormShared) {
   const { t } = useTranslation()
@@ -1144,7 +1067,6 @@ function ApprovalPropsForm({
                   .map((v) => Number(v))
               )
             }}
-            onFocus={() => onFocusField('assignees')}
             placeholder="3,7"
           />
         )}
@@ -1156,7 +1078,6 @@ function ApprovalPropsForm({
           rows={2}
           value={readStringProp(node, 'message')}
           onValueChange={(v) => patchProps('message', v || undefined)}
-          onFocus={() => onFocusField('message')}
         />
       </Field>
       <AdvancedCollapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
@@ -1171,7 +1092,6 @@ function ApprovalPropsForm({
               onChange={(e) =>
                 patchProps('timeout', e.target.value || undefined)
               }
-              onFocus={() => onFocusField('timeout')}
               placeholder="24h"
             />
           </Field>
@@ -1279,13 +1199,9 @@ function NotifyPropsForm({
   node,
   patchProps,
   patchNode,
-  onFocusField,
   templateVars,
 }: PropsFormShared) {
   const { t } = useTranslation()
-  const [advancedOpen, setAdvancedOpen] = useState(
-    node.onFailure !== undefined || node.timeout !== undefined
-  )
   return (
     <div className="space-y-4">
       <Field label={t('workflow.props.channel')}>
@@ -1295,7 +1211,6 @@ function NotifyPropsForm({
         <Input
           value={readStringProp(node, 'url')}
           onChange={(e) => patchProps('url', e.target.value)}
-          onFocus={() => onFocusField('url')}
           placeholder="https://hooks.example.com/…"
         />
       </Field>
@@ -1310,12 +1225,11 @@ function NotifyPropsForm({
           className="font-mono text-xs"
           value={readStringProp(node, 'payloadTemplate')}
           onValueChange={(v) => patchProps('payloadTemplate', v || undefined)}
-          onFocus={() => onFocusField('payloadTemplate')}
         />
       </Field>
-      <AdvancedCollapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
-        <SharedAdvancedFields node={node} patchNode={patchNode} />
-      </AdvancedCollapsible>
+      {/* No advanced fold here: notify keeps only timeout (plus the
+          forced-continue note), so the fields render inline. */}
+      <SharedAdvancedFields node={node} patchNode={patchNode} />
     </div>
   )
 }

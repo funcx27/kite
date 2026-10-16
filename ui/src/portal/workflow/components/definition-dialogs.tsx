@@ -3,6 +3,7 @@
 // and hand the result back on confirm.
 import { useEffect, useState } from 'react'
 import { IconPlus, IconTrash } from '@tabler/icons-react'
+import { ArrowDown, ArrowUp } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -77,9 +78,9 @@ function DialogShell({
 
 const PARAM_TYPES: ParamType[] = ['string', 'number', 'bool', 'enum']
 
-// One row per parameter: name | type | required | default | delete.
+// One row per parameter: name | type | required | default | move + delete.
 const PARAM_ROW_GRID =
-  'grid grid-cols-[minmax(0,1fr)_120px_56px_minmax(0,1fr)_40px] items-center gap-2'
+  'grid grid-cols-[minmax(0,1fr)_120px_56px_minmax(0,1fr)_100px] items-center gap-2'
 
 // One-click presets for common CI/CD parameters. All are string and optional:
 // cron/webhook triggers then fall back to the default without validation.
@@ -132,6 +133,17 @@ export function ParamsDialog({
     setDraft((prev) =>
       prev.map((p, i) => (i === index ? { ...p, ...next } : p))
     )
+
+  // Row order is user-facing: the manual trigger form renders params in
+  // this order, so swaps stay local and clamped.
+  const move = (index: number, dir: -1 | 1) =>
+    setDraft((prev) => {
+      const target = index + dir
+      if (target < 0 || target >= prev.length) return prev
+      const next = [...prev]
+      ;[next[index], next[target]] = [next[target], next[index]]
+      return next
+    })
 
   const addPreset = (preset: (typeof PARAM_PRESETS)[number]) => {
     if (draft.some((p) => p.name.trim() === preset.name)) {
@@ -261,16 +273,42 @@ export function ParamsDialog({
               }
               className="h-8 font-mono text-xs"
             />
-            <Button
-              variant="ghost"
-              size="icon"
-              className="text-muted-foreground hover:text-destructive"
-              onClick={() =>
-                setDraft((prev) => prev.filter((_, i) => i !== index))
-              }
-            >
-              <IconTrash className="h-4 w-4" />
-            </Button>
+            <div className="flex items-center justify-end gap-0.5">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 w-8 p-0 text-muted-foreground"
+                disabled={index === 0}
+                title={t('common.actions.moveUp')}
+                aria-label={t('common.actions.moveUp')}
+                onClick={() => move(index, -1)}
+              >
+                <ArrowUp className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 w-8 p-0 text-muted-foreground"
+                disabled={index === draft.length - 1}
+                title={t('common.actions.moveDown')}
+                aria-label={t('common.actions.moveDown')}
+                onClick={() => move(index, 1)}
+              >
+                <ArrowDown className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+                title={t('common.actions.remove')}
+                aria-label={t('common.actions.remove')}
+                onClick={() =>
+                  setDraft((prev) => prev.filter((_, i) => i !== index))
+                }
+              >
+                <IconTrash className="h-3.5 w-3.5" />
+              </Button>
+            </div>
           </div>
           {param.type === 'enum' && (
             <div className="space-y-1">

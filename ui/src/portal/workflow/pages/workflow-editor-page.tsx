@@ -598,6 +598,16 @@ export function WorkflowEditorPage() {
               placeholder={`${t('workflow.editor.name')} *`}
               className="w-48 font-mono text-sm font-semibold"
             />
+            {routeWorkflowId !== undefined && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => navigate(`/workflows/${routeWorkflowId}/runs`)}
+              >
+                <History className="h-4 w-4" />
+                {t('workflow.editor.viewRuns')}
+              </Button>
+            )}
             <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">
               rev {expectedRev}
             </span>
@@ -620,16 +630,6 @@ export function WorkflowEditorPage() {
           >
             {t('workflow.editor.params')}
           </Button>
-          {!isCreate && routeWorkflowId !== undefined && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => navigate(`/workflows/${routeWorkflowId}/runs`)}
-            >
-              <History className="h-4 w-4" />
-              {t('workflow.editor.viewRuns')}
-            </Button>
-          )}
           <Button
             variant="outline"
             size="sm"
@@ -712,6 +712,10 @@ export function WorkflowEditorPage() {
               node={selectedSpecNode}
               params={params}
               nodes={flowNodes.map(flowToSpecNode)}
+              edges={flowEdges.map((e) => ({
+                from: e.source,
+                to: e.target,
+              }))}
               onChange={updateSelectedNode}
               onDelete={() => selectedNode && deleteNode(selectedNode.id)}
             />
