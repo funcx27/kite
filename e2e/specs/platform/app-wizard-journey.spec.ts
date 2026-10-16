@@ -147,7 +147,7 @@ test.describe.serial('application wizard journey', () => {
     await spaceRow.click()
     await page.waitForURL((url) => url.searchParams.get('space') === SPACE)
 
-    // ── Wizard: basic info → environment → config files → network →
+    // ── Wizard: basic info → startup → config files → network →
     //    target cluster → preview ──
     await page.getByRole('button', { name: /Create Application/ }).click()
     const wiz = page.getByRole('dialog')
@@ -160,7 +160,7 @@ test.describe.serial('application wizard journey', () => {
       .fill(APP_MEMORY_LIMIT_M)
     const next = wiz.getByRole('button', { name: 'Next', exact: true })
 
-    await next.click() // → environment
+    await next.click() // → startup
     await expect(wiz.getByText('Environment Variables')).toBeVisible()
     await next.click() // → config files
     await expect(

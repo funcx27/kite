@@ -52,6 +52,8 @@ import { EnvEditor } from './env-editor'
 import { PortsEditor } from './ports-editor'
 import { requestExceedsLimit, ResourceEditor } from './resource-editor'
 import { CreateSpaceDialog } from './space-picker'
+import { StartupEditor } from './startup-editor'
+import { StartupPaste } from './startup-paste'
 
 const STEP_COUNT = 6
 const dns1123LabelPattern = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
@@ -99,42 +101,18 @@ interface WizardState {
   extraYaml: string
 }
 
-// Quote-aware split for command/args text: whitespace separates, double or
-// single quotes keep inner whitespace inside one token (quotes are dropped,
-// shell-style — `sh -c "echo hi"` yields 3 tokens).
-function tokenizeCommand(text: string): string[] {
-  const tokens: string[] = []
-  let current = ''
-  let hasToken = false
-  let quote: '"' | "'" | null = null
-  for (const char of text) {
-    if (quote) {
-      if (char === quote) quote = null
-      else current += char
-    } else if (char === '"' || char === "'") {
-      quote = char
-      hasToken = true
-    } else if (/\s/.test(char)) {
-      if (hasToken) {
-        tokens.push(current)
-        current = ''
-        hasToken = false
-      }
-    } else {
-      current += char
-      hasToken = true
-    }
-  }
-  if (hasToken) tokens.push(current)
-  return tokens
+// One element per line: leading/trailing spaces are stripped — an invisible
+// trailing space breaks the executable lookup. Values that genuinely need
+// surrounding spaces are maintained in YAML mode, where quotes delimit them.
+function splitLines(text: string): string[] {
+  return text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '')
 }
 
-// Reverse of tokenizeCommand: tokens containing whitespace are re-quoted so
-// the text round-trips through buildSpec.
-function joinCommand(tokens: string[] | undefined): string {
-  return (tokens ?? [])
-    .map((token) => (/\s/.test(token) ? `"${token}"` : token))
-    .join(' ')
+function joinLines(tokens: string[] | undefined): string {
+  return (tokens ?? []).join('\n')
 }
 
 function buildState(
@@ -152,8 +130,8 @@ function buildState(
     image: workload?.image || '',
     imagePullPolicy: workload?.imagePullPolicy || 'IfNotPresent',
     replicas: workload?.replicas ?? 1,
-    command: joinCommand(workload?.command),
-    args: joinCommand(workload?.args),
+    command: joinLines(workload?.command),
+    args: joinLines(workload?.args),
     container: {
       name: 'app',
       image: workload?.image || '',
@@ -176,8 +154,8 @@ function buildState(
 }
 
 function buildSpec(state: WizardState): ApplicationSpec {
-  const command = tokenizeCommand(state.command)
-  const args = tokenizeCommand(state.args)
+  const command = splitLines(state.command)
+  const args = splitLines(state.args)
   return {
     workload: {
       type: state.workloadType,
@@ -554,7 +532,7 @@ export function ApplicationWizard({
 
   const stepLabels = [
     t('applications.wizard.stepBasic'),
-    t('applications.wizard.stepEnv'),
+    t('applications.wizard.stepStartup'),
     t('applications.wizard.stepConfigFiles'),
     t('applications.wizard.stepNetwork'),
     t('applications.wizard.stepTargetCluster'),
@@ -769,35 +747,6 @@ export function ApplicationWizard({
                       patch(next)
                     }}
                   />
-                  <div>
-                    <Label htmlFor="wizard-command">
-                      {t('applications.wizard.command')}
-                    </Label>
-                    <Input
-                      id="wizard-command"
-                      value={state.command}
-                      onChange={(event) =>
-                        patch({ command: event.target.value })
-                      }
-                      placeholder={t('applications.wizard.commandPlaceholder')}
-                      className="mt-1.5 font-mono"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="wizard-args">
-                      {t('applications.wizard.args')}
-                    </Label>
-                    <Input
-                      id="wizard-args"
-                      value={state.args}
-                      onChange={(event) => patch({ args: event.target.value })}
-                      placeholder={t('applications.wizard.argsPlaceholder')}
-                      className="mt-1.5 font-mono"
-                    />
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {t('applications.wizard.commandHint')}
-                    </p>
-                  </div>
                   <ResourceEditor
                     container={state.container as never}
                     onUpdate={(updates) =>
@@ -816,13 +765,32 @@ export function ApplicationWizard({
               )}
 
               {step === 2 && (
-                <div className="max-w-3xl">
-                  <EnvEditor
+                <div className="max-w-6xl space-y-4">
+                  <StartupPaste
+                    command={state.command}
+                    args={state.args}
                     env={state.container.env}
-                    onChange={(env) =>
-                      patch({ container: { ...state.container, env } })
+                    onApply={(command, args, env) =>
+                      patch({
+                        command,
+                        args,
+                        container: { ...state.container, env },
+                      })
                     }
                   />
+                  <div className="grid items-start gap-4 lg:grid-cols-2">
+                    <StartupEditor
+                      command={state.command}
+                      args={state.args}
+                      onChange={(command, args) => patch({ command, args })}
+                    />
+                    <EnvEditor
+                      env={state.container.env}
+                      onChange={(env) =>
+                        patch({ container: { ...state.container, env } })
+                      }
+                    />
+                  </div>
                 </div>
               )}
 

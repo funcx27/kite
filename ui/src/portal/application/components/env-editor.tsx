@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -18,32 +17,10 @@ interface EnvEditorProps {
 // Wizard env editor (design §3): plain name=value rows only — referenced
 // variables (valueFrom/envFrom) are maintained in YAML mode. Rows with a
 // name but empty value must survive round trips: the backend maps them back
-// onto the manifest's original entry (e.g. valueFrom) by name.
-// parseEnvLines turns pasted KEY=VALUE lines into rows, skipping blanks and
-// # comments, stripping a leading "export "; unparsable lines are counted.
-function parseEnvLines(text: string): { rows: EnvVarRow[]; invalid: number } {
-  const rows: EnvVarRow[] = []
-  let invalid = 0
-  for (const raw of text.split('\n')) {
-    const line = raw.trim()
-    if (!line || line.startsWith('#')) continue
-    const body = line.startsWith('export ') ? line.slice(7).trim() : line
-    const eq = body.indexOf('=')
-    const name = eq > 0 ? body.slice(0, eq).trim() : ''
-    if (!name) {
-      invalid++
-      continue
-    }
-    rows.push({ name, value: body.slice(eq + 1) })
-  }
-  return { rows, invalid }
-}
-
+// onto the manifest's original entry (e.g. valueFrom) by name. Batch paste
+// lives at the step level (startup-paste.tsx).
 export function EnvEditor({ env, onChange }: EnvEditorProps) {
   const { t } = useTranslation()
-  const [pasteOpen, setPasteOpen] = useState(false)
-  const [pasteText, setPasteText] = useState('')
-  const [invalidCount, setInvalidCount] = useState(0)
 
   const update = (index: number, updates: Partial<EnvVarRow>) =>
     onChange(env.map((row, i) => (i === index ? { ...row, ...updates } : row)))
@@ -51,23 +28,6 @@ export function EnvEditor({ env, onChange }: EnvEditorProps) {
   const remove = (index: number) => onChange(env.filter((_, i) => i !== index))
 
   const add = () => onChange([...env, { name: '', value: '' }])
-
-  const applyPaste = () => {
-    const { rows, invalid } = parseEnvLines(pasteText)
-    if (rows.length > 0) {
-      const next = [...env]
-      for (const row of rows) {
-        const existing = next.findIndex(
-          (candidate) => candidate.name === row.name
-        )
-        if (existing >= 0) next[existing] = row
-        else next.push(row)
-      }
-      onChange(next)
-    }
-    setInvalidCount(invalid)
-    if (invalid === 0) setPasteText('')
-  }
 
   return (
     <div className="space-y-3 rounded-lg border p-4">
@@ -116,7 +76,7 @@ export function EnvEditor({ env, onChange }: EnvEditorProps) {
           ))}
         </div>
       )}
-      <div className="flex items-center gap-4">
+      <div className="flex items-center">
         <button
           type="button"
           className="cursor-pointer text-xs text-muted-foreground transition-colors hover:text-foreground"
@@ -124,40 +84,7 @@ export function EnvEditor({ env, onChange }: EnvEditorProps) {
         >
           ＋ {t('applications.wizard.addVariable')}
         </button>
-        <button
-          type="button"
-          className="cursor-pointer text-xs text-muted-foreground transition-colors hover:text-foreground"
-          onClick={() => {
-            setPasteOpen((prev) => !prev)
-            setInvalidCount(0)
-          }}
-        >
-          ＋ {t('applications.wizard.batchPaste')}
-        </button>
       </div>
-      {pasteOpen && (
-        <div className="space-y-2">
-          <textarea
-            value={pasteText}
-            onChange={(event) => setPasteText(event.target.value)}
-            placeholder={t('applications.wizard.batchPastePlaceholder')}
-            className="h-28 w-full resize-none rounded-md border bg-background p-3 font-mono text-xs outline-none placeholder:text-muted-foreground"
-          />
-          <div className="flex flex-wrap items-center gap-2">
-            <Button type="button" size="sm" onClick={applyPaste}>
-              {t('applications.wizard.applyPaste')}
-            </Button>
-            {invalidCount > 0 && (
-              <span className="text-xs text-destructive">
-                {t('applications.wizard.invalidLines', { count: invalidCount })}
-              </span>
-            )}
-            <span className="text-xs text-muted-foreground">
-              {t('applications.wizard.batchPasteHint')}
-            </span>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
