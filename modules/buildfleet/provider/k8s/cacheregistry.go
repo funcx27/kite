@@ -64,7 +64,7 @@ func (p *Provider) EnsureCacheRegistry(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("k8s cache registry: size %q: %w", size, err)
 	}
-	cs := p.cfg.Clientset.CoreV1()
+	cs := p.clientset().CoreV1()
 
 	pvc := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: cacheRegistryName},
@@ -124,7 +124,7 @@ func (p *Provider) EnsureCacheRegistry(ctx context.Context) error {
 			},
 		},
 	}
-	if _, err := p.cfg.Clientset.AppsV1().Deployments(p.cfg.Namespace).
+	if _, err := p.clientset().AppsV1().Deployments(p.cfg.Namespace).
 		Create(ctx, dep, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
 		return fmt.Errorf("k8s cache registry: create deployment: %w", err)
 	}
@@ -163,7 +163,7 @@ storage:
     enabled: true
 `
 	cmName := cacheRegistryName + "-gc-config"
-	if _, err := p.cfg.Clientset.CoreV1().ConfigMaps(p.cfg.Namespace).
+	if _, err := p.clientset().CoreV1().ConfigMaps(p.cfg.Namespace).
 		Create(ctx, &corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{Name: cmName},
 			Data:       map[string]string{"config.yml": gcConfig},
@@ -210,7 +210,7 @@ storage:
 			},
 		},
 	}
-	if _, err := p.cfg.Clientset.BatchV1().CronJobs(p.cfg.Namespace).
+	if _, err := p.clientset().BatchV1().CronJobs(p.cfg.Namespace).
 		Create(ctx, cj, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
 		return fmt.Errorf("k8s cache gc: create cronjob: %w", err)
 	}

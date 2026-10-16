@@ -215,6 +215,7 @@ func buildK8sProvider(cfg *config.Config, pc config.Provider, regTable registry.
 		Namespace:     pc.Namespace,
 		CacheRegistry: cacheCfg,
 		Clientset:     cs,
+		Kubeconfig:    pc.Kubeconfig,
 		RestConfig:    kcfg,
 		PortForward:   pc.PortForward,
 		BasePod:       base,

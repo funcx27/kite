@@ -23,7 +23,7 @@ func (p *Provider) CacheStat(ctx context.Context) (*runtime.CacheStatSnapshot, e
 	if p.cfg.CacheRegistry == nil {
 		return nil, fmt.Errorf("k8s cache stat: no cache registry configured")
 	}
-	pods, err := p.cfg.Clientset.CoreV1().Pods(p.cfg.Namespace).
+	pods, err := p.clientset().CoreV1().Pods(p.cfg.Namespace).
 		List(ctx, metav1.ListOptions{LabelSelector: "buildfleet=cache-registry"})
 	if err != nil {
 		return nil, fmt.Errorf("k8s cache stat: list pods: %w", err)

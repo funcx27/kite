@@ -41,7 +41,10 @@ const (
 type Config struct {
 	Namespace string
 	// Clientset is injectable; nil makes Capacity fall back to Total.
-	Clientset  k8sresource.Interface
+	Clientset k8sresource.Interface
+	// Kubeconfig is the file Clientset/RestConfig were built from; when set,
+	// the provider rebuilds them if the file's content changes.
+	Kubeconfig string
 	Total      bfresource.Resources // fallback when quota unreadable
 	Image      string               // global BuildkitImage, never from templates
 	Registries registry.Table
@@ -111,6 +114,12 @@ type Provider struct {
 	tracked map[string]bfresource.Resources
 	// fwds maps runtime ID -> its port-forward stop channel.
 	fwds map[string]chan struct{}
+	// clientMu guards the apiserver clients and their kubeconfig fingerprint
+	// (rebuilt by currentClients when the kubeconfig file changes).
+	clientMu         sync.Mutex
+	curClient        k8sresource.Interface
+	curRest          *rest.Config
+	kubeFingerprint  string
 }
 
 func New(cfg Config) *Provider {
@@ -123,7 +132,8 @@ func New(cfg Config) *Provider {
 	if cfg.ConfigMapName == "" {
 		cfg.ConfigMapName = "buildkitd-config"
 	}
-	return &Provider{cfg: cfg, tracked: map[string]bfresource.Resources{}, fwds: map[string]chan struct{}{}}
+	return &Provider{cfg: cfg, tracked: map[string]bfresource.Resources{}, fwds: map[string]chan struct{}{},
+		curClient: cfg.Clientset, curRest: cfg.RestConfig}
 }
 
 // Capacity reads the namespace ResourceQuota; on any error or nil clientset
@@ -138,10 +148,11 @@ func (p *Provider) Capacity() bfresource.Resources {
 }
 
 func (p *Provider) quotaCapacity() (bfresource.Resources, bool) {
-	if p.cfg.Clientset == nil {
+	cs := p.clientset()
+	if cs == nil {
 		return bfresource.Resources{}, false
 	}
-	ql, err := p.cfg.Clientset.CoreV1().ResourceQuotas(p.cfg.Namespace).
+	ql, err := cs.CoreV1().ResourceQuotas(p.cfg.Namespace).
 		List(context.Background(), metav1.ListOptions{})
 	if err != nil {
 		return bfresource.Resources{}, false
@@ -195,14 +206,15 @@ func (p *Provider) Provision(ctx context.Context, spec runtime.Spec) (*runtime.R
 	}
 
 	pod := p.buildPod(id, spec, tmpl)
-	if _, err := p.cfg.Clientset.CoreV1().Pods(p.cfg.Namespace).
+	cs := p.clientset()
+	if _, err := cs.CoreV1().Pods(p.cfg.Namespace).
 		Create(ctx, pod, metav1.CreateOptions{}); err != nil {
 		_ = p.Dispose(context.WithoutCancel(ctx), id)
 		return nil, fmt.Errorf("k8s provision: create pod: %w", err)
 	}
 
 	svc := p.buildService(id, tmpl)
-	if _, err := p.cfg.Clientset.CoreV1().Services(p.cfg.Namespace).
+	if _, err := cs.CoreV1().Services(p.cfg.Namespace).
 		Create(ctx, svc, metav1.CreateOptions{}); err != nil {
 		_ = p.Dispose(context.WithoutCancel(ctx), id)
 		return nil, fmt.Errorf("k8s provision: create service: %w", err)
@@ -247,14 +259,15 @@ func (p *Provider) startForward(id string) (int, error) {
 // forwardTo opens a temporary SPDY tunnel to one pod port without
 // registering it in fwds; the caller owns the returned stop channel.
 func (p *Provider) forwardTo(pod string, remotePort int) (int, chan struct{}, error) {
-	if p.cfg.RestConfig == nil {
+	rc := p.restConfig()
+	if rc == nil {
 		return 0, nil, fmt.Errorf("k8s port-forward requires RestConfig")
 	}
-	roundTripper, upgrader, err := spdy.RoundTripperFor(p.cfg.RestConfig)
+	roundTripper, upgrader, err := spdy.RoundTripperFor(rc)
 	if err != nil {
 		return 0, nil, fmt.Errorf("k8s port-forward: roundtripper: %w", err)
 	}
-	host, err := url.Parse(p.cfg.RestConfig.Host)
+	host, err := url.Parse(rc.Host)
 	if err != nil {
 		return 0, nil, fmt.Errorf("k8s port-forward: apiserver url: %w", err)
 	}
@@ -297,7 +310,7 @@ func (p *Provider) Dispose(ctx context.Context, id string) error {
 		delete(p.fwds, id)
 	}
 	p.mu.Unlock()
-	cs := p.cfg.Clientset.CoreV1()
+	cs := p.clientset().CoreV1()
 	del := func(err error, kind string) error {
 		if err == nil || apierrors.IsNotFound(err) {
 			return nil
@@ -314,7 +327,7 @@ func (p *Provider) Dispose(ctx context.Context, id string) error {
 func (p *Provider) waitReady(ctx context.Context, id string) error {
 	deadline := time.Now().Add(p.cfg.ReadyTimeout)
 	for time.Now().Before(deadline) {
-		pod, err := p.cfg.Clientset.CoreV1().Pods(p.cfg.Namespace).
+		pod, err := p.clientset().CoreV1().Pods(p.cfg.Namespace).
 			Get(ctx, id, metav1.GetOptions{})
 		if err == nil {
 			for _, c := range pod.Status.Conditions {
@@ -447,7 +460,7 @@ func (p *Provider) ensureConfigMap(ctx context.Context) error {
 		},
 		Data: map[string]string{configFile: toml},
 	}
-	cs := p.cfg.Clientset.CoreV1()
+	cs := p.clientset().CoreV1()
 	_, err = cs.ConfigMaps(p.cfg.Namespace).Create(ctx, cm, metav1.CreateOptions{})
 	if apierrors.IsAlreadyExists(err) {
 		_, err = cs.ConfigMaps(p.cfg.Namespace).Update(ctx, cm, metav1.UpdateOptions{})
@@ -493,7 +506,7 @@ func grpcReady(ctx context.Context, addr string) bool {
 // path: the daemon is the sole solve-session owner, so no orphan can have
 // an in-flight build. Call once at startup, before serving traffic.
 func (p *Provider) Reconcile(ctx context.Context) ([]*runtime.Runtime, error) {
-	pods, err := p.cfg.Clientset.CoreV1().Pods(p.cfg.Namespace).
+	pods, err := p.clientset().CoreV1().Pods(p.cfg.Namespace).
 		List(ctx, metav1.ListOptions{LabelSelector: "buildfleet=runtime"})
 	if err != nil {
 		return nil, fmt.Errorf("k8s reconcile: list pods: %w", err)

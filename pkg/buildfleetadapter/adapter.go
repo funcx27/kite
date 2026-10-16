@@ -91,6 +91,7 @@ func New(ctx context.Context, cm *cluster.ClusterManager, cfgNode *yaml.Node, cr
 	}
 	d := &Deps{app: a, cfg: cfg, cm: cm, providerNames: names, creds: creds}
 	d.restoreProviders(ctx)
+	go d.syncKubeconfigs(ctx)
 	return d, nil
 }
 

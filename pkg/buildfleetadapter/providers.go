@@ -54,7 +54,9 @@ func kubeconfigPath(name string) (string, error) {
 
 // exportKubeconfig writes the cluster's stored kubeconfig to the provider's
 // cache file and returns its path. 0600 (0700 for the directory): the file
-// carries cluster credentials and must stay private to the kite user.
+// carries cluster credentials and must stay private to the kite user. The
+// write goes through temp+rename: the sync loop refreshes this file while
+// providers poll it, so readers never observe a truncated credential.
 func exportKubeconfig(name string, kubeconfig model.SecretString) (string, error) {
 	path, err := kubeconfigPath(name)
 	if err != nil {
@@ -63,10 +65,72 @@ func exportKubeconfig(name string, kubeconfig model.SecretString) (string, error
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return "", fmt.Errorf("create kubeconfig dir: %w", err)
 	}
-	if err := os.WriteFile(path, []byte(kubeconfig), 0o600); err != nil {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(kubeconfig), 0o600); err != nil {
 		return "", fmt.Errorf("write kubeconfig: %w", err)
 	}
+	if err := os.Rename(tmp, path); err != nil {
+		return "", fmt.Errorf("publish kubeconfig: %w", err)
+	}
 	return path, nil
+}
+
+// kubeconfigSyncInterval paces the exported-kubeconfig refresh, matching the
+// cluster manager's own sync cadence.
+const kubeconfigSyncInterval = time.Minute
+
+// syncKubeconfigs keeps managed k8s providers' exported kubeconfig files in
+// step with the cluster rows they target: cluster rebuilds rotate the CA, and
+// the provider rebuilds its apiserver clients when the exported file changes
+// (provider/k8s currentClients), so this loop lets a rebuilt cluster heal
+// without restarting kite.
+func (d *Deps) syncKubeconfigs(ctx context.Context) {
+	t := time.NewTicker(kubeconfigSyncInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			d.refreshProviderKubeconfigs()
+		}
+	}
+}
+
+// refreshProviderKubeconfigs rewrites each managed k8s provider's exported
+// kubeconfig when the stored cluster credential diverges. Failures only
+// warn: a stale file keeps serving the previous identity, exactly as before
+// this sync existed.
+func (d *Deps) refreshProviderKubeconfigs() {
+	rows, err := model.ListBuildProviders()
+	if err != nil {
+		klog.Warningf("build provider kubeconfig sync: list: %v", err)
+		return
+	}
+	for _, row := range rows {
+		if effectiveType(row) != "k8s" || row.Cluster == "" {
+			continue
+		}
+		cl, err := model.GetClusterByName(row.Cluster)
+		if err != nil {
+			continue // deleted cluster: re-registration surfaces the error
+		}
+		if cl.InCluster || cl.ClusterAgent || cl.Config == "" {
+			continue
+		}
+		path, err := kubeconfigPath(row.Name)
+		if err != nil {
+			continue
+		}
+		if cur, err := os.ReadFile(path); err == nil && string(cur) == string(cl.Config) {
+			continue
+		}
+		if _, err := exportKubeconfig(row.Name, cl.Config); err != nil {
+			klog.Warningf("build provider kubeconfig sync: %s: %v", row.Name, err)
+			continue
+		}
+		klog.Infof("refreshed build provider kubeconfig for cluster %s", row.Cluster)
+	}
 }
 
 // providerConfig validates the row and returns the fleet provider config.
