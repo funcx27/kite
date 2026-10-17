@@ -183,7 +183,8 @@ type buildConfig struct {
 	progressDone chan struct{} // closed when event forwarding finished
 	ref          string        // requested git ref, for BuildResult echo
 	commit       string        // resolved git commit
-	commitMu     sync.Mutex    // guards commit (set from the event goroutine)
+	commitMu     sync.Mutex    // guards commit and refAds (set from the event goroutine)
+	refAds       []gitRefAdv   // full ls-remote advertisement from the git-source vertex logs
 	gitURL       string        // runtime-mode normalized git context URL
 	httpURL      string        // runtime-mode normalized http context URL
 	gitSecrets   map[string]builder.SourceSecret
@@ -741,11 +742,31 @@ func (f *Fleet) setRuntimeGit(req *Request, cfg *buildConfig) error {
 	return nil
 }
 
-var gitRefLine = regexp.MustCompile(`^([0-9a-f]{40})\s+refs/`)
+var gitRefLine = regexp.MustCompile(`^([0-9a-f]{40})\s+(refs/\S+)`)
+
+// gitRefAdv is one "SHA refs/..." line of the ls-remote advertisement that
+// streams through the git-source vertex logs.
+type gitRefAdv struct {
+	Commit string
+	Ref    string
+}
+
+// parseGitRefAdv parses one advertisement line (trimmed). Shared by the
+// commit extractor and the full-ref harvest so both read the exact same
+// ls-remote output shape.
+func parseGitRefAdv(line string) (gitRefAdv, bool) {
+	m := gitRefLine.FindStringSubmatch(line)
+	if m == nil {
+		return gitRefAdv{}, false
+	}
+	return gitRefAdv{Commit: m[1], Ref: m[2]}, true
+}
 
 // commitExtractor wraps a progress callback (nil-safe), harvesting the
-// commit SHA from the "[internal] load git source" vertex logs — the
-// same ls-remote output buildkitd itself resolved the ref with.
+// ls-remote advertisement from the "[internal] load git source" vertex logs
+// — the same output buildkitd itself resolved the ref with. The first SHA
+// becomes the resolved commit; every line is kept in refAds so a ref
+// listing (ProbeRefs) can replay the full advertisement.
 func commitExtractor(cfg *buildConfig) func(builder.Event) bool {
 	inner := cfg.progress
 	gitVertices := map[string]bool{}
@@ -755,17 +776,19 @@ func commitExtractor(cfg *buildConfig) func(builder.Event) bool {
 			gitVertices[string(ev.Vertex.Digest)] = true
 		case ev.Log != nil && gitVertices[string(ev.Log.Vertex)]:
 			for _, line := range strings.Split(string(ev.Log.Data), "\n") {
-				if m := gitRefLine.FindStringSubmatch(strings.TrimSpace(line)); m != nil {
-					cfg.commitMu.Lock()
-					first := cfg.commit == ""
-					if first {
-						cfg.commit = m[1]
-					}
-					cfg.commitMu.Unlock()
-					if first {
-						slog.Info("fleet: git source resolved", "commit", m[1], "source", "buildkitd events")
-					}
-					break
+				adv, ok := parseGitRefAdv(strings.TrimSpace(line))
+				if !ok {
+					continue
+				}
+				cfg.commitMu.Lock()
+				first := cfg.commit == ""
+				if first {
+					cfg.commit = adv.Commit
+				}
+				cfg.refAds = append(cfg.refAds, adv)
+				cfg.commitMu.Unlock()
+				if first {
+					slog.Info("fleet: git source resolved", "commit", adv.Commit, "source", "buildkitd events")
 				}
 			}
 		}

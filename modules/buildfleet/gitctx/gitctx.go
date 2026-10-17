@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -310,6 +311,11 @@ func resolveRef(repo *git.Repository, ref string) (plumbing.Hash, error) {
 	return plumbing.ZeroHash, fmt.Errorf("gitctx: ref %q not found (branch/tag/SHA)", ref)
 }
 
+// lsRemoteTimeout bounds one ls-remote round trip (ListRefs): an
+// advertisement is a single response, so a server that cannot answer within
+// this window is unreachable for listing purposes.
+const lsRemoteTimeout = 10 * time.Second
+
 // ErrNoSuchRef marks an ls-remote that reached the server yet advertised no
 // matching branch/tag/HEAD: deterministic, unlike transport failures.
 var ErrNoSuchRef = errors.New("no such branch/tag/SHA")
@@ -383,4 +389,51 @@ func ResolveCommitErr(src Source) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("gitctx: HEAD: %w", ErrNoSuchRef)
+}
+
+// RefList is one repository's branch/tag advertisement.
+type RefList struct {
+	Branches []string // refs/heads/* with the prefix stripped
+	Tags     []string // refs/tags/* with the prefix stripped
+}
+
+// ListRefs answers the repository's full branch/tag advertisement with one
+// ls-remote round trip (no clone), using the same ListContext/auth shape as
+// ResolveCommitErr. The deadline is capped at lsRemoteTimeout (an earlier
+// caller deadline wins) so a hung server cannot hold the caller beyond the
+// fast path's budget. Peeled annotated-tag lines (refs/tags/v1^{}) collapse
+// into their tag entry.
+func ListRefs(ctx context.Context, src Source) (*RefList, error) {
+	ctx, cancel := context.WithTimeout(ctx, lsRemoteTimeout)
+	defer cancel()
+	auth, err := basicAuth(src)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrSourceInvalid, err)
+	}
+	remote := git.NewRemote(memory.NewStorage(), &config.RemoteConfig{
+		Name: "origin", URLs: []string{src.URL},
+	})
+	refs, err := remote.ListContext(ctx, &git.ListOptions{Auth: auth})
+	if err != nil {
+		return nil, err
+	}
+	out := &RefList{Branches: []string{}, Tags: []string{}}
+	seen := map[string]bool{}
+	for _, r := range refs {
+		name := strings.TrimSuffix(r.Name().String(), "^{}")
+		if b, ok := strings.CutPrefix(name, "refs/heads/"); ok {
+			if !seen[name] {
+				seen[name] = true
+				out.Branches = append(out.Branches, b)
+			}
+		} else if t, ok := strings.CutPrefix(name, "refs/tags/"); ok {
+			if !seen[name] {
+				seen[name] = true
+				out.Tags = append(out.Tags, t)
+			}
+		}
+	}
+	sort.Strings(out.Branches)
+	sort.Strings(out.Tags)
+	return out, nil
 }

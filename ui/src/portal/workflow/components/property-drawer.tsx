@@ -3,7 +3,7 @@
 // shared node fields (id / name / onFailure / timeout). Lists that exist on
 // the host (clusters, applications, credentials) render as selects and fall
 // back to free text when the list cannot serve a pick.
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useApplications, useSpaceQuotas } from '@/portal/application/api'
 import { DockerfileEditorDialog } from '@/portal/components/editors/dockerfile-editor-dialog'
 import { useSpaces } from '@/portal/space-context'
@@ -18,6 +18,7 @@ import {
   IconTrash,
   IconX,
 } from '@tabler/icons-react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
 import { cn } from '@/lib/utils'
@@ -54,7 +55,12 @@ import {
 } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 
-import { useCredentials, useDefaultRegistry, useUserDirectory } from '../api'
+import {
+  useCredentials,
+  useDefaultRegistry,
+  useGitRefs,
+  useUserDirectory,
+} from '../api'
 import type { UserDirectoryEntry } from '../api'
 import { isValidNodeNodeId, nodeTypeAccent } from '../lib'
 import type { DAGSpec, ParamSpec, WorkflowNode } from '../types'
@@ -480,6 +486,293 @@ function SharedAdvancedFields({
   )
 }
 
+// The host's direct ls-remote stage is capped server-side (~10s); a listing
+// request still pending past that budget must be waiting on the build
+// cluster's probe stage, so the loading label swaps.
+const gitRefDirectBudgetMs = 10_000
+
+// Debounce window for the ref listing inputs, matching the resource table's
+// search debounce: the repository URL arrives keystroke by keystroke and
+// each distinct (url, credential) pair is a fresh listing POST whose probe
+// fallback may schedule a real fleet solve, so the pair must settle first.
+const gitRefDebounceMs = 500
+
+// Searchable ref picker for a build node's git source, fed by the host's
+// two-stage listing (direct ls-remote, probe fallback): pick from the
+// branch/tag list only, with the empty value keeping the "default (HEAD)"
+// semantics. The variable-expression channel exists because a branch may be
+// chosen at run time — a value containing "{{" (or a switch via the panel
+// entry) turns the field into free expression input, unvalidated against
+// the list; clearing it drops back to the picker. When both listing stages
+// fail the field degrades to manual entry so the spec stays editable.
+function GitRefField({
+  url,
+  credential,
+  value,
+  onChange,
+  templateVars,
+}: {
+  url: string
+  credential: string
+  value: string
+  onChange: (v: string) => void
+  templateVars: PropsFormShared['templateVars']
+}) {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+  // Explicit switch into expression mode via the panel entry; a value that
+  // already carries "{{" reads as one without it.
+  const [exprMode, setExprMode] = useState(false)
+  const [probeStage, setProbeStage] = useState(false)
+  // A templated URL only resolves at run time, so its refs cannot be
+  // listed; an empty URL has nothing to list yet.
+  const listable = url !== '' && !url.includes('{{')
+  // The listing fetches the settled (debounced) inputs, and only once the
+  // picker is actually open — no listing POST, and so no probe fallback
+  // solve, fires per keystroke or while the panel is closed. Closing the
+  // picker cancels whatever is still in flight (see the cancel effect).
+  const [listingUrl, setListingUrl] = useState(url)
+  const [listingCredential, setListingCredential] = useState(credential)
+  const listingDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    if (listingUrl === url && listingCredential === credential) return
+    if (listingDebounceRef.current) clearTimeout(listingDebounceRef.current)
+    listingDebounceRef.current = setTimeout(() => {
+      setListingUrl(url)
+      setListingCredential(credential)
+    }, gitRefDebounceMs)
+    return () => {
+      if (listingDebounceRef.current) clearTimeout(listingDebounceRef.current)
+    }
+  }, [url, credential, listingUrl, listingCredential])
+  const { data, isLoading, isError } = useGitRefs(
+    listingUrl,
+    listingCredential,
+    listable && open
+  )
+  const isExpr = exprMode || value.includes('{{')
+  const queryClient = useQueryClient()
+  useEffect(() => {
+    if (open) return
+    // Closing the picker cancels an in-flight listing: the abort travels to
+    // the server (the probe runs on the request context), releasing the
+    // runtime lease a slow fallback would otherwise hold for its whole
+    // budget.
+    queryClient.cancelQueries({ queryKey: ['workflow', 'git-refs'] })
+  }, [open, queryClient])
+
+  useEffect(() => {
+    if (!isLoading) {
+      setProbeStage(false)
+      return
+    }
+    setProbeStage(false)
+    const timer = setTimeout(() => setProbeStage(true), gitRefDirectBudgetMs)
+    return () => clearTimeout(timer)
+  }, [isLoading, listingUrl, listingCredential])
+
+  if (isExpr) {
+    return (
+      <Field
+        label={t('workflow.props.gitRef')}
+        labelExtra={
+          <Badge variant="secondary">
+            {t('workflow.props.gitRefVariable')}
+          </Badge>
+        }
+      >
+        <TemplateInput
+          {...templateVars}
+          value={value}
+          onValueChange={(v) => {
+            // Clearing the expression drops back to the dropdown picker.
+            if (v === '') setExprMode(false)
+            onChange(v)
+          }}
+          placeholder="{{trigger.branch}}"
+        />
+        <p className="text-[11px] leading-4 text-muted-foreground">
+          {t('workflow.props.gitRefExprHint')}
+        </p>
+      </Field>
+    )
+  }
+
+  if (!listable) {
+    return (
+      <Field label={t('workflow.props.gitRef')}>
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            disabled
+            className="w-full justify-between font-normal"
+          >
+            <span className="truncate text-muted-foreground">
+              {url === ''
+                ? t('workflow.props.gitRefNeedsUrl')
+                : t('workflow.props.gitRefUrlTemplated')}
+            </span>
+            <IconChevronDown className="h-4 w-4 shrink-0 opacity-50" />
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="shrink-0 whitespace-nowrap"
+            onClick={() => setExprMode(true)}
+          >
+            {t('workflow.props.gitRefUseExpr')}
+          </Button>
+        </div>
+      </Field>
+    )
+  }
+
+  if (isError) {
+    // Both listing stages failed: manual entry keeps the spec editable
+    // until the url or credential changes and the listing succeeds again.
+    return (
+      <Field label={t('workflow.props.gitRef')}>
+        <Input
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="main"
+        />
+        <p className="text-[11px] leading-4 text-destructive">
+          {t('workflow.props.gitRefManualHint')}
+        </p>
+      </Field>
+    )
+  }
+
+  const branches = data?.branches ?? []
+  const tags = data?.tags ?? []
+  // A saved ref missing from the listing (stale branch, commit SHA) still
+  // echoes so the spec never silently loses its value.
+  const echo =
+    value !== '' && !branches.includes(value) && !tags.includes(value)
+      ? value
+      : undefined
+  const renderItem = (name: string, echoLabel?: string) => (
+    <CommandItem
+      key={name}
+      value={name}
+      onSelect={() => {
+        onChange(name)
+        setOpen(false)
+      }}
+    >
+      <IconCheck
+        className={cn(
+          'mr-2 h-4 w-4 shrink-0',
+          name === value ? 'opacity-100' : 'opacity-0'
+        )}
+      />
+      <span className="truncate font-mono text-xs">{name}</span>
+      {echoLabel && (
+        <span className="ml-auto shrink-0 pl-2 text-xs text-muted-foreground">
+          {echoLabel}
+        </span>
+      )}
+    </CommandItem>
+  )
+  return (
+    <Field label={t('workflow.props.gitRef')}>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            type="button"
+            variant="outline"
+            role="combobox"
+            aria-expanded={open}
+            className="w-full justify-between font-normal"
+          >
+            <span
+              className={cn(
+                'truncate',
+                value === '' && 'text-muted-foreground'
+              )}
+            >
+              {value !== '' ? value : t('workflow.props.gitRefDefault')}
+            </span>
+            <IconChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent
+          align="start"
+          className="w-[var(--radix-popover-trigger-width)] p-0"
+        >
+          <Command>
+            <CommandInput
+              placeholder={t('workflow.props.gitRefSearch')}
+              className="h-9"
+            />
+            <CommandList>
+              {isLoading ? (
+                <p className="px-3 py-6 text-center text-xs text-muted-foreground">
+                  {probeStage
+                    ? t('workflow.props.gitRefLoadingProbe')
+                    : t('workflow.props.gitRefLoadingDirect')}
+                </p>
+              ) : (
+                <>
+                  <CommandEmpty>{t('workflow.props.gitRefEmpty')}</CommandEmpty>
+                  <CommandItem
+                    value={t('workflow.props.gitRefDefault')}
+                    onSelect={() => {
+                      onChange('')
+                      setOpen(false)
+                    }}
+                  >
+                    <IconCheck
+                      className={cn(
+                        'mr-2 h-4 w-4 shrink-0',
+                        value === '' ? 'opacity-100' : 'opacity-0'
+                      )}
+                    />
+                    {t('workflow.props.gitRefDefault')}
+                  </CommandItem>
+                  {echo && renderItem(echo, t('workflow.props.currentValue'))}
+                  {branches.length > 0 && (
+                    <CommandGroup heading={t('workflow.props.gitRefBranches')}>
+                      {branches.map((branch) => renderItem(branch))}
+                    </CommandGroup>
+                  )}
+                  {tags.length > 0 && (
+                    <CommandGroup heading={t('workflow.props.gitRefTags')}>
+                      {tags.map((tag) => renderItem(tag))}
+                    </CommandGroup>
+                  )}
+                </>
+              )}
+            </CommandList>
+          </Command>
+          <div className="border-t p-1">
+            {data?.source === 'probe' && (
+              <p className="px-2 pb-1 pt-1.5 text-[11px] leading-4 text-muted-foreground">
+                {t('workflow.props.gitRefProbeSource')}
+              </p>
+            )}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="w-full justify-start font-normal text-muted-foreground"
+              onClick={() => {
+                setExprMode(true)
+                setOpen(false)
+              }}
+            >
+              {t('workflow.props.gitRefUseExpr')}
+            </Button>
+          </div>
+        </PopoverContent>
+      </Popover>
+    </Field>
+  )
+}
+
 function BuildPropsForm({
   node,
   patchProps,
@@ -611,14 +904,13 @@ function BuildPropsForm({
         />
       </Field>
       {sourceKind === 'git' && (
-        <Field label={t('workflow.props.gitRef')}>
-          <TemplateInput
-            {...templateVars}
-            value={readNestedString(node, 'git', 'ref')}
-            onValueChange={(v) => setGit('ref', v)}
-            placeholder="main"
-          />
-        </Field>
+        <GitRefField
+          url={gitUrl}
+          credential={savedGitCredential}
+          value={readNestedString(node, 'git', 'ref')}
+          onChange={(v) => setGit('ref', v)}
+          templateVars={templateVars}
+        />
       )}
       {sourceKind === 'git' && (
         <Field

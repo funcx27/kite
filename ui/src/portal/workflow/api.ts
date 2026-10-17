@@ -661,6 +661,49 @@ export const previewDockerfile = (req: DockerfilePreviewRequest) =>
 export const useDockerfilePreviewMutation = () =>
   useMutation({ mutationFn: previewDockerfile })
 
+// ── Git ref listing (build node editor) ──
+
+// POST /buildfleet/git-refs lists a repository's branches and tags in two
+// server-side stages: a direct host ls-remote first, then (on its failure) a
+// probe through a build provider whose buildkitd runs the ls-remote. source
+// reports which stage answered, so the UI can explain a slow response.
+export interface GitRefsRequest {
+  url: string
+  credential?: string
+  provider?: string
+}
+
+export interface GitRefsResponse {
+  branches: string[]
+  tags: string[]
+  source: 'direct' | 'probe'
+}
+
+export const fetchGitRefs = (req: GitRefsRequest, signal?: AbortSignal) =>
+  workflowRequest<GitRefsResponse>('/buildfleet/git-refs', {
+    method: 'POST',
+    body: JSON.stringify(req),
+    // workflowRequest spreads init into fetch, so the signal rides along:
+    // aborting cancels the HTTP request — and the server-side probe with
+    // it, since the handler runs the solve on the request context.
+    signal,
+  })
+
+// Keyed by (url, credential): changing either re-lists. retry is off — a
+// failed two-stage listing surfaces quickly so the ref field can degrade to
+// manual entry instead of hammering a unreachable repo. The queryFn takes
+// the context signal so React Query aborts the request when it is
+// cancelled (a same-key refetch supersede, or the picker's close-time
+// cancelQueries) — the abort travels to the server and stops its probe.
+export const useGitRefs = (url: string, credential: string, enabled: boolean) =>
+  useQuery({
+    queryKey: ['workflow', 'git-refs', url, credential],
+    queryFn: ({ signal }) =>
+      fetchGitRefs({ url, credential: credential || undefined }, signal),
+    enabled,
+    retry: false,
+  })
+
 // Re-exported for the settings-sections entry (keeps the host import surface
 // to the workflow module only).
 export type { CredentialPayload, ParamSpec, TriggerConfig }

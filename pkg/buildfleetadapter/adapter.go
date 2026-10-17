@@ -168,6 +168,7 @@ func (d *Deps) RegisterRoutes(api *gin.RouterGroup) {
 	api.GET("/status", d.handleStatus)
 	api.GET("/cachestat", d.handleCacheStat)
 	api.POST("/dockerfile-preview", d.handleDockerfilePreview)
+	api.POST("/git-refs", d.handleGitRefs)
 	d.RegisterProviderRoutes(api)
 }
 
