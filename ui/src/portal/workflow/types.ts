@@ -278,6 +278,9 @@ export interface BuildProvider {
   podCpu: number
   podMemoryGi: number
   cache: BuildProviderCache | null
+  // Node names the buildkitd pods are pinned to via node affinity. k8s
+  // only; empty = any schedulable node.
+  nodes: string[]
 }
 
 // Effective built-in defaults the UI displays in the create dialog instead
@@ -315,6 +318,9 @@ export interface BuildProviderFields {
   podCpu?: number
   podMemoryGi?: number
   cache?: BuildProviderCache | null
+  // k8s only: node names pinning the buildkitd pods. PUT semantics — the
+  // full replacement, an empty array clears the pin.
+  nodes?: string[]
 }
 
 export interface CreateBuildProviderRequest extends BuildProviderFields {

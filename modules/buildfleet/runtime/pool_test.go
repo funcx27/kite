@@ -217,10 +217,11 @@ func TestProjectAffinity(t *testing.T) {
 
 	l2.Release()
 
-	// Instance removal clears affinity entries.
+	// Instance removal clears affinity entries. Both runtimes are marked
+	// failed so the min-1 warm keep-alive holds nothing back here.
 	p.mu.Lock()
-	rt := p.runtimes[first]
-	rt.State = Failed
+	p.runtimes[first].State = Failed
+	p.runtimes[second].State = Failed
 	p.mu.Unlock()
 	p.reapIdleFor(p.provider, context.Background(), 0)
 	p.mu.Lock()
@@ -260,17 +261,32 @@ func TestAffinityRespectsProviderPin(t *testing.T) {
 func TestReaperWorksAcrossMulti(t *testing.T) {
 	a := &countingProvider{name: "a", cap: resource.Resources{CPU: 8, Memory: 8 * resource.Giga}}
 	p := NewPool(MultiProvider(NamedProvider{Name: "docker-a", Provider: a}))
-	l, err := p.Acquire(context.Background(), Spec{Resources: oneCPU})
+	l1, err := p.Acquire(context.Background(), Spec{Resources: oneCPU})
 	if err != nil {
 		t.Fatal(err)
 	}
-	l.Release()
+	// A second warm instance of the same provider: the reaper must dispose
+	// expired ones through the Multi ownership map while the min-1 warm
+	// keep-alive holds the provider's last instance back.
+	l2, err := p.Acquire(context.Background(), Spec{Resources: oneCPU})
+	if err != nil {
+		t.Fatal(err)
+	}
+	l1.Release()
+	l2.Release()
 	p.StartReaper(context.Background(), 50*time.Millisecond, 100*time.Millisecond)
 	time.Sleep(400 * time.Millisecond)
 	p.mu.Lock()
-	_, ok := p.runtimes[l.Runtime().ID]
+	remaining := len(p.runtimes)
+	var kept *Runtime
+	for _, r := range p.runtimes {
+		kept = r
+	}
 	p.mu.Unlock()
-	if ok {
-		t.Fatal("idle runtime must be reaped when the pool provider is a Multi")
+	if remaining != 1 {
+		t.Fatalf("one warm runtime must survive as keep-alive, remaining: %d", remaining)
+	}
+	if kept.State != Warm {
+		t.Fatalf("kept runtime state: %s", kept.State)
 	}
 }

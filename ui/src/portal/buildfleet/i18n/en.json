@@ -65,6 +65,7 @@
       "memory": "Memory",
       "unnamedProvider": "default",
       "runtimeId": "Runtime",
+      "node": "Node",
       "state": "State",
       "addr": "Address",
       "idle": "Idle",

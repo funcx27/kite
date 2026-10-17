@@ -221,7 +221,8 @@ func (p *Provider) Provision(ctx context.Context, spec runtime.Spec) (*runtime.R
 	}
 
 	p.trackLive(id, spec.Resources)
-	if err := p.waitReady(ctx, id); err != nil {
+	nodeName, err := p.waitReady(ctx, id)
+	if err != nil {
 		_ = p.Dispose(context.WithoutCancel(ctx), id)
 		return nil, err
 	}
@@ -235,10 +236,11 @@ func (p *Provider) Provision(ctx context.Context, spec runtime.Spec) (*runtime.R
 		addr = "127.0.0.1:" + strconv.Itoa(local)
 	}
 	return &runtime.Runtime{
-		ID:    id,
-		Spec:  spec,
-		Addr:  addr,
-		State: runtime.Warm,
+		ID:       id,
+		Spec:     spec,
+		Addr:     addr,
+		NodeName: nodeName,
+		State:    runtime.Warm,
 	}, nil
 }
 
@@ -323,8 +325,9 @@ func (p *Provider) Dispose(ctx context.Context, id string) error {
 	return del(cs.Services(p.cfg.Namespace).Delete(ctx, id, metav1.DeleteOptions{}), "service")
 }
 
-// waitReady polls the pod Ready condition every 500ms until ReadyTimeout.
-func (p *Provider) waitReady(ctx context.Context, id string) error {
+// waitReady polls the pod Ready condition every 500ms until ReadyTimeout,
+// returning the node the ready pod was scheduled onto.
+func (p *Provider) waitReady(ctx context.Context, id string) (string, error) {
 	deadline := time.Now().Add(p.cfg.ReadyTimeout)
 	for time.Now().Before(deadline) {
 		pod, err := p.clientset().CoreV1().Pods(p.cfg.Namespace).
@@ -332,17 +335,17 @@ func (p *Provider) waitReady(ctx context.Context, id string) error {
 		if err == nil {
 			for _, c := range pod.Status.Conditions {
 				if c.Type == corev1.PodReady && c.Status == corev1.ConditionTrue {
-					return nil
+					return pod.Spec.NodeName, nil
 				}
 			}
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("k8s provision: wait ready %s: %w", id, ctx.Err())
+			return "", fmt.Errorf("k8s provision: wait ready %s: %w", id, ctx.Err())
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
-	return fmt.Errorf("k8s provision: ready timeout for %s", id)
+	return "", fmt.Errorf("k8s provision: ready timeout for %s", id)
 }
 
 func (p *Provider) buildPod(id string, spec runtime.Spec, tmpl *PodTemplate) *corev1.Pod {
@@ -562,7 +565,13 @@ func (p *Provider) adopt(ctx context.Context, pod *corev1.Pod) (*runtime.Runtime
 	}}
 	spec = p.withStartupCost(spec)
 	p.trackLive(pod.Name, spec.Resources)
-	return &runtime.Runtime{ID: pod.Name, Spec: spec, Addr: addr, State: runtime.Warm}, true
+	return &runtime.Runtime{
+		ID:       pod.Name,
+		Spec:     spec,
+		Addr:     addr,
+		NodeName: pod.Spec.NodeName,
+		State:    runtime.Warm,
+	}, true
 }
 
 func (p *Provider) withStartupCost(spec runtime.Spec) runtime.Spec {

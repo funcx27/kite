@@ -65,6 +65,7 @@
       "memory": "内存",
       "unnamedProvider": "默认",
       "runtimeId": "运行时",
+      "node": "节点",
       "state": "状态",
       "addr": "地址",
       "idle": "空闲时长",

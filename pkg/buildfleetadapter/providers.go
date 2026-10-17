@@ -16,6 +16,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
 
 	"github.com/funcx27/kite/modules/buildfleet/config"
@@ -190,6 +191,28 @@ func (d *Deps) k8sProviderConfig(row model.BuildProvider) (config.Provider, erro
 	if row.ReadyTimeoutSeconds > 0 {
 		pc.ReadyTimeout = (time.Duration(row.ReadyTimeoutSeconds) * time.Second).String()
 	}
+	if len(row.Nodes) > 0 {
+		// Node pinning rides the declarative pod template (and its config
+		// gen), so a node-list change sheds stale pods on reconcile. Only
+		// tolerations are added — nodes are never tainted on the
+		// provider's behalf.
+		pc.PodTemplate = &config.PodTemplate{
+			Affinity: &corev1.Affinity{
+				NodeAffinity: &corev1.NodeAffinity{
+					RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+						NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+							MatchExpressions: []corev1.NodeSelectorRequirement{{
+								Key:      "kubernetes.io/hostname",
+								Operator: corev1.NodeSelectorOpIn,
+								Values:   row.Nodes,
+							}},
+						}},
+					},
+				},
+			},
+			Tolerations: []corev1.Toleration{{Operator: corev1.TolerationOpExists}},
+		}
+	}
 	// API-registered providers skip the config file's providerDefaults merge,
 	// so an enabled cache must carry every field complete — the module fails
 	// loudly on empty image/size/gcSchedule.
@@ -303,6 +326,7 @@ type buildProviderJSON struct {
 	PodCPU              float64                 `json:"podCpu"`
 	PodMemoryGi         float64                 `json:"podMemoryGi"`
 	Cache               *buildProviderCacheJSON `json:"cache"`
+	Nodes               []string                `json:"nodes"`
 }
 
 // effectiveType maps pre-type rows ("") onto k8s.
@@ -345,6 +369,9 @@ func toBuildProviderJSON(r model.BuildProvider) buildProviderJSON {
 			GCSchedule:   r.Cache.GCSchedule,
 		}
 	}
+	// Nil stores as null in the JSON column; serve [] so clients can diff
+	// PUT bodies without a null special case.
+	out.Nodes = append([]string{}, r.Nodes...)
 	return out
 }
 
@@ -436,6 +463,9 @@ type buildProviderFields struct {
 	PodCPU              float64                 `json:"podCpu"`
 	PodMemoryGi         float64                 `json:"podMemoryGi"`
 	Cache               *buildProviderCacheJSON `json:"cache"`
+	// Nodes pins the provider's pods to cluster nodes (k8s only); PUT
+	// semantics — the full replacement, an empty list clears the pin.
+	Nodes []string `json:"nodes"`
 }
 
 // applyBuildProviderFields copies the shared fields onto row and validates
@@ -475,7 +505,21 @@ func (d *Deps) applyBuildProviderFields(row *model.BuildProvider, f buildProvide
 	} else {
 		row.Cache = nil
 	}
+	// Full-replacement semantics: an empty list clears the pin (nil).
+	row.Nodes = trimmedNodes(f.Nodes)
 	return nil
+}
+
+// trimmedNodes normalizes a requested node list: entries trimmed, empties
+// dropped; nil when nothing remains.
+func trimmedNodes(raw []string) []string {
+	var out []string
+	for _, n := range raw {
+		if n = strings.TrimSpace(n); n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 type createBuildProviderRequest struct {
@@ -541,7 +585,13 @@ func (d *Deps) handleCreateProvider(c *gin.Context) {
 	}
 	if ptype == "docker" {
 		// Docker providers build on the kite host's daemon: no cluster row,
-		// no namespace, no kubeconfig export.
+		// no namespace, no kubeconfig export. applyBuildProviderFields
+		// below clears Nodes (an empty list is the only legal docker value
+		// at this point).
+		if len(req.Nodes) > 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "nodes are only supported for k8s providers"})
+			return
+		}
 		row.Cluster, row.Namespace = "", ""
 		applyDockerFields(&row, req.Address, req.TLS)
 	} else {
@@ -641,6 +691,10 @@ func (d *Deps) handleUpdateProvider(c *gin.Context) {
 	row.CPU = req.CPU
 	row.Memory = strings.TrimSpace(req.Memory)
 	if effectiveType(*row) == "docker" {
+		if len(req.Nodes) > 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "nodes are only supported for k8s providers"})
+			return
+		}
 		row.Cluster, row.Namespace = "", ""
 		applyDockerFields(row, req.Address, req.TLS)
 	} else if !validDNS1123Label(row.Namespace) {

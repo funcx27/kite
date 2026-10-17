@@ -54,6 +54,10 @@ type BuildProvider struct {
 	// providerDefaults merge, so an enabled cache must carry its fields
 	// complete. k8s only.
 	Cache *BuildProviderCache `json:"cache" gorm:"serializer:json;type:text"`
+	// Nodes pins buildkitd pods to specific cluster nodes via node
+	// affinity plus a tolerate-everything toleration (k8s only); nil or
+	// empty = any schedulable node.
+	Nodes []string `json:"nodes" gorm:"serializer:json;type:text"`
 }
 
 // BuildProviderTLS mirrors buildfleet's docker mutual-TLS block; the fields

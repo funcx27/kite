@@ -11,10 +11,20 @@ import {
   DockerIcon,
   KubernetesIcon,
 } from '@/portal/application/components/brand-icons'
-import { IconPencil, IconPlus, IconTrash } from '@tabler/icons-react'
+import {
+  IconChevronDown,
+  IconPencil,
+  IconPlus,
+  IconTrash,
+} from '@tabler/icons-react'
+import { useQuery } from '@tanstack/react-query'
+import type { NodeList } from 'kubernetes-types/core/v1'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { apiClient } from '@/lib/api-client'
+import { withCurrentClusterPath } from '@/lib/current-cluster'
+import { cn } from '@/lib/utils'
 import { useCluster } from '@/hooks/use-cluster'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -36,6 +46,11 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
 import {
   Select,
   SelectContent,
@@ -115,6 +130,8 @@ interface ProviderForm {
   cacheGcSchedule: string
   // Buildkitd readiness wait in seconds; k8s only.
   readyTimeoutSeconds: string
+  // Cluster nodes the buildkitd pods are pinned to; k8s only.
+  nodes: string[]
   setDefault: boolean
 }
 
@@ -156,6 +173,7 @@ const emptyForm = (defaults: BuildProviderDefaults): ProviderForm => ({
   readyTimeoutSeconds: defaults.readyTimeoutSeconds
     ? String(defaults.readyTimeoutSeconds)
     : '',
+  nodes: [],
   setDefault: false,
 })
 
@@ -189,6 +207,7 @@ const formOf = (
   readyTimeoutSeconds: provider.readyTimeoutSeconds
     ? String(provider.readyTimeoutSeconds)
     : '',
+  nodes: provider.nodes ?? [],
   setDefault: isDefault,
 })
 
@@ -198,6 +217,28 @@ const positiveOrUndefined = (raw: string) => {
   if (trimmed === '') return { value: undefined, error: false }
   const n = Number(trimmed)
   return { value: n, error: !Number.isFinite(n) || n <= 0 }
+}
+
+// Node names of the cluster selected in the form (not the UI's current
+// cluster): node pinning targets the provider's own cluster. Read errors
+// (e.g. no nodes/list permission) leave the query in its error state so the
+// picker can say so instead of blocking the form.
+function useProviderNodes(cluster: string | undefined) {
+  return useQuery({
+    queryKey: ['build-provider-nodes', cluster],
+    queryFn: async (): Promise<string[]> => {
+      const list = await apiClient.get<NodeList>(
+        withCurrentClusterPath('/nodes', cluster ?? null)
+      )
+      return (list.items ?? [])
+        .map((node) => node.metadata?.name ?? '')
+        .filter((name) => name !== '')
+        .sort()
+    },
+    enabled: !!cluster,
+    staleTime: 60 * 1000,
+    retry: false,
+  })
 }
 
 export function BuildProvidersManagement() {
@@ -230,6 +271,10 @@ export function BuildProvidersManagement() {
     emptyForm(DEFAULTS_FALLBACK)
   )
   const [deleteTarget, setDeleteTarget] = useState<BuildProvider | null>(null)
+
+  const nodesQuery = useProviderNodes(
+    form.type === 'k8s' && form.cluster !== '' ? form.cluster : undefined
+  )
 
   // Referenced-by hint only: deletion is never blocked, the run-time error
   // semantics of a dangling provider reference are already defined.
@@ -381,6 +426,9 @@ export function BuildProvidersManagement() {
       podCpu: isDocker ? undefined : podCpu.value,
       podMemoryGi: isDocker ? undefined : podMemoryGi.value,
       cache: isDocker ? null : cache,
+      nodes: isDocker
+        ? []
+        : f.nodes.map((n) => n.trim()).filter((n) => n !== ''),
     }
   }
 
@@ -784,7 +832,12 @@ export function BuildProvidersManagement() {
                   </Label>
                   <Select
                     value={form.cluster}
-                    onValueChange={(cluster) => setForm({ ...form, cluster })}
+                    onValueChange={(cluster) =>
+                      // Node pins are cluster-scoped: switching the target
+                      // cluster drops them instead of silently carrying
+                      // names that do not exist there.
+                      setForm({ ...form, cluster, nodes: [] })
+                    }
                   >
                     <SelectTrigger className="w-full">
                       <SelectValue
@@ -970,6 +1023,21 @@ export function BuildProvidersManagement() {
                     {t('workflow.buildProviders.readyTimeoutHint')}
                   </p>
                 </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">
+                    {t('workflow.buildProviders.nodes')}
+                  </Label>
+                  <NodesSelect
+                    values={form.nodes}
+                    options={nodesQuery.data ?? []}
+                    loading={nodesQuery.isLoading}
+                    error={nodesQuery.isError}
+                    onChange={(nodes) => setForm({ ...form, nodes })}
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    {t('workflow.buildProviders.nodesHint')}
+                  </p>
+                </div>
               </>
             )}
 
@@ -1039,6 +1107,89 @@ export function BuildProvidersManagement() {
 
 function SectionLabel({ label }: { label: string }) {
   return <p className="text-xs font-semibold text-muted-foreground">{label}</p>
+}
+
+// Node pinning multi-select: options are the form cluster's node names;
+// stored values missing from the list (node left the cluster) stay listed
+// and removable so an edit never silently drops a pin.
+function NodesSelect({
+  values,
+  options,
+  loading,
+  error,
+  onChange,
+}: {
+  values: string[]
+  options: string[]
+  loading: boolean
+  error: boolean
+  onChange: (next: string[]) => void
+}) {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+  const merged = [...new Set([...options, ...values])]
+  const toggle = (node: string) =>
+    onChange(
+      values.includes(node)
+        ? values.filter((v) => v !== node)
+        : [...values, node].sort()
+    )
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className="w-full justify-between font-normal"
+        >
+          <span
+            className={cn(
+              'truncate',
+              values.length === 0 && 'text-muted-foreground'
+            )}
+          >
+            {values.length > 0
+              ? values.join(', ')
+              : t('workflow.buildProviders.nodesPlaceholder')}
+          </span>
+          <IconChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-64 p-1" align="start">
+        {loading ? (
+          <p className="px-2 py-1.5 text-sm text-muted-foreground">
+            {t('common.messages.loading')}
+          </p>
+        ) : error ? (
+          <p className="px-2 py-1.5 text-sm text-muted-foreground">
+            {t('workflow.buildProviders.nodesLoadFailed')}
+          </p>
+        ) : merged.length === 0 ? (
+          <p className="px-2 py-1.5 text-sm text-muted-foreground">
+            {t('workflow.buildProviders.nodesEmpty')}
+          </p>
+        ) : (
+          <div className="max-h-48 overflow-y-auto">
+            {merged.map((node) => (
+              <button
+                key={node}
+                type="button"
+                role="option"
+                aria-selected={values.includes(node)}
+                onClick={() => toggle(node)}
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent"
+              >
+                <Checkbox checked={values.includes(node)} />
+                <span className="font-mono text-xs">{node}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
+  )
 }
 
 // NumberField is a labeled numeric input with a trailing unit.

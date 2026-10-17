@@ -234,6 +234,12 @@ func (p *Pool) reapIdleFor(provider Provider, ctx context.Context, idleTTL time.
 	p.mu.Lock()
 	now := time.Now()
 	var victims []*Runtime
+	// Expired warm candidates bucketed by owning provider, plus each
+	// bucket's total warm count: a pass that would take a provider's last
+	// warm instance holds one back (min-1 keep-alive), so the next build
+	// reuses it instead of paying a cold provision.
+	expired := map[string][]*Runtime{}
+	warm := map[string]int{}
 	for _, r := range p.runtimes {
 		if !p.ownedBy(provider, r) {
 			continue
@@ -244,7 +250,25 @@ func (p *Pool) reapIdleFor(provider Provider, ctx context.Context, idleTTL time.
 			// return capacity instead of waiting for manual Drain.
 			r.State = Draining
 			victims = append(victims, r)
-		case r.State == Warm && now.Sub(r.lastReleased) > idleTTL:
+		case r.State == Warm:
+			key := p.OwnerName(r.ID)
+			warm[key]++
+			if now.Sub(r.lastReleased) > idleTTL {
+				expired[key] = append(expired[key], r)
+			}
+		}
+	}
+	for key, cands := range expired {
+		if len(cands) == warm[key] {
+			// Every warm instance of this provider is past the TTL; keep
+			// the most recently released one — it has the longest idle
+			// runway before the next pass.
+			sort.Slice(cands, func(i, j int) bool {
+				return cands[i].lastReleased.Before(cands[j].lastReleased)
+			})
+			cands = cands[:len(cands)-1]
+		}
+		for _, r := range cands {
 			r.State = Draining // block reacquisition while disposing
 			victims = append(victims, r)
 		}
@@ -306,6 +330,8 @@ type Stat struct {
 	ID    string
 	State State
 	Addr  string
+	// NodeName is the cluster node the runtime pod runs on (k8s only).
+	NodeName string
 	// Owner is the config name of the provider that provisioned the
 	// runtime (empty for unnamed single-provider pools).
 	Owner   string
@@ -324,11 +350,12 @@ func (p *Pool) Stats() []Stat {
 	out := make([]Stat, 0, len(p.runtimes))
 	for _, r := range p.runtimes {
 		s := Stat{
-			ID:     r.ID,
-			State:  r.State,
-			Addr:   r.Addr,
-			CPU:    r.Spec.Resources.CPU,
-			Memory: r.Spec.Resources.Memory,
+			ID:       r.ID,
+			State:    r.State,
+			Addr:     r.Addr,
+			NodeName: r.NodeName,
+			CPU:      r.Spec.Resources.CPU,
+			Memory:   r.Spec.Resources.Memory,
 		}
 		s.Owner = p.OwnerName(r.ID)
 		if r.State == Warm {

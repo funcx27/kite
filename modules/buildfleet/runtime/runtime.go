@@ -35,10 +35,14 @@ type Spec struct {
 }
 
 type Runtime struct {
-	ID    string
-	Spec  Spec
-	Addr  string // buildkitd gRPC address
-	State State
+	ID   string
+	Spec Spec
+	Addr string // buildkitd gRPC address
+	// NodeName is the cluster node the runtime pod landed on, recorded by
+	// the k8s provider at provision/adopt time; empty for node-less
+	// providers (docker) or before placement.
+	NodeName string
+	State    State
 
 	lastReleased time.Time
 }

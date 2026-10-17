@@ -580,6 +580,7 @@ type runtimeStatusJSON struct {
 	ID          string  `json:"id"`
 	State       string  `json:"state"`
 	Addr        string  `json:"addr"`
+	NodeName    string  `json:"nodeName"`
 	Provider    string  `json:"provider"`
 	CPU         float64 `json:"cpu"`
 	MemoryBytes int64   `json:"memoryBytes"`
@@ -606,6 +607,7 @@ func (d *Deps) handleStatus(c *gin.Context) {
 			ID:          r.ID,
 			State:       string(r.State),
 			Addr:        r.Addr,
+			NodeName:    r.NodeName,
 			Provider:    r.Owner,
 			CPU:         r.CPU,
 			MemoryBytes: int64(r.Memory),

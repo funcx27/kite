@@ -153,6 +153,7 @@ export function BuildStatusSection() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>{t('buildfleet.status.runtimeId')}</TableHead>
+                    <TableHead>{t('buildfleet.status.node')}</TableHead>
                     <TableHead>{t('buildfleet.status.state')}</TableHead>
                     <TableHead>{t('buildfleet.status.addr')}</TableHead>
                     <TableHead>{t('buildfleet.status.idle')}</TableHead>
@@ -163,6 +164,9 @@ export function BuildStatusSection() {
                     <TableRow key={runtime.id}>
                       <TableCell className="font-mono text-xs">
                         {runtime.id}
+                      </TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {runtime.nodeName || '-'}
                       </TableCell>
                       <TableCell>{runtime.state}</TableCell>
                       <TableCell className="font-mono text-xs">

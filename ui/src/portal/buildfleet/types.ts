@@ -66,6 +66,9 @@ export interface BuildRuntimeStatus {
   id: string
   state: string
   addr: string
+  // Cluster node the runtime pod runs on; '' when the provider has no
+  // placement (docker) or before scheduling.
+  nodeName: string
   provider: string
   cpu: number
   memoryBytes: number
