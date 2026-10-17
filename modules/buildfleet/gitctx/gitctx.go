@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -86,6 +87,127 @@ func Fetch(ctx context.Context, src Source) (*Result, error) {
 		return nil, err
 	}
 	return &Result{TarPath: tarPath, Commit: commit}, nil
+}
+
+// FileRead is one file's content read from a clone of a source's ref.
+type FileRead struct {
+	Content []byte
+	Commit  string
+	// Found reports whether the path named a regular file.
+	Found bool
+}
+
+// ReadFile clones src (the original ref — never a pre-resolved SHA, which
+// planClone would downgrade to a full clone) and reads one worktree file.
+// It skips Fetch's tar round-trip: a single file needs no tarball. A path
+// that names no regular file is Found=false, not an error.
+func ReadFile(ctx context.Context, src Source, name string) (*FileRead, error) {
+	auth, err := basicAuth(src)
+	if err != nil {
+		return nil, err
+	}
+	dir, err := os.MkdirTemp("", "buildfleet-git-read-*")
+	if err != nil {
+		return nil, fmt.Errorf("gitctx: temp dir: %w", err)
+	}
+	defer os.RemoveAll(dir)
+
+	cloneOpts := &git.CloneOptions{URL: src.URL, Auth: auth}
+	if refName, shallow, err := planClone(src.URL, src.Ref, auth); err != nil {
+		return nil, err
+	} else if shallow {
+		cloneOpts.Depth = 1
+		cloneOpts.ReferenceName = refName
+	}
+	repo, err := git.PlainCloneContext(ctx, dir, false, cloneOpts)
+	if err != nil {
+		return nil, fmt.Errorf("gitctx: clone %s: %w", src.URL, err)
+	}
+	commit, err := checkout(repo, src.Ref)
+	if err != nil {
+		return nil, err
+	}
+
+	root := dir
+	if src.Subdir != "" {
+		root = filepath.Join(dir, filepath.Clean("/"+src.Subdir))
+		if info, err := os.Stat(root); err != nil || !info.IsDir() {
+			return nil, fmt.Errorf("gitctx: subdir %q not found", src.Subdir)
+		}
+	}
+	p, rerr := resolveInRoot(root, name)
+	if rerr != nil {
+		// Missing, not a regular file, or a symlink that loops or tries to
+		// leave the context root: buildkit's context read would reject the
+		// last two, so they must never resolve to host files here — the
+		// preview reads them as absent.
+		return &FileRead{Commit: commit}, nil
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return nil, fmt.Errorf("gitctx: read %s: %w", name, err)
+	}
+	return &FileRead{Content: b, Commit: commit, Found: true}, nil
+}
+
+// resolveInRoot resolves a context-relative name inside root, following
+// symlinks only while the target and every intermediate path stay within
+// root — the confinement buildkit's context read applies, so a hostile
+// repo cannot steer the daemon at host files. The resolved path names a
+// regular file; any other outcome is an error.
+func resolveInRoot(root, name string) (string, error) {
+	const maxHops = 32
+	hops := 0
+	segs := strings.Split(strings.Trim(path.Clean("/"+name), "/"), "/")
+	cur := root
+	for _, seg := range segs {
+		if seg == "." || seg == "" {
+			continue
+		}
+		next := filepath.Join(cur, seg)
+		for {
+			fi, err := os.Lstat(next)
+			if err != nil {
+				return "", err
+			}
+			if fi.Mode()&os.ModeSymlink == 0 {
+				break
+			}
+			hops++
+			if hops > maxHops {
+				return "", fmt.Errorf("gitctx: too many symlink hops resolving %q", name)
+			}
+			target, err := os.Readlink(next)
+			if err != nil {
+				return "", err
+			}
+			if filepath.IsAbs(target) {
+				return "", fmt.Errorf("gitctx: symlink in %q has absolute target %q", name, target)
+			}
+			resolved := filepath.Join(filepath.Dir(next), target)
+			if !withinRoot(root, resolved) {
+				return "", fmt.Errorf("gitctx: symlink in %q escapes the context root", name)
+			}
+			next = resolved
+		}
+		cur = next
+	}
+	// The loop only chased symlinks; the answer itself must be a regular
+	// file (this also covers a name that cleaned down to the root).
+	fi, err := os.Lstat(cur)
+	if err != nil {
+		return "", err
+	}
+	if !fi.Mode().IsRegular() {
+		return "", fmt.Errorf("gitctx: %q is not a regular file", name)
+	}
+	return cur, nil
+}
+
+// withinRoot reports whether p is root or lives under it.
+func withinRoot(root, p string) bool {
+	rel, err := filepath.Rel(root, p)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // planClone decides the clone shape from the ref name via ls-remote:

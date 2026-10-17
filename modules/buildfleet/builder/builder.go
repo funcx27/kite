@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,7 +41,11 @@ type SolveInput struct {
 	Args              map[string]string
 	Platforms         []string
 	OutputRef         string // image ref to push, or "" for no push
-	Creds             creds.Table
+	// TarOut replaces the push export with a tar export written to this
+	// path: probe solves fetch context file content without a registry.
+	// Mutually exclusive with OutputRef in practice (a probe never pushes).
+	TarOut string
+	Creds  creds.Table
 	// CacheRef enables registry layer-cache round-trip (import at solve
 	// start, export on completion); empty disables both.
 	CacheRef string
@@ -115,7 +120,7 @@ func (b *Builder) solveOpt(ctx context.Context, in SolveInput) (*client.SolveOpt
 	opts := &client.SolveOpt{
 		Frontend:      "dockerfile.v0",
 		FrontendAttrs: attrs,
-		Exports:       pushExports(in.OutputRef),
+		Exports:       exports(in),
 		// Ref must be unique per solve: a warm runtime rejects a reused
 		// job ID ("job ID ... exists").
 		Ref: "buildfleet-" + rand.Text(),
@@ -257,6 +262,24 @@ func pingReady(ctx context.Context, c *client.Client) error {
 		return fmt.Errorf("%w: %w", ErrUnreachable, err)
 	}
 	return nil
+}
+
+// exports picks the solve's export: a tar file when TarOut is set (probe),
+// an image push when OutputRef is set, otherwise nothing.
+func exports(in SolveInput) []client.ExportEntry {
+	if in.TarOut != "" {
+		return []client.ExportEntry{{
+			Type: client.ExporterTar,
+			Output: func(map[string]string) (io.WriteCloser, error) {
+				f, err := os.Create(in.TarOut)
+				if err != nil {
+					return nil, fmt.Errorf("create tar export: %w", err)
+				}
+				return f, nil
+			},
+		}}
+	}
+	return pushExports(in.OutputRef)
 }
 
 func pushExports(outputRef string) []client.ExportEntry {

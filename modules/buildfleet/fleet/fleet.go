@@ -397,6 +397,41 @@ func sortedKV(m map[string]string) []string {
 }
 
 func (f *Fleet) build(ctx context.Context, req Request, cfg *buildConfig) (*BuildResult, error) {
+	run, err := f.runSolve(ctx, req, cfg, func(in *builder.SolveInput, owner string) {
+		// Layer-cache round-trip follows the serving provider (each
+		// provider may own its own cache registry) and the project
+		// identity derived from the request.
+		in.CacheRef = cacheRefFor(f.providerCacheBase(owner), req.OutputRef, sourceURLof(&req))
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &BuildResult{
+		Digest:    run.res.Digest,
+		ImageRef:  run.res.ImageRef,
+		Attempts:  run.attempts,
+		Ref:       cfg.ref,
+		Commit:    cfg.commit,
+		RuntimeID: run.runtimeID,
+		Provider:  run.provider,
+	}, nil
+}
+
+// solveRun is one completed solve with the runtime that produced it.
+type solveRun struct {
+	res       *builder.Result
+	runtimeID string
+	provider  string
+	attempts  int
+}
+
+// runSolve is the acquire -> solve -> release attempt loop behind Build and
+// ProbeFile: node-class errors fail over to the next runtime (bounded by
+// maxRetry), other errors surface immediately. tweak receives the fully
+// assembled SolveInput — source and context wiring identical to a real
+// build, so overrides cannot change how the context is resolved — plus the
+// serving provider's config name (for cache-ref derivation).
+func (f *Fleet) runSolve(ctx context.Context, req Request, cfg *buildConfig, tweak func(in *builder.SolveInput, owner string)) (*solveRun, error) {
 	cleanup, err := f.prepareContext(ctx, &req, cfg)
 	if err != nil {
 		return nil, err
@@ -411,6 +446,7 @@ func (f *Fleet) build(ctx context.Context, req Request, cfg *buildConfig) (*Buil
 		if err != nil {
 			return nil, fmt.Errorf("fleet: acquire: %w", err)
 		}
+		owner := f.pool.OwnerName(lease.Runtime().ID)
 		f.trackTask(lease.Runtime().ID, TaskInfo{
 			RuntimeID: lease.Runtime().ID,
 			Source:    taskSource(&req),
@@ -421,7 +457,7 @@ func (f *Fleet) build(ctx context.Context, req Request, cfg *buildConfig) (*Buil
 		if cfg.progress != nil {
 			cfg.progress(builder.Event{Start: &builder.StartEvent{
 				RuntimeID: lease.Runtime().ID,
-				Provider:  f.pool.OwnerName(lease.Runtime().ID),
+				Provider:  owner,
 				Addr:      lease.Runtime().Addr,
 				Attempt:   attempt,
 			}})
@@ -434,26 +470,16 @@ func (f *Fleet) build(ctx context.Context, req Request, cfg *buildConfig) (*Buil
 			cfg.progress = commitExtractor(cfg)
 		}
 		in := req.input(cfg)
-		// Layer-cache round-trip follows the serving provider (each
-		// provider may own its own cache registry) and the project
-		// identity derived from the request.
-		in.CacheRef = cacheRefFor(f.providerCacheBase(f.pool.OwnerName(lease.Runtime().ID)),
-			req.OutputRef, sourceURLof(&req))
+		if tweak != nil {
+			tweak(&in, owner)
+		}
 		statusCh := f.statusFor(cfg)
 		res, err := f.solver.Solve(ctx, lease.Runtime().Addr, in, statusCh)
 		f.awaitProgress(cfg)
 		if err == nil {
 			lease.Release()
 			f.untrackTask(lease.Runtime().ID)
-			return &BuildResult{
-				Digest:    res.Digest,
-				ImageRef:  res.ImageRef,
-				Attempts:  attempt,
-				Ref:       cfg.ref,
-				Commit:    cfg.commit,
-				RuntimeID: lease.Runtime().ID,
-				Provider:  f.pool.OwnerName(lease.Runtime().ID),
-			}, nil
+			return &solveRun{res: res, runtimeID: lease.Runtime().ID, provider: owner, attempts: attempt}, nil
 		}
 		if isNodeClass(err) {
 			// Node-class errors include transport hiccups (e.g. a
