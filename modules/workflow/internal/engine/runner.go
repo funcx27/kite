@@ -2,8 +2,11 @@ package engine
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"unicode"
 
@@ -29,8 +32,15 @@ type buildDeps interface {
 	ProviderFor(namespace string) (string, bool)
 	// DefaultRegistry resolves the credential center's default registry
 	// pointer; ok=false when no valid default exists. Drives
-	// applyDefaultRegistry.
+	// applyDefaultRegistry and build outputRef auto-naming.
 	DefaultRegistry() (credential, host string, ok bool)
+	// ResolveGitCommit resolves a git ref to its commit SHA (ls-remote,
+	// best-effort): an empty result means the commit could not be resolved.
+	ResolveGitCommit(ctx context.Context, url, ref, gitCredentialRef string) (string, error)
+	// ProbeDockerfile fetches one dockerfile from a git context (server
+	// mode: host-side shallow clone; runtime mode: fleet probe solve, whose
+	// commit is the one buildkitd itself resolved).
+	ProbeDockerfile(ctx context.Context, url, ref, subdir, path, mode, gitCredentialRef string) (exec.DockerfileProbe, error)
 }
 
 // buildRunner drives a build-image node (design §5.1).
@@ -81,7 +91,22 @@ func (r buildRunner) Run(ctx context.Context, rendered spec.Props, run store.Wor
 		return nil, fmt.Errorf("build node needs a git or http source")
 	}
 	if p.OutputRef == "" {
-		return nil, fmt.Errorf("build node needs outputRef")
+		if err := autoOutputRef(ctx, r.deps, &p, onLog); err != nil {
+			return nil, err
+		}
+	}
+	// Commit pin-back (a pin is set by auto-naming above, or by the engine
+	// stamping the git-var resolution onto the source): the build must
+	// produce the commit the tag or template rendered with. Server mode
+	// keeps the original ref (a SHA ref would downgrade planClone to a full
+	// clone) and verifies the checked-out HEAD; runtime mode replaces the
+	// ref with the exact SHA, so buildkitd's own resolution cannot race.
+	if source != nil && p.Git.PinnedCommit != "" {
+		if source.Mode == "runtime" {
+			source.Ref = p.Git.PinnedCommit
+		} else {
+			source.PinnedCommit = p.Git.PinnedCommit
+		}
 	}
 	applyDefaultRegistry(r.deps, run.TriggeredBy, &p)
 	// One spec field, two wire shapes (backend-authoritative rule): any
@@ -159,6 +184,148 @@ func needsRegistryPrefix(ref string) bool {
 		first = ref[:i]
 	}
 	return !strings.Contains(first, ".") && !strings.Contains(first, ":") && first != "localhost"
+}
+
+// autoOutputRef fills an empty outputRef with the content-addressed default
+// name <default-host>/<space>/<app>:<short-commit>[-<variant>]. The tag pins
+// the resolved commit; the variant fingerprint separates same-commit builds
+// that would produce different images. Any missing prerequisite keeps the
+// explicit-outputRef error, naming what is absent. Auto-naming is an
+// implicit git-variable use: it resolves the commit itself (reusing a pin
+// the engine already stamped for {{git.*}} renders), independent of the
+// explicit usesGitVars gate.
+func autoOutputRef(ctx context.Context, deps buildDeps, p *spec.BuildProps, onLog func(string)) error {
+	_, host, ok := deps.DefaultRegistry()
+	var missing []string
+	if !ok {
+		missing = append(missing, "a default registry")
+	}
+	if p.Space == "" {
+		missing = append(missing, "space")
+	}
+	if p.App == "" {
+		missing = append(missing, "app")
+	}
+	if p.Git == nil || p.Git.URL == "" {
+		missing = append(missing, "a git source (the tag carries its commit)")
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("build node needs outputRef (auto-naming is missing %s)", strings.Join(missing, ", "))
+	}
+	commit, content, err := resolveAutoNameInputs(ctx, deps, p, onLog)
+	if err != nil {
+		return err
+	}
+	tag := commit[:min(7, len(commit))]
+	if v := variantFingerprint(content, p.Args, p.Git.Subdir); v != "" {
+		tag += "-" + v
+	}
+	p.OutputRef = host + "/" + p.Space + "/" + p.App + ":" + tag
+	p.Git.PinnedCommit = commit
+	if onLog != nil {
+		onLog(fmt.Sprintf("auto-named output image %s\n", p.OutputRef))
+	}
+	return nil
+}
+
+// resolveAutoNameInputs resolves the tag commit and the dockerfile content
+// the variant fingerprint hashes. Content discipline: the fingerprint hashes
+// the dockerfile content, never its path — a path that cannot be fetched
+// (missing file, unreachable repo) fails the node instead of degrading to a
+// path-derived tag. Runtime mode always probes through a fleet solve: the
+// daemon may have no egress to the git server (buildkitd does), and the
+// probe's commit is by construction the one the following build fetches.
+func resolveAutoNameInputs(ctx context.Context, deps buildDeps, p *spec.BuildProps, onLog func(string)) (commit, content string, err error) {
+	v := strings.TrimSpace(p.Dockerfile)
+	inline := strings.ContainsFunc(v, unicode.IsSpace)
+	runtime := p.Git.Mode == "runtime"
+	path := v
+	if path == "" {
+		path = "Dockerfile"
+	}
+	// Inline content needs no fetch; runtime mode still probes so the
+	// commit comes from buildkitd's own resolution. The commit-only probe
+	// targets the conventional path — its content is ignored.
+	var probe *exec.DockerfileProbe
+	if !inline || runtime {
+		probePath := path
+		if inline {
+			probePath = "Dockerfile"
+		}
+		if onLog != nil {
+			onLog(fmt.Sprintf("auto-naming: fetching dockerfile %q\n", probePath))
+		}
+		pr, err := deps.ProbeDockerfile(ctx, p.Git.URL, p.Git.Ref, p.Git.Subdir, probePath, p.Git.Mode, p.GitCredentialRef)
+		if err != nil {
+			return "", "", fmt.Errorf("fetch dockerfile for auto-naming: %w", err)
+		}
+		probe = &pr
+	}
+	if !inline {
+		if !probe.Exists {
+			return "", "", fmt.Errorf("auto-naming requires the dockerfile content, but %q was not found in the build context", path)
+		}
+		content = probe.Content
+	} else {
+		content = v
+	}
+	switch {
+	case p.Git.PinnedCommit != "":
+		// Reuse the resolution the engine already ran for {{git.*}} renders.
+		commit = p.Git.PinnedCommit
+	case runtime:
+		commit = probe.Commit
+	default:
+		c, err := deps.ResolveGitCommit(ctx, p.Git.URL, p.Git.Ref, p.GitCredentialRef)
+		if err != nil {
+			return "", "", fmt.Errorf("resolve git commit for auto-naming: %w", err)
+		}
+		commit = c
+	}
+	if commit == "" {
+		shownRef := p.Git.Ref
+		if shownRef == "" {
+			shownRef = "HEAD"
+		}
+		// No git URL in the error: it may carry basic-auth userinfo, and
+		// node errors persist raw to NodeRun.error — the host-side
+		// redactor lives in a package this module cannot import.
+		return "", "", fmt.Errorf("auto-naming could not resolve the commit at ref %s", shownRef)
+	}
+	// The fingerprint must describe the artifact: when the dockerfile was
+	// read at a different commit than the tag carries, the ref moved
+	// mid-dispatch — fail deterministically; a retry re-resolves both.
+	if probe != nil && probe.Commit != "" && probe.Commit != commit {
+		return "", "", fmt.Errorf("git ref moved while auto-naming (dockerfile read at %s, commit resolved to %s); retry the run", probe.Commit, commit)
+	}
+	return commit, content, nil
+}
+
+// variantFingerprint derives the auto-name tag's variant part from the build
+// inputs that change the produced image beyond its commit: the dockerfile
+// content, the template-rendered build args (key-sorted) and the git subdir.
+// Fields that never change the artifact are deliberately excluded —
+// platforms, provider, resources; any future prop that alters the image MUST
+// join this hash, or one tag will name two different images. All inputs
+// empty → empty string (a clean <short-commit> tag).
+func variantFingerprint(dockerfileContent string, args map[string]string, subdir string) string {
+	if dockerfileContent == "" && subdir == "" && len(args) == 0 {
+		return ""
+	}
+	h := sha256.New()
+	write := func(s string) { fmt.Fprintf(h, "%d:%s", len(s), s) }
+	write(dockerfileContent)
+	keys := make([]string, 0, len(args))
+	for k := range args {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		write(k)
+		write(args[k])
+	}
+	write(subdir)
+	return hex.EncodeToString(h.Sum(nil))[:12]
 }
 
 // buildOutputs shapes the build executor result into the node Outputs; the

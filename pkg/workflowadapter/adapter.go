@@ -64,10 +64,12 @@ type Deps struct {
 // FleetBuilder is the in-process build capability BuildImage consumes:
 // one synchronous fleet build streaming builder events (consumer-side
 // interface; satisfied by *buildfleetadapter.Deps). ProviderNames exposes
-// the configured provider names for the build-settings API.
+// the configured provider names for the build-settings API; ProbeFile
+// fetches one context-relative file through a runtime probe solve.
 type FleetBuilder interface {
 	Build(ctx context.Context, req fleet.Request, progress func(builder.Event) bool) (*fleet.BuildResult, error)
 	ProviderNames() []string
+	ProbeFile(ctx context.Context, req fleet.Request, file string) (*fleet.ProbeResult, error)
 }
 
 var _ workflow.Deps = (*Deps)(nil)
@@ -222,17 +224,59 @@ func (d *Deps) BuildImage(ctx context.Context, req exec.BuildRequest, onLog func
 // unconfigured fleet does not affect ref resolution.
 func (d *Deps) ResolveGitCommit(ctx context.Context, url, ref, gitCredentialRef string) (string, error) {
 	src := gitctx.Source{URL: url, Ref: ref}
-	if gitCredentialRef != "" {
-		if d.creds == nil {
-			return "", fmt.Errorf("credential %q cannot be resolved: credential center is not wired", gitCredentialRef)
-		}
-		freq := fleet.Request{Git: &src}
-		if err := d.creds.InjectFleetCredentials(&freq, gitCredentialRef, ""); err != nil {
-			return "", err
-		}
-		src = *freq.Git
+	if err := d.injectGitCredential(&src, gitCredentialRef); err != nil {
+		return "", err
 	}
 	return gitctx.ResolveCommit(src), nil
+}
+
+// injectGitCredential resolves one git credential ref onto src through the
+// shared fleet injector — the same resolution path builds take.
+func (d *Deps) injectGitCredential(src *gitctx.Source, ref string) error {
+	if ref == "" {
+		return nil
+	}
+	if d.creds == nil {
+		return fmt.Errorf("credential %q cannot be resolved: credential center is not wired", ref)
+	}
+	freq := fleet.Request{Git: src}
+	if err := d.creds.InjectFleetCredentials(&freq, ref, ""); err != nil {
+		return err
+	}
+	*src = *freq.Git
+	return nil
+}
+
+// ProbeDockerfile fetches one dockerfile from a build node's git context,
+// reusing the preview path's two fetch modes: runtime mode probes through a
+// fleet solve (buildkitd resolves the ref itself, and the reported commit is
+// the one it read at), server mode shallow-clones host-side and reads the
+// single file. Git credentials ride the same injector as builds.
+func (d *Deps) ProbeDockerfile(ctx context.Context, url, ref, subdir, path, mode, gitCredentialRef string) (exec.DockerfileProbe, error) {
+	if mode == "runtime" {
+		if d.fleet == nil {
+			return exec.DockerfileProbe{}, fmt.Errorf("buildfleet is not configured: runtime dockerfile probing needs a buildfleet section in the kite config")
+		}
+		src := gitctx.Source{URL: url, Ref: ref, Subdir: subdir, Mode: "runtime"}
+		if err := d.injectGitCredential(&src, gitCredentialRef); err != nil {
+			return exec.DockerfileProbe{}, err
+		}
+		res, err := d.fleet.ProbeFile(ctx, fleet.Request{Git: &src}, path)
+		if err != nil {
+			// Probe errors may embed the raw client URL, like build errors.
+			return exec.DockerfileProbe{}, fmt.Errorf("probe dockerfile: %s", credentialsadapter.RedactCredentials(err.Error()))
+		}
+		return exec.DockerfileProbe{Commit: res.Commit, Exists: res.Exists, Content: string(res.Content)}, nil
+	}
+	src := gitctx.Source{URL: url, Ref: ref, Subdir: subdir}
+	if err := d.injectGitCredential(&src, gitCredentialRef); err != nil {
+		return exec.DockerfileProbe{}, err
+	}
+	fr, err := gitctx.ReadFile(ctx, src, path)
+	if err != nil {
+		return exec.DockerfileProbe{}, fmt.Errorf("read dockerfile: %s", credentialsadapter.RedactCredentials(err.Error()))
+	}
+	return exec.DockerfileProbe{Commit: fr.Commit, Exists: fr.Found, Content: string(fr.Content)}, nil
 }
 
 // ProviderNames lists the buildfleet provider names for the workflow
@@ -292,6 +336,7 @@ func (d *Deps) toFleetRequest(req exec.BuildRequest) (fleet.Request, error) {
 	switch {
 	case req.Git != nil && req.Git.URL != "":
 		freq.Git = &gitctx.Source{URL: req.Git.URL, Ref: req.Git.Ref, Subdir: req.Git.Subdir, Mode: req.Git.Mode}
+		freq.PinnedCommit = req.Git.PinnedCommit
 	case req.HTTP != nil && req.HTTP.URL != "":
 		freq.HTTP = &httpctx.Source{URL: req.HTTP.URL}
 	default:

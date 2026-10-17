@@ -70,6 +70,11 @@ type Deps interface {
 	// ResolveGitCommit resolves a git ref to its commit SHA (ls-remote,
 	// best-effort): an empty result means the commit could not be resolved.
 	ResolveGitCommit(ctx context.Context, url, ref, gitCredentialRef string) (string, error)
+	// ProbeDockerfile fetches one dockerfile from a build node's git context:
+	// runtime mode probes through a fleet solve (buildkitd resolves the ref
+	// itself), server mode shallow-clones host-side. The returned commit is
+	// the one the fetch actually read at.
+	ProbeDockerfile(ctx context.Context, url, ref, subdir, path, mode, gitCredentialRef string) (exec.DockerfileProbe, error)
 
 	// ProviderFor resolves the build-cluster provider of a namespace (exact
 	// match, then the global default row); ok=false when nothing is

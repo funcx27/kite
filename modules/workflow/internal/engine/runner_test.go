@@ -38,6 +38,14 @@ func (s *stubBuildDeps) ProviderFor(string) (string, bool) { return "", false }
 
 func (s *stubBuildDeps) DefaultRegistry() (string, string, bool) { return "", "", false }
 
+func (s *stubBuildDeps) ResolveGitCommit(context.Context, string, string, string) (string, error) {
+	return "", nil
+}
+
+func (s *stubBuildDeps) ProbeDockerfile(context.Context, string, string, string, string, string, string) (exec.DockerfileProbe, error) {
+	return exec.DockerfileProbe{}, nil
+}
+
 func TestBuildRunnerRun(t *testing.T) {
 	tests := []struct {
 		name       string

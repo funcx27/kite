@@ -153,6 +153,13 @@ func (d *Deps) Build(ctx context.Context, req fleet.Request, progress func(build
 	return d.app.Fleet.Build(ctx, req, fleet.WithProgress(progress))
 }
 
+// ProbeFile fetches one context-relative file through the embedded fleet's
+// probe solve — the same runtime path the preview endpoint serves; it backs
+// the workflow adapter's dockerfile probing.
+func (d *Deps) ProbeFile(ctx context.Context, req fleet.Request, file string) (*fleet.ProbeResult, error) {
+	return d.app.Fleet.ProbeFile(ctx, req, file)
+}
+
 // RegisterRoutes mounts the module API under /buildfleet. The host must call
 // it before applying its RBAC middleware: the URL shapes are non-resource and
 // every handler authorizes itself against the builds pseudo-resource.

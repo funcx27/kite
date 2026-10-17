@@ -46,6 +46,20 @@ type GitSource struct {
 	// "runtime" (buildkitd fetches).
 	Mode   string `json:"mode,omitempty"`
 	Subdir string `json:"subdir,omitempty"`
+	// PinnedCommit is a commit SHA resolved before dispatch (git template
+	// variables, or auto-naming): server mode verifies the cloned HEAD
+	// against it, runtime mode replaces Ref with it so buildkitd fetches the
+	// exact commit. Empty = build whatever the ref points at.
+	PinnedCommit string `json:"pinnedCommit,omitempty"`
+}
+
+// DockerfileProbe is one dockerfile fetched from a build node's git context:
+// the commit the fetch resolved and read at, whether the path named a regular
+// file, and its content (empty when it did not).
+type DockerfileProbe struct {
+	Commit  string `json:"commit,omitempty"`
+	Exists  bool   `json:"exists"`
+	Content string `json:"content,omitempty"`
 }
 
 // HTTPSource points the build at a tarball context URL.

@@ -171,6 +171,8 @@
       "outputRef": "Output Image Ref",
       "outputRefHint": "Supports templates like registry/app:{{params.tag}} or registry/app:{{git.shortCommit}}",
       "outputRefResolved": "Pushes as {{ref}} via the default registry",
+      "outputRefAutoPlaceholder": "Auto-named when empty",
+      "outputRefAutoHint": "Leave empty to auto-name {{ref}}",
       "gitCredentialRef": "Git Credential",
       "gitCredentialRefHint": "Name of a stored git credential; empty = anonymous fetch",
       "registryCredentialRef": "Registry Credential",
@@ -210,6 +212,7 @@
       "payloadTemplateHint": "JSON body; supports {{params.*}} / {{steps.*.outputs.*}} / {{run.*}}",
       "advancedSection": "Advanced",
       "spaceFixedHint": "The deploy space is fixed to the workflow’s own space.",
+      "buildSpaceFixedHint": "The build space is fixed to the workflow’s own space; with the application it names the auto-generated image.",
       "timeout": "Approval Timeout",
       "timeoutHint": "On expiry the timeout action applies; empty = platform default",
       "platformsPlaceholder": "Pick build platforms…"

@@ -72,6 +72,11 @@ type Deps interface {
 	// bare outputRefs with the host and fall back to the credential for
 	// anonymous pushes.
 	DefaultRegistry() (credential, host string, ok bool)
+	// ProbeDockerfile fetches one dockerfile from a build node's git context
+	// (server mode: host-side shallow clone; runtime mode: fleet probe
+	// solve); the returned commit is the one the fetch actually read at.
+	// Build-node auto-naming consumes it for the variant fingerprint.
+	ProbeDockerfile(ctx context.Context, url, ref, subdir, path, mode, gitCredentialRef string) (exec.DockerfileProbe, error)
 }
 
 // Engine schedules runs. One host process owns one Engine.

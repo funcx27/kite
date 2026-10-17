@@ -239,6 +239,7 @@ export function PropertyDrawer({
             node={node}
             patchProps={patchProps}
             patchNode={patchNode}
+            onSelectApp={patchAppTarget}
             templateVars={templateInputVars}
           />
         )}
@@ -481,9 +482,14 @@ function BuildPropsForm({
   node,
   patchProps,
   patchNode,
+  onSelectApp,
   templateVars,
-}: PropsFormShared) {
+}: PropsFormShared & {
+  onSelectApp: (space: string, app: string) => void
+}) {
   const { t } = useTranslation()
+  const { currentSpace } = useSpaces()
+  const { data: applications } = useApplications()
   const gitUrl = readNestedString(node, 'git', 'url')
   const sourceKind = gitUrl
     ? 'git'
@@ -529,6 +535,23 @@ function BuildPropsForm({
   // Display-only mirror of the backend's rule: any whitespace inside the
   // trimmed value marks inline Dockerfile content (the backend decides).
   const dockerfileInline = /\s/.test(dockerfile.trim())
+
+  // Auto-naming target, following the deploy form's app/space pattern: the
+  // space is fixed to the workflow's own space and only the app is picked.
+  // Picking an app writes the (space, app) pair in one change; the pair
+  // names the auto-generated outputRef when the ref field stays empty.
+  const savedSpace = readStringProp(node, 'space')
+  const savedApp = readStringProp(node, 'app')
+  const selectedSpace = savedSpace || currentSpace || ''
+  const appOptions: AppOption[] = (applications ?? [])
+    .filter((app) => app.namespace === selectedSpace)
+    .map((app) => ({ value: app.name, label: app.name }))
+  const appEcho =
+    savedApp !== '' &&
+    selectedSpace !== '' &&
+    !appOptions.some((option) => option.value === savedApp)
+      ? { value: savedApp, label: savedApp }
+      : undefined
 
   const setGit = (key: string, value: string) => {
     const git = { ...((node.props?.git as Record<string, unknown>) ?? {}) }
@@ -632,6 +655,30 @@ function BuildPropsForm({
         />
       </Field>
       <Field
+        label={t('workflow.props.space')}
+        hint={t('workflow.props.buildSpaceFixedHint')}
+      >
+        <Input value={selectedSpace} disabled />
+      </Field>
+      <Field label={t('workflow.props.app')}>
+        <AppCombobox
+          value={savedApp}
+          label={savedApp}
+          options={appEcho ? [appEcho, ...appOptions] : appOptions}
+          echoValue={appEcho}
+          disabled={selectedSpace === ''}
+          onSelect={(option) => onSelectApp(selectedSpace, option.value)}
+          placeholder={
+            selectedSpace === ''
+              ? t('workflow.props.appPickSpaceHint')
+              : t('workflow.props.appPlaceholder')
+          }
+          searchPlaceholder={t('workflow.props.appSearch')}
+          emptyText={t('workflow.props.appEmpty')}
+          currentLabel={t('workflow.props.currentValue')}
+        />
+      </Field>
+      <Field
         label={t('workflow.props.outputRef')}
         hint={t('workflow.props.outputRefHint')}
       >
@@ -639,11 +686,23 @@ function BuildPropsForm({
           {...templateVars}
           value={outputRef}
           onValueChange={(v) => patchProps('outputRef', v || undefined)}
+          placeholder={
+            defaultRegistry?.valid
+              ? t('workflow.props.outputRefAutoPlaceholder')
+              : undefined
+          }
         />
         {resolvedOutputRef && (
           <p className="break-all font-mono text-[11px] leading-4 text-muted-foreground">
             {t('workflow.props.outputRefResolved', {
               ref: resolvedOutputRef,
+            })}
+          </p>
+        )}
+        {defaultRegistry?.valid && !outputRef && (
+          <p className="break-all font-mono text-[11px] leading-4 text-muted-foreground">
+            {t('workflow.props.outputRefAutoHint', {
+              ref: `${defaultRegistry.host}/${selectedSpace || '…'}/${savedApp || '…'}:<commit>[-<fingerprint>]`,
             })}
           </p>
         )}

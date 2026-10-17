@@ -52,6 +52,11 @@ type Request struct {
 	// Provider pins the build to the named provider (config name);
 	// empty = any provider per preference order.
 	Provider string
+	// PinnedCommit optionally pins a git source to a pre-resolved commit
+	// SHA: the server-side clone still fetches by Git.Ref (a SHA ref forces
+	// a full clone) and verifies the checked-out HEAD against it, failing
+	// deterministically when the ref moved. Zero value = unpinned.
+	PinnedCommit string
 	// Creds is the per-request credential table (longest-prefix match).
 	// Registry entries go to the solve session; git entries feed the
 	// git source clone (DESIGN.md §7.1).
@@ -347,7 +352,7 @@ func flightKey(req Request) string {
 	parts = append(parts, sortedKV(req.Args)...)
 	parts = append(parts, strings.Join(req.Platforms, ","))
 	if r := req.Git; r != nil {
-		parts = append(parts, r.URL, r.Ref, r.Subdir, r.Mode)
+		parts = append(parts, r.URL, r.Ref, r.Subdir, r.Mode, r.ExpectedCommit, req.PinnedCommit)
 	}
 	if r := req.HTTP; r != nil {
 		parts = append(parts, r.URL, r.Mode)
@@ -841,6 +846,9 @@ func basicHeader(user, pass string) string {
 // normal digest path takes over.
 func (f *Fleet) materializeGit(ctx context.Context, req *Request, cfg *buildConfig) error {
 	src := *req.Git
+	// The pin rides the clone-by-original-ref path: fetch as planned, then
+	// verify the checkout landed on the pre-resolved commit.
+	src.ExpectedCommit = req.PinnedCommit
 	if src.AuthEnv == "" && src.Username == "" {
 		if c := req.Creds.Match(creds.Git, hostOf(src.URL)); c != nil {
 			if sec, err := c.Resolve(); err == nil {

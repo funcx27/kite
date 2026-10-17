@@ -71,7 +71,11 @@ type BuildProps struct {
 	Provider              string `json:"provider,omitempty"`
 	// Space selects the build-cluster default row (build_settings) when
 	// Provider is empty; the empty string resolves to the global default row.
+	// With App it also names the auto-generated outputRef.
 	Space string `json:"space,omitempty"`
+	// App names the application this image builds for: with Space it feeds
+	// the auto-generated outputRef when OutputRef is empty.
+	App string `json:"app,omitempty"`
 }
 
 // GitSource points the build at a git checkout.
@@ -82,6 +86,11 @@ type GitSource struct {
 	// "runtime" (buildkitd fetches).
 	Mode   string `json:"mode,omitempty"`
 	Subdir string `json:"subdir,omitempty"`
+	// PinnedCommit is a commit SHA resolved before dispatch (git template
+	// variables, or auto-naming); the runner builds exactly this commit
+	// instead of re-resolving a moving ref. The engine stamps it at render
+	// time, but a saved spec may carry one too.
+	PinnedCommit string `json:"pinnedCommit,omitempty"`
 }
 
 // HTTPSource points the build at a tarball context.

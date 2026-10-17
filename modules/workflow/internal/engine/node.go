@@ -87,6 +87,16 @@ func (e *Engine) execNode(parent context.Context, state *runState, node spec.Nod
 		e.completeNode(state.run.ID, node.ID, row.ID, row.Attempt, store.NodeFailed, nil, err, "")
 		return
 	}
+	// A git-var resolution pins the build to the commit the render used:
+	// stamping it onto the git source lets the build runner verify (server
+	// mode) or fetch exactly that SHA (runtime mode), closing the window
+	// where a tag renders shortCommit abc123 but a moved branch tip builds
+	// def456. Auto-named builds resolve their pin inside the runner.
+	if node.Type == spec.NodeBuildImage && env.Git != nil {
+		if g, ok := rendered["git"].(map[string]any); ok {
+			g["pinnedCommit"] = env.Git["commit"]
+		}
+	}
 	inputs, err := json.Marshal(rendered)
 	if err == nil {
 		e.db.Model(&store.NodeRun{}).

@@ -32,6 +32,11 @@ type Source struct {
 	AuthEnv  string // env var holding "user:token" for http(s) basic auth
 	Username string // literal basic-auth (API passthrough); used when AuthEnv is empty
 	Password string
+	// ExpectedCommit, when set, is a pre-resolved commit SHA the checkout
+	// must land on. Fetch still clones by Ref — a SHA ref would force a full
+	// clone — and fails deterministically when the checked-out HEAD differs,
+	// i.e. the ref moved between resolution and clone. Zero value = no check.
+	ExpectedCommit string
 }
 
 // Result is the materialized context tarball.
@@ -73,6 +78,13 @@ func Fetch(ctx context.Context, src Source) (*Result, error) {
 	commit, err := checkout(repo, src.Ref)
 	if err != nil {
 		return nil, err
+	}
+	if src.ExpectedCommit != "" && commit != src.ExpectedCommit {
+		shownRef := src.Ref
+		if shownRef == "" {
+			shownRef = "HEAD"
+		}
+		return nil, fmt.Errorf("gitctx: %s resolved to %s after %s was pinned (the ref moved during the build; retry)", shownRef, commit, src.ExpectedCommit)
 	}
 
 	root := dir
