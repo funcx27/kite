@@ -69,6 +69,9 @@ export interface Workflow extends WorkflowListItem {
   spec?: DAGSpec
   params?: ParamSpec[]
   triggers?: TriggerConfig
+  // Advisory save-time check results (e.g. an environmental git probe
+  // failure); present only when a save passed with warnings.
+  warnings?: string[]
 }
 
 export interface CreateWorkflowRequest {

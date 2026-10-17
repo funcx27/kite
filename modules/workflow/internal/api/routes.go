@@ -5,6 +5,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -44,6 +45,15 @@ type Deps interface {
 	// ProviderNames lists the host's available build provider names for the
 	// build-settings API; empty when the build capability is not wired.
 	ProviderNames() []string
+	// ParseDockerfile syntax-checks inline dockerfile content with the
+	// host's dockerfile frontend parser; backs save-time build-node
+	// validation (a parse error is a deterministic build failure).
+	ParseDockerfile(content string) error
+	// ResolveGitCommit resolves a git ref to its commit SHA via one
+	// ls-remote round trip (with credentials, timeout-bounded); backs
+	// save-time build-node validation, which classifies the returned
+	// error (deterministic vs environmental) via *exec.GitCheckError.
+	ResolveGitCommit(ctx context.Context, url, ref, gitCredentialRef string) (string, error)
 }
 
 // Handler serves the workflow module HTTP API.

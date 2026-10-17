@@ -62,6 +62,21 @@ type DockerfileProbe struct {
 	Content string `json:"content,omitempty"`
 }
 
+// GitCheckError reports one git source check outcome for save-time
+// validation. Deterministic failures (invalid source/auth shape, auth
+// rejected, repository or ref missing) will repeat identically on every
+// future run; environmental ones (network, DNS, timeout) may clear on their
+// own, so save-time validation blocks only on the former and warns on the
+// latter. The host adapter produces these; the module classifies.
+type GitCheckError struct {
+	// Deterministic marks a failure every retry will repeat.
+	Deterministic bool
+	// Reason is the redacted, display-ready failure text.
+	Reason string
+}
+
+func (e *GitCheckError) Error() string { return e.Reason }
+
 // HTTPSource points the build at a tarball context URL.
 type HTTPSource struct {
 	URL string `json:"url"`

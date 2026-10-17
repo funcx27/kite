@@ -164,6 +164,10 @@
       "dockerfileHint": "构建上下文中的路径，或完整 Dockerfile 内容——值含空白字符时按内联内容处理",
       "dockerfileInline": "内联",
       "dockerfileEnlarge": "放大编辑",
+      "dockerfilePreview": "预览此路径的文件",
+      "dockerfilePreviewVarRef": "变量 ref 运行时才能解析",
+      "dockerfilePreviewPathOnly": "预览仅获取路径指向的文件；内联内容已在表单中",
+      "dockerfilePreviewNeedsGit": "预览需要 git 源来解析路径",
       "args": "Docker 构建参数（--build-arg）",
       "argsHint": "每行一条 key=value",
       "platforms": "平台",
@@ -226,6 +230,13 @@
     "dockerfileEditor": {
       "lines": "{{count}} 行",
       "templateHint": "支持模板变量，如 {{params.tag}}"
+    },
+    "dockerfilePreview": {
+      "loading": "正在加载预览…",
+      "retry": "重试",
+      "notFound": "构建上下文中不存在此文件",
+      "notFoundAt": "该 commit（{{commit}}）下不存在此文件",
+      "atCommit": "{{commit}} 下的内容"
     },
     "params": {
       "title": "工作流参数",

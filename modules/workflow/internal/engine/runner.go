@@ -34,8 +34,8 @@ type buildDeps interface {
 	// pointer; ok=false when no valid default exists. Drives
 	// applyDefaultRegistry and build outputRef auto-naming.
 	DefaultRegistry() (credential, host string, ok bool)
-	// ResolveGitCommit resolves a git ref to its commit SHA (ls-remote,
-	// best-effort): an empty result means the commit could not be resolved.
+	// ResolveGitCommit resolves a git ref to its commit SHA via one ls-remote
+	// round trip; a resolution failure returns an error (node failure).
 	ResolveGitCommit(ctx context.Context, url, ref, gitCredentialRef string) (string, error)
 	// ProbeDockerfile fetches one dockerfile from a git context (server
 	// mode: host-side shallow clone; runtime mode: fleet probe solve, whose

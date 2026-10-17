@@ -7,11 +7,13 @@ import { useMemo, useRef, useState } from 'react'
 import { useApplications, useSpaceQuotas } from '@/portal/application/api'
 import { DockerfileEditorDialog } from '@/portal/components/editors/dockerfile-editor-dialog'
 import { useSpaces } from '@/portal/space-context'
+import { DockerfilePreviewDialog } from '@/portal/workflow/components/dockerfile-preview-dialog'
 import {
   IconAdjustmentsHorizontal,
   IconCheck,
   IconChevronDown,
   IconChevronRight,
+  IconEye,
   IconMaximize,
   IconTrash,
   IconX,
@@ -531,10 +533,28 @@ function BuildPropsForm({
   )
   // The form is keyed by node.id, so this open flag resets per node.
   const [dockerfileEditorOpen, setDockerfileEditorOpen] = useState(false)
+  const [dockerfilePreviewOpen, setDockerfilePreviewOpen] = useState(false)
   const dockerfile = readStringProp(node, 'dockerfile')
   // Display-only mirror of the backend's rule: any whitespace inside the
   // trimmed value marks inline Dockerfile content (the backend decides).
   const dockerfileInline = /\s/.test(dockerfile.trim())
+  // Preview targets the path form of the field: a single-token value names
+  // a file in the git context (an http source has no repo to resolve). A
+  // ref or url still carrying a template variable only resolves at run
+  // time, so the fetch cannot be made yet.
+  const dockerfilePath =
+    dockerfile.trim() !== '' && !dockerfileInline ? dockerfile.trim() : ''
+  const gitRef = readNestedString(node, 'git', 'ref')
+  const gitSourceHasTemplate = gitUrl.includes('{{') || gitRef.includes('{{')
+  const previewDisabled =
+    dockerfilePath === '' || gitUrl === '' || gitSourceHasTemplate
+  const previewHint = gitSourceHasTemplate
+    ? t('workflow.props.dockerfilePreviewVarRef')
+    : gitUrl === ''
+      ? t('workflow.props.dockerfilePreviewNeedsGit')
+      : dockerfilePath === ''
+        ? t('workflow.props.dockerfilePreviewPathOnly')
+        : t('workflow.props.dockerfilePreview')
 
   // Auto-naming target, following the deploy form's app/space pattern: the
   // space is fixed to the workflow's own space and only the app is picked.
@@ -633,6 +653,18 @@ function BuildPropsForm({
                 {t('workflow.props.dockerfileInline')}
               </Badge>
             )}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 text-muted-foreground"
+              disabled={previewDisabled}
+              aria-label={previewHint}
+              title={previewHint}
+              onClick={() => setDockerfilePreviewOpen(true)}
+            >
+              <IconEye className="h-3.5 w-3.5" />
+            </Button>
             <Button
               type="button"
               variant="ghost"
@@ -763,6 +795,21 @@ function BuildPropsForm({
           t('workflow.dockerfileEditor.lines', { count })
         }
       />
+      {dockerfilePath !== '' && (
+        <DockerfilePreviewDialog
+          open={dockerfilePreviewOpen}
+          onOpenChange={setDockerfilePreviewOpen}
+          title={`${t('workflow.props.dockerfile')} · ${dockerfilePath}`}
+          request={{
+            url: gitUrl,
+            ref: gitRef,
+            subdir: readNestedString(node, 'git', 'subdir') || undefined,
+            path: dockerfilePath,
+            credential: savedGitCredential || undefined,
+            mode: readNestedString(node, 'git', 'mode') || undefined,
+          }}
+        />
+      )}
     </div>
   )
 }

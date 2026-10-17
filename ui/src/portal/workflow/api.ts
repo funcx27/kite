@@ -629,6 +629,38 @@ export const useSetBuildProviderEnabledMutation = () => {
   })
 }
 
+// ── Dockerfile preview (build node editor) ──
+
+// POST /buildfleet/dockerfile-preview resolves the ref server-side and reads
+// the file at the commit the fetch actually landed on (server mode host-side
+// clone, runtime mode a fleet probe); exists=false means the path named no
+// regular file there.
+export interface DockerfilePreviewRequest {
+  url: string
+  ref: string
+  subdir?: string
+  path: string
+  credential?: string
+  mode?: string
+}
+
+export interface DockerfilePreviewResponse {
+  commit: string
+  exists: boolean
+  content: string
+}
+
+export const previewDockerfile = (req: DockerfilePreviewRequest) =>
+  workflowRequest<DockerfilePreviewResponse>('/buildfleet/dockerfile-preview', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  })
+
+// A mutation, not a query: a dockerfile path is a live reference tracking
+// the latest commit, so every preview re-resolves instead of caching.
+export const useDockerfilePreviewMutation = () =>
+  useMutation({ mutationFn: previewDockerfile })
+
 // Re-exported for the settings-sections entry (keeps the host import surface
 // to the workflow module only).
 export type { CredentialPayload, ParamSpec, TriggerConfig }

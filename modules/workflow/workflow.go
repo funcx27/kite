@@ -67,14 +67,21 @@ type Deps interface {
 	DeployApp(ctx context.Context, req exec.DeployRequest, onLog func(string)) (exec.DeployResult, error)
 	// Notify delivers one webhook notification (design §5.4).
 	Notify(ctx context.Context, req exec.NotifyRequest) error
-	// ResolveGitCommit resolves a git ref to its commit SHA (ls-remote,
-	// best-effort): an empty result means the commit could not be resolved.
+	// ResolveGitCommit resolves a git ref to its commit SHA via one ls-remote
+	// round trip (with credentials, bounded by gitctx's own timeout). A
+	// failure returns an error the save path classifies: deterministic
+	// failures carry *exec.GitCheckError with Deterministic set. Engine
+	// callers treat any error as a node failure either way.
 	ResolveGitCommit(ctx context.Context, url, ref, gitCredentialRef string) (string, error)
 	// ProbeDockerfile fetches one dockerfile from a build node's git context:
 	// runtime mode probes through a fleet solve (buildkitd resolves the ref
 	// itself), server mode shallow-clones host-side. The returned commit is
 	// the one the fetch actually read at.
 	ProbeDockerfile(ctx context.Context, url, ref, subdir, path, mode, gitCredentialRef string) (exec.DockerfileProbe, error)
+	// ParseDockerfile syntax-checks inline dockerfile content with the host's
+	// dockerfile frontend parser (the grammar a build will run); the module
+	// itself carries no parser dependency. Used by save-time validation.
+	ParseDockerfile(content string) error
 
 	// ProviderFor resolves the build-cluster provider of a namespace (exact
 	// match, then the global default row); ok=false when nothing is
@@ -165,6 +172,18 @@ func (h handlerDeps) UserNames(ids []uint) map[uint]string { return h.d.UserName
 func (h handlerDeps) IsAdmin(c *gin.Context) bool { return h.d.IsAdmin(c) }
 
 func (h handlerDeps) RecordHistory(entry store.HistoryEntry) { h.d.RecordHistory(entry) }
+
+// ResolveGitCommit projects the engine's ref resolution onto the save path's
+// build-node checks.
+func (h handlerDeps) ResolveGitCommit(ctx context.Context, url, ref, gitCredentialRef string) (string, error) {
+	return h.d.ResolveGitCommit(ctx, url, ref, gitCredentialRef)
+}
+
+// ParseDockerfile projects the host's dockerfile parser onto the save path's
+// build-node checks.
+func (h handlerDeps) ParseDockerfile(content string) error {
+	return h.d.ParseDockerfile(content)
+}
 
 // ProviderNames is an optional Deps capability feeding the build-settings
 // API: the host's available build provider names. Deps without the

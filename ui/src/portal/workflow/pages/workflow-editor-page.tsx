@@ -623,6 +623,9 @@ export function WorkflowEditorPage() {
     }
     const onSuccess = (saved: Workflow) => {
       toast.success(t('workflow.editor.saved', { rev: saved.currentRev }))
+      // Advisory save-time checks (e.g. an environmental git probe failure)
+      // ride the saved definition back as warnings.
+      saved.warnings?.forEach((warning) => toast.warning(warning))
       if (returnTo) {
         // Application entry: go straight back to the app; create replaces
         // the transient /workflows/new history entry, like the default path.

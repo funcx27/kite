@@ -5,6 +5,7 @@ package gitctx
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -309,33 +310,45 @@ func resolveRef(repo *git.Repository, ref string) (plumbing.Hash, error) {
 	return plumbing.ZeroHash, fmt.Errorf("gitctx: ref %q not found (branch/tag/SHA)", ref)
 }
 
+// ErrNoSuchRef marks an ls-remote that reached the server yet advertised no
+// matching branch/tag/HEAD: deterministic, unlike transport failures.
+var ErrNoSuchRef = errors.New("no such branch/tag/SHA")
+
+// ErrSourceInvalid marks source configuration no retry can fix (auth that
+// cannot apply to the URL shape): deterministic, unlike transport failures.
+var ErrSourceInvalid = errors.New("invalid git source")
+
 // ResolveCommit answers ref -> commit SHA with a single ls-remote round
 // trip (no clone): used by the runtime git mode, where buildkitd resolves
-// the ref internally and never reports the commit back. Ref empty or
-// already a hash resolves without server contact; errors leave the
-// commit unknown rather than failing the build.
-// ResolveCommit answers ref -> commit SHA with a single ls-remote round
-// trip (no clone): used by the runtime git mode, where buildkitd resolves
-// the ref internally and never reports the commit back. The daemon-side
-// lookup is best-effort metadata — a git server the daemon cannot reach
-// (but buildkitd can) must not stall or fail the build, so any failure
-// or 5s timeout yields an empty commit.
+// the ref internally and never reports the commit back. Best-effort
+// metadata — a git server the caller cannot reach must not fail builds, so
+// any failure (including the 5s timeout) yields an empty commit; callers
+// that need the failure's cause use ResolveCommitErr.
 func ResolveCommit(src Source) string {
+	commit, _ := ResolveCommitErr(src)
+	return commit
+}
+
+// ResolveCommitErr is ResolveCommit with the failure surfaced: transport
+// errors pass through unwrapped for the caller to classify, while source
+// problems no retry can fix (missing ref, inapplicable auth) carry
+// ErrNoSuchRef / ErrSourceInvalid.
+func ResolveCommitErr(src Source) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if plumbing.IsHash(src.Ref) {
-		return src.Ref
+		return src.Ref, nil
 	}
 	auth, err := basicAuth(src)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("%w: %w", ErrSourceInvalid, err)
 	}
 	remote := git.NewRemote(memory.NewStorage(), &config.RemoteConfig{
 		Name: "origin", URLs: []string{src.URL},
 	})
 	refs, err := remote.ListContext(ctx, &git.ListOptions{Auth: auth})
 	if err != nil {
-		return ""
+		return "", err
 	}
 	if src.Ref != "" {
 		want := []plumbing.ReferenceName{
@@ -345,18 +358,18 @@ func ResolveCommit(src Source) string {
 		for _, r := range refs {
 			for _, w := range want {
 				if r.Name() == w {
-					return r.Hash().String()
+					return r.Hash().String(), nil
 				}
 			}
 		}
-		return ""
+		return "", fmt.Errorf("gitctx: ref %q: %w", src.Ref, ErrNoSuchRef)
 	}
 	// Empty ref = HEAD. Some servers (and go-git's local transport)
 	// report HEAD as a symbolic ref with a zero hash; fall back to the
 	// conventional default branch names.
 	for _, r := range refs {
 		if r.Name() == plumbing.HEAD && !r.Hash().IsZero() {
-			return r.Hash().String()
+			return r.Hash().String(), nil
 		}
 	}
 	for _, name := range []plumbing.ReferenceName{
@@ -365,9 +378,9 @@ func ResolveCommit(src Source) string {
 	} {
 		for _, r := range refs {
 			if r.Name() == name {
-				return r.Hash().String()
+				return r.Hash().String(), nil
 			}
 		}
 	}
-	return ""
+	return "", fmt.Errorf("gitctx: HEAD: %w", ErrNoSuchRef)
 }

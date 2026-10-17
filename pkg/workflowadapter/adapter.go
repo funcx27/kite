@@ -14,7 +14,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/moby/buildkit/client"
+	dockerfileinstructions "github.com/moby/buildkit/frontend/dockerfile/instructions"
+	dockerfileparser "github.com/moby/buildkit/frontend/dockerfile/parser"
 	"gorm.io/gorm"
 	"k8s.io/klog/v2"
 
@@ -218,16 +222,62 @@ func (d *Deps) BuildImage(ctx context.Context, req exec.BuildRequest, onLog func
 }
 
 // ResolveGitCommit answers ref -> commit SHA for a workflow build node's
-// git.* template variables: one ls-remote round trip through gitctx, which
-// carries its own 5s timeout (ctx keeps the Deps signature). Credential
-// injection goes through the same FleetCredentialInjector as builds; an
-// unconfigured fleet does not affect ref resolution.
+// git.* template variables and save-time validation: one ls-remote round
+// trip through gitctx, which carries its own 5s timeout (ctx keeps the Deps
+// signature). Credential injection goes through the same
+// FleetCredentialInjector as builds; an unconfigured fleet does not affect
+// ref resolution. Failures come back as *exec.GitCheckError with the
+// deterministic/environmental classification and a redacted reason — engine
+// callers just fail the node on any error.
 func (d *Deps) ResolveGitCommit(ctx context.Context, url, ref, gitCredentialRef string) (string, error) {
 	src := gitctx.Source{URL: url, Ref: ref}
 	if err := d.injectGitCredential(&src, gitCredentialRef); err != nil {
-		return "", err
+		return "", &exec.GitCheckError{Deterministic: true, Reason: err.Error()}
 	}
-	return gitctx.ResolveCommit(src), nil
+	commit, err := gitctx.ResolveCommitErr(src)
+	if err != nil {
+		return "", &exec.GitCheckError{
+			Deterministic: deterministicGitFailure(err),
+			// The source URL may carry basic-auth userinfo; node and save
+			// errors persist raw where the host-side redactor cannot reach.
+			Reason: credentialsadapter.RedactCredentials(err.Error()),
+		}
+	}
+	return commit, nil
+}
+
+// deterministicGitFailure reports whether an ls-remote failure repeats on
+// every retry (source shape, rejected auth, missing repository or ref), as
+// opposed to environmental failures (network, DNS, timeout) that may clear.
+func deterministicGitFailure(err error) bool {
+	var perm *plumbing.PermanentError
+	if errors.As(err, &perm) {
+		return true
+	}
+	if errors.Is(err, gitctx.ErrNoSuchRef) || errors.Is(err, gitctx.ErrSourceInvalid) {
+		return true
+	}
+	return errors.Is(err, transport.ErrAuthenticationRequired) ||
+		errors.Is(err, transport.ErrAuthorizationFailed) ||
+		errors.Is(err, transport.ErrInvalidAuthMethod) ||
+		errors.Is(err, transport.ErrRepositoryNotFound)
+}
+
+// ParseDockerfile syntax-checks inline dockerfile content with buildkit's
+// dockerfile frontend — the same grammar a build will run — through both
+// levels: the AST parse (line syntax) and the instruction parse (unknown or
+// misplaced instructions). Either error is a deterministic build failure, so
+// save-time validation blocks on it; the capability lives in the adapter
+// because the workflow module carries no parser dependency.
+func (d *Deps) ParseDockerfile(content string) error {
+	res, err := dockerfileparser.Parse(strings.NewReader(content))
+	if err != nil {
+		return fmt.Errorf("dockerfile syntax: %w", err)
+	}
+	if _, _, err := dockerfileinstructions.Parse(res.AST, nil); err != nil {
+		return fmt.Errorf("dockerfile instructions: %w", err)
+	}
+	return nil
 }
 
 // injectGitCredential resolves one git credential ref onto src through the

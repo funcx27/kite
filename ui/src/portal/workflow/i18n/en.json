@@ -164,6 +164,10 @@
       "dockerfileHint": "Path in the build context, or the full Dockerfile content — a value containing whitespace is treated as inline content",
       "dockerfileInline": "Inline",
       "dockerfileEnlarge": "Open in large editor",
+      "dockerfilePreview": "Preview the file at this path",
+      "dockerfilePreviewVarRef": "Refs with {{…}} variables resolve only at run time",
+      "dockerfilePreviewPathOnly": "Preview fetches the file a path points at; inline content is already in the form",
+      "dockerfilePreviewNeedsGit": "Preview needs a git source to resolve the path against",
       "args": "Docker build args (--build-arg)",
       "argsHint": "key=value per line",
       "platforms": "Platforms",
@@ -226,6 +230,13 @@
     "dockerfileEditor": {
       "lines": "{{count}} lines",
       "templateHint": "Supports templates like {{params.tag}}"
+    },
+    "dockerfilePreview": {
+      "loading": "Loading preview…",
+      "retry": "Retry",
+      "notFound": "This file does not exist in the build context",
+      "notFoundAt": "This file does not exist at commit {{commit}}",
+      "atCommit": "Content at commit {{commit}}"
     },
     "params": {
       "title": "Workflow Parameters",

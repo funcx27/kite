@@ -39,7 +39,11 @@ type workflowResponse struct {
 	Clusters []string `json:"clusters,omitempty"`
 	// Spaces are the bound spaces (visibility metadata); deploy-referenced
 	// spaces are derivable from Apps. Absent when nothing is bound.
-	Spaces    []string  `json:"spaces,omitempty"`
+	Spaces []string `json:"spaces,omitempty"`
+	// Warnings carry the advisory (non-blocking) save-time check results,
+	// e.g. a git source ls-remote that failed environmentally; absent when
+	// the definition passed cleanly.
+	Warnings  []string  `json:"warnings,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
@@ -335,6 +339,11 @@ func (h *Handler) CreateWorkflow(c *gin.Context) {
 		h.fail(c, http.StatusBadRequest, err, "")
 		return
 	}
+	problems, warnings := h.validateBuildNodes(c.Request.Context(), specJSON)
+	if len(problems) > 0 {
+		h.fail(c, http.StatusBadRequest, &validationProblems{Problems: problems}, "")
+		return
+	}
 	spaces, err := normalizeSpaces(req.Spaces)
 	if err != nil {
 		h.fail(c, http.StatusBadRequest, err, "")
@@ -368,6 +377,7 @@ func (h *Handler) CreateWorkflow(c *gin.Context) {
 	})
 	resp := h.toWorkflowResponse(&wf, true)
 	resp.Spaces = spaces
+	resp.Warnings = warnings
 	c.JSON(http.StatusCreated, resp)
 }
 
@@ -436,6 +446,7 @@ func (h *Handler) UpdateWorkflow(c *gin.Context) {
 	// before the triple is validated and appended. wf.CurrentRev pairs with
 	// the expectedRev check below — a concurrent save bumps it and fails
 	// this update with 409 before anything is written.
+	reqCarriesSpec := len(req.Spec) > 0
 	if len(req.Spec) == 0 || len(req.Params) == 0 || len(req.Triggers) == 0 {
 		var cur store.WorkflowRevision
 		if err := h.store.DB().
@@ -458,6 +469,21 @@ func (h *Handler) UpdateWorkflow(c *gin.Context) {
 	if err != nil {
 		h.fail(c, http.StatusBadRequest, err, "")
 		return
+	}
+	// Build-node checks run only when the request carries a spec — the
+	// caller is saving a definition. A spec-absent update (rename,
+	// description, space bindings) reuses the stored revision verbatim, and
+	// the external git sources of that stored spec may have gone bad since
+	// it was saved; those lifecycle edits must not be locked out (nor pay
+	// the per-node ls-remote latency) by a definition they never touch.
+	var warnings []string
+	if reqCarriesSpec {
+		var problems []string
+		problems, warnings = h.validateBuildNodes(c.Request.Context(), specJSON)
+		if len(problems) > 0 {
+			h.fail(c, http.StatusBadRequest, &validationProblems{Problems: problems}, "")
+			return
+		}
 	}
 	var spaces []string
 	if req.Spaces != nil {
@@ -530,6 +556,7 @@ func (h *Handler) UpdateWorkflow(c *gin.Context) {
 		PreviousYAML: previous,
 	})
 	resp := h.toWorkflowResponse(wf, true)
+	resp.Warnings = warnings
 	if req.Spaces != nil {
 		resp.Spaces = spaces
 	} else if bound, err := store.LoadBindings(h.store.DB(), []uint{wf.ID}, store.BindingKindSpace); err == nil {
