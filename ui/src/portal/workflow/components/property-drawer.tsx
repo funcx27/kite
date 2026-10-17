@@ -52,7 +52,7 @@ import {
 } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 
-import { useCredentials, useUserDirectory } from '../api'
+import { useCredentials, useDefaultRegistry, useUserDirectory } from '../api'
 import type { UserDirectoryEntry } from '../api'
 import { isValidNodeNodeId, nodeTypeAccent } from '../lib'
 import type { DAGSpec, ParamSpec, WorkflowNode } from '../types'
@@ -355,6 +355,14 @@ function readStringProp(node: WorkflowNode, key: string): string {
   return typeof value === 'string' ? value : ''
 }
 
+// UI mirror of the backend's bare-name rule: a first path segment without a
+// dot (domain), a colon (port) or the literal localhost carries no registry
+// part, so the build engine prefixes the default registry host at run time.
+function isBareImageName(ref: string): boolean {
+  const first = ref.split('/')[0]
+  return !first.includes('.') && !first.includes(':') && first !== 'localhost'
+}
+
 // AdvancedCollapsible folds a props form's low-frequency fields behind a
 // full-width block: header and expanded content share one bordered box, so
 // the fold reads as a single "advanced" group. Label text sits left, the
@@ -496,6 +504,15 @@ function BuildPropsForm({
     .map((c) => c.name)
   const savedGitCredential = readStringProp(node, 'gitCredentialRef')
   const savedRegistryCredential = readStringProp(node, 'registryCredentialRef')
+  // Bare-name completion preview: mirrors the backend rule (first segment
+  // with no dot, no colon and not localhost = no registry part), display
+  // only — the form value keeps what the user typed.
+  const { data: defaultRegistry } = useDefaultRegistry()
+  const outputRef = readStringProp(node, 'outputRef')
+  const resolvedOutputRef =
+    defaultRegistry?.valid && outputRef && isBareImageName(outputRef)
+      ? `${defaultRegistry.host}/${outputRef}`
+      : undefined
   // The advanced section starts collapsed unless one of its fields already
   // carries a value, so configured options never hide behind the fold.
   const [advancedOpen, setAdvancedOpen] = useState(
@@ -620,9 +637,16 @@ function BuildPropsForm({
       >
         <TemplateInput
           {...templateVars}
-          value={readStringProp(node, 'outputRef')}
+          value={outputRef}
           onValueChange={(v) => patchProps('outputRef', v || undefined)}
         />
+        {resolvedOutputRef && (
+          <p className="break-all font-mono text-[11px] leading-4 text-muted-foreground">
+            {t('workflow.props.outputRefResolved', {
+              ref: resolvedOutputRef,
+            })}
+          </p>
+        )}
       </Field>
       <AdvancedCollapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
         <SharedAdvancedFields node={node} patchNode={patchNode} />

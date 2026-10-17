@@ -65,6 +65,7 @@ func Migrate(db *gorm.DB) error {
 // non-resource and handlers authorize themselves against "credentials".
 func (d *Deps) RegisterRoutes(api *gin.RouterGroup) {
 	d.module.RegisterRoutes(api)
+	d.registerDefaultRegistryRoutes(api.Group("/credentials"))
 }
 
 // Resolve decrypts the named credential (Resolver implementation).

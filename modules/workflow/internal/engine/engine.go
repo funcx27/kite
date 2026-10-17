@@ -66,6 +66,12 @@ type Deps interface {
 	// configured. Build nodes fall back to it when their props leave the
 	// provider empty.
 	ProviderFor(namespace string) (string, bool)
+	// DefaultRegistry resolves the credential center's default registry
+	// pointer; ok=false when no valid default exists (unset, or the
+	// referenced credential or host no longer exists). Build nodes complete
+	// bare outputRefs with the host and fall back to the credential for
+	// anonymous pushes.
+	DefaultRegistry() (credential, host string, ok bool)
 }
 
 // Engine schedules runs. One host process owns one Engine.

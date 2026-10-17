@@ -27,6 +27,10 @@ type buildDeps interface {
 	// ProviderFor resolves the namespace's build-cluster default; ok=false
 	// when nothing is configured.
 	ProviderFor(namespace string) (string, bool)
+	// DefaultRegistry resolves the credential center's default registry
+	// pointer; ok=false when no valid default exists. Drives
+	// applyDefaultRegistry.
+	DefaultRegistry() (credential, host string, ok bool)
 }
 
 // buildRunner drives a build-image node (design §5.1).
@@ -79,6 +83,7 @@ func (r buildRunner) Run(ctx context.Context, rendered spec.Props, run store.Wor
 	if p.OutputRef == "" {
 		return nil, fmt.Errorf("build node needs outputRef")
 	}
+	applyDefaultRegistry(r.deps, run.TriggeredBy, &p)
 	// One spec field, two wire shapes (backend-authoritative rule): any
 	// whitespace inside the trimmed dockerfile value means inline Dockerfile
 	// content, a single token is a context path, empty falls back to the
@@ -117,6 +122,43 @@ func (r buildRunner) Run(ctx context.Context, rendered spec.Props, run store.Wor
 		return nil, err
 	}
 	return buildOutputs(res), nil
+}
+
+// applyDefaultRegistry completes the build props from the credential
+// center's default registry pointer (one source for both): a bare outputRef
+// — no registry part in its first segment — prefixes the default host, and
+// an empty registryCredentialRef falls back to the default push credential
+// behind the same usage gate an explicit ref passes (credentials:get), so an
+// unauthorized user keeps the anonymous push instead of failing or silently
+// escalating. Without a valid default the props stay untouched.
+func applyDefaultRegistry(deps buildDeps, userID uint, p *spec.BuildProps) {
+	bare := needsRegistryPrefix(p.OutputRef)
+	if !bare && p.RegistryCredentialRef != "" {
+		return
+	}
+	credential, host, ok := deps.DefaultRegistry()
+	if !ok {
+		return
+	}
+	if bare {
+		p.OutputRef = host + "/" + p.OutputRef
+	}
+	if p.RegistryCredentialRef == "" &&
+		deps.AuthorizeUser(userID, credentialsResource, "get", "", "") {
+		p.RegistryCredentialRef = credential
+	}
+}
+
+// needsRegistryPrefix reports whether ref's first path segment carries no
+// registry part: no dot (domain), no colon (port) and not localhost — the
+// markers Docker's reference normalization uses to tell a registry from a
+// bare image name.
+func needsRegistryPrefix(ref string) bool {
+	first := ref
+	if i := strings.Index(ref, "/"); i >= 0 {
+		first = ref[:i]
+	}
+	return !strings.Contains(first, ".") && !strings.Contains(first, ":") && first != "localhost"
 }
 
 // buildOutputs shapes the build executor result into the node Outputs; the

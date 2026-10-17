@@ -25,6 +25,7 @@ import type {
   CreateWorkflowRequest,
   CredentialPayload,
   CredentialSummary,
+  DefaultRegistrySetting,
   ParamSpec,
   RevisionSummary,
   RunDetail,
@@ -211,6 +212,20 @@ export const deleteCredential = (name: string) =>
     }
   )
 
+// ── Default registry pointer ──
+// The path segment starts with an underscore, which credential names
+// (DNS-1123 labels) can never do, so it cannot collide with /credentials/:name.
+export const fetchDefaultRegistry = () =>
+  workflowRequest<DefaultRegistrySetting>('/credentials/_default-registry')
+
+// PUT validates server-side that the credential exists and carries the host
+// in its registry payload before storing the pointer.
+export const setDefaultRegistry = (req: { credential: string; host: string }) =>
+  workflowRequest<DefaultRegistrySetting>('/credentials/_default-registry', {
+    method: 'PUT',
+    body: JSON.stringify(req),
+  })
+
 // ── Build settings ──
 
 export const fetchBuildSettings = () =>
@@ -288,6 +303,7 @@ const workflowKeys = {
   run: (id: number) => [...workflowKeys.all, 'run', id] as const,
   revisions: (id: number) => [...workflowKeys.all, 'revisions', id] as const,
   credentials: () => [...workflowKeys.all, 'credentials'] as const,
+  defaultRegistry: () => [...workflowKeys.all, 'default-registry'] as const,
   directory: () => [...workflowKeys.all, 'user-directory'] as const,
   buildSettings: () => [...workflowKeys.all, 'build-settings'] as const,
   buildProviders: () => [...workflowKeys.all, 'build-providers'] as const,
@@ -488,6 +504,23 @@ export const useDeleteCredentialMutation = () => {
     mutationFn: deleteCredential,
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: workflowKeys.credentials() }),
+  })
+}
+
+export const useDefaultRegistry = () =>
+  useQuery({
+    queryKey: workflowKeys.defaultRegistry(),
+    queryFn: fetchDefaultRegistry,
+  })
+
+export const useSetDefaultRegistryMutation = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: setDefaultRegistry,
+    onSuccess: () =>
+      queryClient.invalidateQueries({
+        queryKey: workflowKeys.defaultRegistry(),
+      }),
   })
 }
 

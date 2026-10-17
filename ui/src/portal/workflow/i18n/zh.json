@@ -170,6 +170,7 @@
       "platformsHint": "构建的目标平台，可多选；留空跟随构建节点的原生平台",
       "outputRef": "输出镜像",
       "outputRefHint": "支持模板，如 registry/app:{{params.tag}} 或 registry/app:{{git.shortCommit}}",
+      "outputRefResolved": "将通过默认镜像仓库推送为 {{ref}}",
       "gitCredentialRef": "Git 凭证",
       "gitCredentialRefHint": "已保存的 git 凭证名称；留空匿名拉取",
       "registryCredentialRef": "Registry 凭证",
@@ -328,7 +329,11 @@
       "created": "凭证已创建",
       "updated": "凭证已更新",
       "deleted": "凭证已删除",
-      "payloadRequired": "请填写 git 或 registry 凭证字段。"
+      "payloadRequired": "请填写 git 或 registry 凭证字段。",
+      "setDefault": "设为默认镜像仓库",
+      "defaultBadge": "默认",
+      "defaultSet": "默认镜像仓库已更新",
+      "defaultInsecureHint": "该地址使用 http://，请在构建运行时设置的 insecureRegistries 中添加它，否则镜像推送可能失败。"
     },
     "buildProviders": {
       "title": "构建 Provider",

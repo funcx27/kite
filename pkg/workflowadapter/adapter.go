@@ -244,6 +244,24 @@ func (d *Deps) ProviderNames() []string {
 	return d.fleet.ProviderNames()
 }
 
+// defaultRegistrySource is the optional credential-center capability backing
+// DefaultRegistry: the adapter holds the narrow injector interface, while the
+// concrete credentialsadapter.Deps also exposes the default-registry pointer.
+type defaultRegistrySource interface {
+	ResolveDefaultRegistry() (credential, host string, ok bool)
+}
+
+// DefaultRegistry resolves the credential center's default registry pointer
+// for build-node completion; ok=false when the center is unwired or holds no
+// valid default (unset or dangling).
+func (d *Deps) DefaultRegistry() (string, string, bool) {
+	src, ok := d.creds.(defaultRegistrySource)
+	if !ok {
+		return "", "", false
+	}
+	return src.ResolveDefaultRegistry()
+}
+
 // ProviderFor resolves the namespace's build-cluster default out of the
 // module's build_settings table (module helper, host DB handle); lookup
 // failures degrade to "not configured" and are logged.

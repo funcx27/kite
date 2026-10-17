@@ -198,6 +198,15 @@ export interface CredentialSummary {
   updatedAt: string
 }
 
+// The credential center's global default-registry pointer (credential name
+// + host key). valid=false covers both "nothing set" and a dangling pointer
+// (credential deleted or host removed from its payload).
+export interface DefaultRegistrySetting {
+  credential: string
+  host: string
+  valid: boolean
+}
+
 export interface GitCredentialPayload {
   host?: string
   username: string

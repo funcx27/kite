@@ -170,6 +170,7 @@
       "platformsHint": "Target build platforms, multi-select; empty follows the build node's native platform",
       "outputRef": "Output Image Ref",
       "outputRefHint": "Supports templates like registry/app:{{params.tag}} or registry/app:{{git.shortCommit}}",
+      "outputRefResolved": "Pushes as {{ref}} via the default registry",
       "gitCredentialRef": "Git Credential",
       "gitCredentialRefHint": "Name of a stored git credential; empty = anonymous fetch",
       "registryCredentialRef": "Registry Credential",
@@ -328,7 +329,11 @@
       "created": "Credential created",
       "updated": "Credential updated",
       "deleted": "Credential deleted",
-      "payloadRequired": "Fill in the git or registry credential fields."
+      "payloadRequired": "Fill in the git or registry credential fields.",
+      "setDefault": "Set as Default Registry",
+      "defaultBadge": "Default",
+      "defaultSet": "Default registry updated",
+      "defaultInsecureHint": "This host uses http:// — add it to the insecure registries in the build runtime settings, otherwise image pushes may fail."
     },
     "buildProviders": {
       "title": "Build Providers",

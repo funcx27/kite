@@ -13,7 +13,7 @@ import {
   GitIcon,
 } from '@/portal/application/components/brand-icons'
 import { ActionTable } from '@/portal/components/action-table'
-import { IconPencil, IconPlus, IconTrash } from '@tabler/icons-react'
+import { IconPencil, IconPlus, IconStar, IconTrash } from '@tabler/icons-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -43,7 +43,9 @@ import { DeleteConfirmationDialog } from '@/components/delete-confirmation-dialo
 import {
   useCreateCredentialMutation,
   useCredentials,
+  useDefaultRegistry,
   useDeleteCredentialMutation,
+  useSetDefaultRegistryMutation,
   useUpdateCredentialMutation,
   WorkflowApiError,
 } from '../api'
@@ -109,6 +111,29 @@ export function CredentialsManagement() {
   const createMutation = useCreateCredentialMutation()
   const updateMutation = useUpdateCredentialMutation()
   const deleteMutation = useDeleteCredentialMutation()
+  const { data: defaultRegistry } = useDefaultRegistry()
+  const setDefaultMutation = useSetDefaultRegistryMutation()
+
+  // Points the global default-registry pointer at one host of one registry
+  // credential; the mutation invalidates the default-registry query, so the
+  // badges refresh on success.
+  const setDefault = (credential: string, host: string) => {
+    setDefaultMutation.mutate(
+      { credential, host },
+      {
+        onSuccess: () => {
+          toast.success(t('workflow.credentials.defaultSet'))
+          // Prompt only: an http:// registry needs an insecureRegistries
+          // entry in the build runtime settings to be pushable, but that is
+          // the admin's call, not ours.
+          if (host.startsWith('http://')) {
+            toast.info(t('workflow.credentials.defaultInsecureHint'))
+          }
+        },
+        onError: (err) => toast.error(err.message),
+      }
+    )
+  }
 
   // One shared dialog: the section that opened it fixes the payload kind, so
   // the form never needs the type selector.
@@ -285,15 +310,38 @@ export function CredentialsManagement() {
                   }
                   return (
                     <div className="flex flex-col items-start gap-1.5">
-                      {row.original.registryHosts.map((host) => (
-                        <Badge
-                          key={host}
-                          variant="outline"
-                          className="font-mono"
-                        >
-                          {host}
-                        </Badge>
-                      ))}
+                      {row.original.registryHosts.map((host) => {
+                        const isDefault =
+                          defaultRegistry?.valid === true &&
+                          defaultRegistry.credential === row.original.name &&
+                          defaultRegistry.host === host
+                        return (
+                          <div key={host} className="flex items-center gap-1.5">
+                            <Badge variant="outline" className="font-mono">
+                              {host}
+                            </Badge>
+                            {isDefault ? (
+                              <Badge className="gap-1 font-normal">
+                                <IconStar className="h-3 w-3" />
+                                {t('workflow.credentials.defaultBadge')}
+                              </Badge>
+                            ) : (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-6 w-6 text-muted-foreground hover:text-primary"
+                                disabled={setDefaultMutation.isPending}
+                                title={t('workflow.credentials.setDefault')}
+                                onClick={() =>
+                                  setDefault(row.original.name, host)
+                                }
+                              >
+                                <IconStar className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
+                          </div>
+                        )
+                      })}
                     </div>
                   )
                 },
