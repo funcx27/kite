@@ -53,13 +53,15 @@ type ApprovalProps struct {
 // BuildProps is the build-image payload (design §5.1). Exactly one of
 // Git/HTTP sources must be set.
 type BuildProps struct {
-	Git               *GitSource        `json:"git,omitempty"`
-	HTTP              *HTTPSource       `json:"http,omitempty"`
-	Dockerfile        string            `json:"dockerfile,omitempty"`
-	DockerfileContent string            `json:"dockerfileContent,omitempty"`
-	Args              map[string]string `json:"args,omitempty"`
-	Platforms         []string          `json:"platforms,omitempty"`
-	OutputRef         string            `json:"outputRef,omitempty"`
+	Git  *GitSource  `json:"git,omitempty"`
+	HTTP *HTTPSource `json:"http,omitempty"`
+	// Dockerfile is the build recipe as one field: a single token is the
+	// context-relative path (empty resolves to "Dockerfile"); any embedded
+	// whitespace marks the value as the full inline Dockerfile content.
+	Dockerfile string            `json:"dockerfile,omitempty"`
+	Args       map[string]string `json:"args,omitempty"`
+	Platforms  []string          `json:"platforms,omitempty"`
+	OutputRef  string            `json:"outputRef,omitempty"`
 	// GitCredentialRef names the credential center entry used for git fetch
 	// auth; empty = anonymous.
 	GitCredentialRef string `json:"gitCredentialRef,omitempty"`

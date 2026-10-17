@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"gorm.io/gorm"
@@ -35,6 +36,9 @@ func Migrate(db *gorm.DB) error {
 	}
 	if err := db.AutoMigrate(&Workflow{}, &WorkflowRevision{}, &WorkflowRun{}, &NodeRun{}, &BuildSetting{}, &WorkflowBinding{}); err != nil {
 		return fmt.Errorf("migrate workflow models: %w", err)
+	}
+	if err := mergeLegacyDockerfileContent(db); err != nil {
+		return err
 	}
 	return nil
 }
@@ -125,6 +129,120 @@ func indexIsUnique(db *gorm.DB, dst any, name string) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+// mergeLegacyDockerfileContent rewrites stored revision specs that still
+// carry the pre-merge dockerfileContent build prop: a non-empty value moves
+// into the single dockerfile field (the runner discriminates path vs inline
+// content by whitespace) and the legacy key is dropped, because the engine's
+// strict props decode would reject old revisions otherwise. Nodes are matched
+// by the props key, not by node type. The LIKE prefilter keeps the every-boot
+// cost at one table scan; rows without the key never surface.
+func mergeLegacyDockerfileContent(db *gorm.DB) error {
+	var rows []WorkflowRevision
+	if err := db.Select("id", "spec").
+		Where("spec LIKE ?", `%"dockerfileContent"%`).
+		Find(&rows).Error; err != nil {
+		return fmt.Errorf("migrate build dockerfile field: scan revisions: %w", err)
+	}
+	for _, row := range rows {
+		merged, changed, err := mergeSpecDockerfile(row.Spec)
+		if err != nil {
+			return fmt.Errorf("migrate build dockerfile field: revision %d: %w", row.ID, err)
+		}
+		if !changed {
+			continue
+		}
+		if err := db.Model(&WorkflowRevision{}).Where("id = ?", row.ID).
+			Update("spec", JSONField(merged)).Error; err != nil {
+			return fmt.Errorf("migrate build dockerfile field: rewrite revision %d: %w", row.ID, err)
+		}
+	}
+	return nil
+}
+
+// mergeSpecDockerfile applies the dockerfileContent merge to every node of
+// one spec document. Unrelated values pass through as raw JSON, so the
+// rewrite only touches the nodes that carry the legacy key; changed is false
+// when none did.
+func mergeSpecDockerfile(doc []byte) ([]byte, bool, error) {
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(doc, &root); err != nil {
+		return nil, false, fmt.Errorf("parse spec: %w", err)
+	}
+	var nodes []json.RawMessage
+	if raw, ok := root["nodes"]; ok {
+		if err := json.Unmarshal(raw, &nodes); err != nil {
+			return nil, false, fmt.Errorf("parse spec nodes: %w", err)
+		}
+	}
+	changed := false
+	for i, raw := range nodes {
+		merged, nodeChanged, err := mergeNodeDockerfile(raw)
+		if err != nil {
+			return nil, false, fmt.Errorf("parse spec node %d: %w", i, err)
+		}
+		changed = changed || nodeChanged
+		nodes[i] = merged
+	}
+	if !changed {
+		return nil, false, nil
+	}
+	nodesJSON, err := json.Marshal(nodes)
+	if err != nil {
+		return nil, false, fmt.Errorf("encode spec nodes: %w", err)
+	}
+	root["nodes"] = nodesJSON
+	out, err := json.Marshal(root)
+	if err != nil {
+		return nil, false, fmt.Errorf("encode spec: %w", err)
+	}
+	return out, true, nil
+}
+
+// mergeNodeDockerfile moves one node's legacy dockerfileContent prop into
+// dockerfile. An empty or non-string legacy value cannot fill the single
+// string field, so only the key is dropped — that keeps the spec decodable
+// without inventing content.
+func mergeNodeDockerfile(node json.RawMessage) (json.RawMessage, bool, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(node, &fields); err != nil {
+		return nil, false, err
+	}
+	propsRaw, ok := fields["props"]
+	if !ok {
+		return node, false, nil
+	}
+	var props map[string]json.RawMessage
+	if err := json.Unmarshal(propsRaw, &props); err != nil {
+		return nil, false, err
+	}
+	contentRaw, ok := props["dockerfileContent"]
+	if !ok {
+		return node, false, nil
+	}
+	var content string
+	if err := json.Unmarshal(contentRaw, &content); err != nil {
+		content = ""
+	}
+	if content != "" {
+		contentJSON, err := json.Marshal(content)
+		if err != nil {
+			return nil, false, fmt.Errorf("encode dockerfile: %w", err)
+		}
+		props["dockerfile"] = contentJSON
+	}
+	delete(props, "dockerfileContent")
+	propsJSON, err := json.Marshal(props)
+	if err != nil {
+		return nil, false, fmt.Errorf("encode node props: %w", err)
+	}
+	fields["props"] = propsJSON
+	out, err := json.Marshal(fields)
+	if err != nil {
+		return nil, false, fmt.Errorf("encode node: %w", err)
+	}
+	return out, true, nil
 }
 
 // BuildProviderFor resolves the build provider of a namespace: the exact

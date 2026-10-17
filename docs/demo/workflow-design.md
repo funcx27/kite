@@ -179,8 +179,7 @@ WorkflowBinding(id, workflow_id FK→workflows ON DELETE CASCADE, kind, target)
 "props": {
   "source": { "git": { "url": "https://git.acme/web.git", "ref": "{{params.branch}}", "subdir": "" } }
           | { "http": { "url": "https://…/ctx.tar.gz" } },
-  "dockerfile": "Dockerfile",          // 路径；或：
-  "dockerfileContent": "",             // 全文覆盖（覆盖式）
+  "dockerfile": "Dockerfile",          // 单字段：路径（单个 token）或完整 Dockerfile 内容（含空白字符即视为内联，后端权威判别）；空 = "Dockerfile"
   "args":        { "VERSION": "{{params.tag}}" },
   "platforms":   ["linux/amd64"],
   "outputRef":   "reg.acme/web:{{params.tag}}",

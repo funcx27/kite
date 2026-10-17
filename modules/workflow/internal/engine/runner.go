@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/funcx27/kite/modules/workflow/exec"
 	"github.com/funcx27/kite/modules/workflow/internal/spec"
@@ -78,8 +79,17 @@ func (r buildRunner) Run(ctx context.Context, rendered spec.Props, run store.Wor
 	if p.OutputRef == "" {
 		return nil, fmt.Errorf("build node needs outputRef")
 	}
-	dockerfile := p.Dockerfile
-	if dockerfile == "" && p.DockerfileContent == "" {
+	// One spec field, two wire shapes (backend-authoritative rule): any
+	// whitespace inside the trimmed dockerfile value means inline Dockerfile
+	// content, a single token is a context path, empty falls back to the
+	// conventional "Dockerfile" path.
+	dockerfile, dockerfileContent := "", ""
+	switch v := strings.TrimSpace(p.Dockerfile); {
+	case strings.ContainsFunc(v, unicode.IsSpace):
+		dockerfileContent = v
+	case v != "":
+		dockerfile = v
+	default:
 		dockerfile = "Dockerfile"
 	}
 	// The node-level provider keeps priority; an empty one falls back to the
@@ -95,7 +105,7 @@ func (r buildRunner) Run(ctx context.Context, rendered spec.Props, run store.Wor
 		Git:                   source,
 		HTTP:                  httpSource,
 		Dockerfile:            dockerfile,
-		DockerfileContent:     p.DockerfileContent,
+		DockerfileContent:     dockerfileContent,
 		Args:                  p.Args,
 		Platforms:             p.Platforms,
 		OutputRef:             p.OutputRef,

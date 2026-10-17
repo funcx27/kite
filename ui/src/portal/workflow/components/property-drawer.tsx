@@ -503,12 +503,15 @@ function BuildPropsForm({
       node.timeout !== undefined ||
       readNestedString(node, 'git', 'subdir') !== '' ||
       readStringProp(node, 'httpUrl') !== '' ||
-      readStringProp(node, 'dockerfileContent') !== '' ||
       args !== '' ||
       ((node.props?.platforms as string[] | undefined)?.length ?? 0) > 0
   )
   // The form is keyed by node.id, so this open flag resets per node.
   const [dockerfileEditorOpen, setDockerfileEditorOpen] = useState(false)
+  const dockerfile = readStringProp(node, 'dockerfile')
+  // Display-only mirror of the backend's rule: any whitespace inside the
+  // trimmed value marks inline Dockerfile content (the backend decides).
+  const dockerfileInline = /\s/.test(dockerfile.trim())
 
   const setGit = (key: string, value: string) => {
     const git = { ...((node.props?.git as Record<string, unknown>) ?? {}) }
@@ -580,10 +583,33 @@ function BuildPropsForm({
           </Select>
         </Field>
       )}
-      <Field label={t('workflow.props.dockerfile')}>
+      <Field
+        label={t('workflow.props.dockerfile')}
+        hint={t('workflow.props.dockerfileHint')}
+        labelExtra={
+          <span className="flex items-center gap-1">
+            {dockerfileInline && (
+              <Badge variant="secondary">
+                {t('workflow.props.dockerfileInline')}
+              </Badge>
+            )}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 text-muted-foreground"
+              aria-label={t('workflow.props.dockerfileEnlarge')}
+              title={t('workflow.props.dockerfileEnlarge')}
+              onClick={() => setDockerfileEditorOpen(true)}
+            >
+              <IconMaximize className="h-3.5 w-3.5" />
+            </Button>
+          </span>
+        }
+      >
         <TemplateInput
           {...templateVars}
-          value={readStringProp(node, 'dockerfile')}
+          value={dockerfile}
           onValueChange={(v) => patchProps('dockerfile', v || undefined)}
           placeholder="Dockerfile"
         />
@@ -619,33 +645,6 @@ function BuildPropsForm({
           </Field>
         )}
         <Field
-          label={t('workflow.props.dockerfileContent')}
-          labelExtra={
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="h-6 w-6 text-muted-foreground"
-              aria-label={t('workflow.props.dockerfileEnlarge')}
-              title={t('workflow.props.dockerfileEnlarge')}
-              onClick={() => setDockerfileEditorOpen(true)}
-            >
-              <IconMaximize className="h-3.5 w-3.5" />
-            </Button>
-          }
-        >
-          <TemplateInput
-            {...templateVars}
-            multiline
-            rows={4}
-            className="font-mono text-xs"
-            value={readStringProp(node, 'dockerfileContent')}
-            onValueChange={(v) =>
-              patchProps('dockerfileContent', v || undefined)
-            }
-          />
-        </Field>
-        <Field
           label={t('workflow.props.args')}
           hint={t('workflow.props.argsHint')}
         >
@@ -673,11 +672,9 @@ function BuildPropsForm({
       <DockerfileEditorDialog
         open={dockerfileEditorOpen}
         onOpenChange={setDockerfileEditorOpen}
-        value={readStringProp(node, 'dockerfileContent')}
-        onCommit={(draft) =>
-          patchProps('dockerfileContent', draft || undefined)
-        }
-        title={t('workflow.props.dockerfileContent')}
+        value={dockerfile}
+        onCommit={(draft) => patchProps('dockerfile', draft || undefined)}
+        title={t('workflow.props.dockerfile')}
         hint={t('workflow.dockerfileEditor.templateHint')}
         lineCountLabel={(count) =>
           t('workflow.dockerfileEditor.lines', { count })
