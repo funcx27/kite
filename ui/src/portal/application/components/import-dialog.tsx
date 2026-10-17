@@ -38,8 +38,8 @@ import { SimpleYamlEditor } from '@/components/simple-yaml-editor'
 const dns1123LabelPattern = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
 
 // Server-side redaction marker (api/redact.go): exported files carry "***"
-// secret values. Import saves them as-is (a warning per application); the
-// existing pre-publish validation catches them when publishing later.
+// secret values. Import saves them as-is (a warning per application);
+// publishing is rejected server-side until the real values are filled in.
 const redactionMarker = '***'
 
 // The workload document identifying an application inside a multi-document

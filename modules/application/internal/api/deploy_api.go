@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -484,11 +485,14 @@ func (h *Handler) failStalePreview(c *gin.Context) {
 func (h *Handler) publishFailure(c *gin.Context, err error) bool {
 	var nf *namespaceForbiddenError
 	var stale *previewStaleError
+	var masked *maskedSecretError
 	switch {
 	case errors.As(err, &nf):
 		h.fail(c, http.StatusForbidden, err, err.Error())
 	case errors.As(err, &stale):
 		h.failStalePreview(c)
+	case errors.As(err, &masked):
+		h.fail(c, http.StatusBadRequest, nil, masked.Error())
 	case err != nil:
 		h.fail(c, http.StatusInternalServerError, err, "")
 	default:
@@ -644,6 +648,46 @@ func (h *Handler) rerenderForCredential(app *store.App, cfg *store.AppConfig, cr
 	return nil
 }
 
+// maskedSecretError reports redacted ("***") values a publish would write
+// verbatim: Secret data values fail base64 at the API server, but stringData
+// would silently become the literal secret.
+type maskedSecretError struct {
+	details string
+}
+
+func (e *maskedSecretError) Error() string {
+	return "redacted secret values (\"***\" from an export) must be replaced with real values before publishing: " + e.details
+}
+
+// maskedSecretDocs lists Secret documents whose data/stringData still carry
+// the redaction marker, as "name: data[k], stringData[j]; ...".
+func maskedSecretDocs(docs []unstructured.Unstructured) string {
+	var secrets []string
+	for i := range docs {
+		doc := &docs[i]
+		if doc.GetKind() != "Secret" {
+			continue
+		}
+		var hits []string
+		for _, field := range []string{"data", "stringData"} {
+			values, ok := doc.Object[field].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			for key, value := range values {
+				if s, isStr := value.(string); isStr && s == redactMarker {
+					hits = append(hits, field+"["+key+"]")
+				}
+			}
+		}
+		if len(hits) > 0 {
+			sort.Strings(hits)
+			secrets = append(secrets, doc.GetName()+": "+strings.Join(hits, ", "))
+		}
+	}
+	return strings.Join(secrets, "; ")
+}
+
 // applyPublish is the apply core of the publish pipeline (design §6):
 // ensure-namespace, live fetch, per-document Create/Update and the anchor
 // read-back; it ends with the net-change diff group. A non-empty previewToken
@@ -654,6 +698,11 @@ func (h *Handler) rerenderForCredential(app *store.App, cfg *store.AppConfig, cr
 // the applied set was persisted as (0 — a bare republish of the stored set —
 // resolves to the newest revision when the result is written).
 func (h *Handler) applyPublish(ctx context.Context, id identity, app *store.App, cfg *store.AppConfig, cli client.Client, manifests []unstructured.Unstructured, dryRun bool, appliedRev int, previewToken string) (deployResponse, error) {
+	// Masks mean an imported export: block preview and apply alike, before
+	// any cluster access; save-only stays allowed so values can be fixed.
+	if masked := maskedSecretDocs(manifests); masked != "" {
+		return deployResponse{}, &maskedSecretError{details: masked}
+	}
 	if !dryRun {
 		if err := h.ensureNamespace(ctx, id, cli, cfg.Cluster, cfg.Namespace); err != nil {
 			return deployResponse{}, err
