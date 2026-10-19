@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"unicode"
 
 	"github.com/funcx27/kite/modules/workflow/exec"
 	"github.com/funcx27/kite/modules/workflow/internal/spec"
@@ -47,12 +46,11 @@ func (h *Handler) validateBuildNodes(ctx context.Context, specJSON []byte) (bloc
 // validateBuildNode checks one build-image node; each return slice holds at
 // most one entry naming the node and the concrete reason.
 func (h *Handler) validateBuildNode(ctx context.Context, node spec.Node) (blocking, warnings []string) {
-	// One spec field, two wire shapes (the runner's rule): whitespace inside
-	// the trimmed value marks inline content; a single token is a context
-	// path only the run (or the preview endpoint) can judge.
-	if v := strings.TrimSpace(propsString(node.Props, "dockerfile")); v != "" && !hasTemplate(v) &&
-		strings.ContainsFunc(v, unicode.IsSpace) {
-		if err := h.deps.ParseDockerfile(v); err != nil {
+	// One spec field, two wire shapes (spec.SplitDockerfile): only inline
+	// content parses locally; a "path:" value is judged by the run (or the
+	// preview endpoint).
+	if _, content := spec.SplitDockerfile(propsString(node.Props, "dockerfile")); content != "" && !hasTemplate(content) {
+		if err := h.deps.ParseDockerfile(content); err != nil {
 			return []string{fmt.Sprintf("node %q: inline dockerfile does not parse: %v", node.ID, err)}, nil
 		}
 	}

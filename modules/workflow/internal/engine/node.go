@@ -11,7 +11,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 
 	"github.com/funcx27/kite/modules/workflow/internal/spec"
 	"github.com/funcx27/kite/modules/workflow/internal/store"
@@ -266,15 +265,10 @@ func (e *Engine) injectBuildVars(ctx context.Context, run store.WorkflowRun, nod
 	if credRef != "" && !e.deps.AuthorizeUser(run.TriggeredBy, credentialsResource, "get", "", "") {
 		return fmt.Errorf("user %d does not have permission to use credential %q", run.TriggeredBy, credRef)
 	}
-	// One spec field, two wire shapes (the build runner's rule): whitespace
-	// marks inline content, a single token a context path.
-	v := strings.TrimSpace(str("dockerfile"))
-	content := v
-	if !strings.ContainsFunc(v, unicode.IsSpace) {
-		path := v
-		if path == "" {
-			path = "Dockerfile"
-		}
+	// One spec field, two wire shapes (spec.SplitDockerfile): "path:" marks
+	// a context path (probed), anything else non-empty is inline content.
+	path, content := spec.SplitDockerfile(str("dockerfile"))
+	if content == "" {
 		probe, err := e.deps.ProbeDockerfile(ctx, url, ref, str("subdir"), path, str("mode"), credRef)
 		if err != nil {
 			return fmt.Errorf("fetch dockerfile for build.fingerprint: %w", err)

@@ -9,7 +9,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"unicode"
 
 	"github.com/funcx27/kite/modules/workflow/exec"
 	"github.com/funcx27/kite/modules/workflow/internal/spec"
@@ -115,19 +114,7 @@ func (r buildRunner) Run(ctx context.Context, rendered spec.Props, run store.Wor
 		}
 	}
 	applyDefaultRegistry(r.deps, run.TriggeredBy, &p)
-	// One spec field, two wire shapes (backend-authoritative rule): any
-	// whitespace inside the trimmed dockerfile value means inline Dockerfile
-	// content, a single token is a context path, empty falls back to the
-	// conventional "Dockerfile" path.
-	dockerfile, dockerfileContent := "", ""
-	switch v := strings.TrimSpace(p.Dockerfile); {
-	case strings.ContainsFunc(v, unicode.IsSpace):
-		dockerfileContent = v
-	case v != "":
-		dockerfile = v
-	default:
-		dockerfile = "Dockerfile"
-	}
+	dockerfile, dockerfileContent := spec.SplitDockerfile(p.Dockerfile)
 	// The node-level provider keeps priority; an empty one falls back to the
 	// node space's build-cluster default (exact match, then the global
 	// default row).
@@ -269,13 +256,9 @@ func autoOutputRef(ctx context.Context, deps buildDeps, p *spec.BuildProps, wfNa
 // daemon may have no egress to the git server (buildkitd does), and the
 // probe's commit is by construction the one the following build fetches.
 func resolveAutoNameInputs(ctx context.Context, deps buildDeps, p *spec.BuildProps, onLog func(string)) (commit, content string, err error) {
-	v := strings.TrimSpace(p.Dockerfile)
-	inline := strings.ContainsFunc(v, unicode.IsSpace)
+	path, inlineContent := spec.SplitDockerfile(p.Dockerfile)
+	inline := inlineContent != ""
 	runtime := p.Git.Mode == "runtime"
-	path := v
-	if path == "" {
-		path = "Dockerfile"
-	}
 	// Inline content needs no fetch; runtime mode still probes so the
 	// commit comes from buildkitd's own resolution. The commit-only probe
 	// targets the conventional path — its content is ignored.
@@ -300,7 +283,7 @@ func resolveAutoNameInputs(ctx context.Context, deps buildDeps, p *spec.BuildPro
 		}
 		content = probe.Content
 	} else {
-		content = v
+		content = inlineContent
 	}
 	switch {
 	case p.Git.PinnedCommit != "":

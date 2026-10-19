@@ -831,26 +831,60 @@ function BuildPropsForm({
   const [dockerfileEditorOpen, setDockerfileEditorOpen] = useState(false)
   const [dockerfilePreviewOpen, setDockerfilePreviewOpen] = useState(false)
   const dockerfile = readStringProp(node, 'dockerfile')
-  // Display-only mirror of the backend's rule: any whitespace inside the
-  // trimmed value marks inline Dockerfile content (the backend decides).
-  const dockerfileInline = /\s/.test(dockerfile.trim())
-  // Preview targets the path form of the field: a single-token value names
-  // a file in the git context (an http source has no repo to resolve). A
-  // ref or url still carrying a template variable only resolves at run
-  // time, so the fetch cannot be made yet.
-  const dockerfilePath =
-    dockerfile.trim() !== '' && !dockerfileInline ? dockerfile.trim() : ''
+  // Wire rule (mirrors the backend's SplitDockerfile): a "path:" prefix is
+  // a context path, any other non-empty value is inline content, empty
+  // falls back to the conventional Dockerfile path.
+  const dockerfileMode: 'path' | 'text' =
+    dockerfile === '' || dockerfile.startsWith('path:') ? 'path' : 'text'
+  const dockerfilePath = dockerfile.startsWith('path:')
+    ? dockerfile.slice('path:'.length).trim()
+    : ''
   const gitRef = readNestedString(node, 'git', 'ref')
-  const gitSourceHasTemplate = gitUrl.includes('{{') || gitRef.includes('{{')
+  // Preview resolves {{params.*}}/{{ctx.*}} against declared defaults so a
+  // templated source still previews; any other reference (git.*, a param
+  // without default) only settles at run time and keeps the button off.
+  const resolveTemplateDefaults = (text: string): string | undefined => {
+    const pattern = /\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g
+    let out = ''
+    let i = 0
+    let m: RegExpExecArray | null
+    while ((m = pattern.exec(text)) !== null) {
+      out += text.slice(i, m.index)
+      let value: string | undefined
+      if (m[1].startsWith('params.')) {
+        const param = templateVars.params.find(
+          (p) => `params.${p.name}` === m![1]
+        )
+        if (param && param.default != null) value = String(param.default)
+      } else if (m[1] === 'ctx.workflow') {
+        value = workflowName
+      } else if (m[1] === 'ctx.space') {
+        value = currentSpace ?? undefined
+      } else if (m[1] === 'ctx.registry') {
+        value = defaultRegistry?.valid ? defaultRegistry.host : undefined
+      }
+      if (value === undefined || value === '') return undefined
+      out += value
+      i = m.index + m[0].length
+    }
+    return out + text.slice(i)
+  }
+  const previewUrl = resolveTemplateDefaults(gitUrl)
+  const previewRef = resolveTemplateDefaults(gitRef)
+  const previewPath = dockerfilePath || 'Dockerfile'
   const previewDisabled =
-    dockerfilePath === '' || gitUrl === '' || gitSourceHasTemplate
-  const previewHint = gitSourceHasTemplate
-    ? t('workflow.props.dockerfilePreviewVarRef')
-    : gitUrl === ''
+    gitUrl === '' || previewUrl === undefined || previewRef === undefined
+  const previewHint =
+    gitUrl === ''
       ? t('workflow.props.dockerfilePreviewNeedsGit')
-      : dockerfilePath === ''
-        ? t('workflow.props.dockerfilePreviewPathOnly')
+      : previewUrl === undefined || previewRef === undefined
+        ? t('workflow.props.dockerfilePreviewVarRef')
         : t('workflow.props.dockerfilePreview')
+  // Switching modes abandons the other form's value: the path and the
+  // inline content are unrelated payloads of one field.
+  const switchDockerfileMode = (mode: 'path' | 'text') => {
+    if (mode !== dockerfileMode) patchProps('dockerfile', undefined)
+  }
 
   // Auto-naming preview mirrors the backend rule: the app segment is the
   // saved app (legacy nodes) falling back to the workflow name, and the tag
@@ -933,23 +967,25 @@ function BuildPropsForm({
         hint={t('workflow.props.dockerfileHint')}
         labelExtra={
           <span className="flex items-center gap-1">
-            {dockerfileInline && (
+            {dockerfileMode === 'text' && (
               <Badge variant="secondary">
                 {t('workflow.props.dockerfileInline')}
               </Badge>
             )}
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="h-6 w-6 text-muted-foreground"
-              disabled={previewDisabled}
-              aria-label={previewHint}
-              title={previewHint}
-              onClick={() => setDockerfilePreviewOpen(true)}
-            >
-              <IconEye className="h-3.5 w-3.5" />
-            </Button>
+            {dockerfileMode === 'path' && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 text-muted-foreground"
+                disabled={previewDisabled}
+                aria-label={previewHint}
+                title={previewHint}
+                onClick={() => setDockerfilePreviewOpen(true)}
+              >
+                <IconEye className="h-3.5 w-3.5" />
+              </Button>
+            )}
             <Button
               type="button"
               variant="ghost"
@@ -964,12 +1000,52 @@ function BuildPropsForm({
           </span>
         }
       >
-        <TemplateInput
-          {...templateVars}
-          value={dockerfile}
-          onValueChange={(v) => patchProps('dockerfile', v || undefined)}
-          placeholder="Dockerfile"
-        />
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-1">
+            {(['path', 'text'] as const).map((mode) => (
+              <Button
+                key={mode}
+                type="button"
+                variant={mode === dockerfileMode ? 'secondary' : 'ghost'}
+                size="sm"
+                className="h-6 px-2 text-[11px]"
+                onClick={() => switchDockerfileMode(mode)}
+              >
+                {t(
+                  mode === 'path'
+                    ? 'workflow.props.dockerfileModePath'
+                    : 'workflow.props.dockerfileModeText'
+                )}
+              </Button>
+            ))}
+          </div>
+          {dockerfileMode === 'path' ? (
+            <TemplateInput
+              {...templateVars}
+              value={dockerfilePath}
+              onValueChange={(v) =>
+                patchProps('dockerfile', v === '' ? undefined : `path:${v}`)
+              }
+              placeholder="Dockerfile"
+            />
+          ) : (
+            // Inline content only lives in the dialog: a single-line field
+            // cannot meaningfully show multi-line dockerfile text.
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="w-full justify-center text-xs"
+              onClick={() => setDockerfileEditorOpen(true)}
+            >
+              {dockerfile
+                ? t('workflow.props.dockerfileEditText', {
+                    count: dockerfile.split('\n').length,
+                  })
+                : t('workflow.props.dockerfileEditTextEmpty')}
+            </Button>
+          )}
+        </div>
       </Field>
       <Field
         label={t('workflow.props.outputRef')}
@@ -1069,16 +1145,16 @@ function BuildPropsForm({
           t('workflow.dockerfileEditor.lines', { count })
         }
       />
-      {dockerfilePath !== '' && (
+      {dockerfileMode === 'path' && (
         <DockerfilePreviewDialog
           open={dockerfilePreviewOpen}
           onOpenChange={setDockerfilePreviewOpen}
-          title={`${t('workflow.props.dockerfile')} · ${dockerfilePath}`}
+          title={`${t('workflow.props.dockerfile')} · ${previewPath}`}
           request={{
-            url: gitUrl,
-            ref: gitRef,
+            url: previewUrl ?? gitUrl,
+            ref: previewRef ?? gitRef,
             subdir: readNestedString(node, 'git', 'subdir') || undefined,
-            path: dockerfilePath,
+            path: previewPath,
             credential: savedGitCredential || undefined,
             mode: readNestedString(node, 'git', 'mode') || undefined,
           }}

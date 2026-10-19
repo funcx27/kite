@@ -3,6 +3,8 @@
 // and template-resolution rules that guard saved definitions.
 package spec
 
+import "strings"
+
 // Node types supported in M1 (design §5).
 const (
 	NodeBuildImage = "build-image"
@@ -55,9 +57,8 @@ type ApprovalProps struct {
 type BuildProps struct {
 	Git  *GitSource  `json:"git,omitempty"`
 	HTTP *HTTPSource `json:"http,omitempty"`
-	// Dockerfile is the build recipe as one field: a single token is the
-	// context-relative path (empty resolves to "Dockerfile"); any embedded
-	// whitespace marks the value as the full inline Dockerfile content.
+	// Dockerfile is the build recipe as one field; SplitDockerfile decodes
+	// its two wire shapes.
 	Dockerfile string            `json:"dockerfile,omitempty"`
 	Args       map[string]string `json:"args,omitempty"`
 	Platforms  []string          `json:"platforms,omitempty"`
@@ -136,6 +137,29 @@ type NotifyProps struct {
 type Edge struct {
 	From string `json:"from"`
 	To   string `json:"to"`
+}
+
+// DockerfilePathPrefix marks the dockerfile field's path form. One field,
+// two wire shapes, one explicit rule: "path:<context-relative path>" is a
+// file in the build context, any other non-empty value is inline Dockerfile
+// content, and empty falls back to the conventional "Dockerfile" path.
+const DockerfilePathPrefix = "path:"
+
+// SplitDockerfile decodes the dockerfile field into its wire shapes: exactly
+// one of path/content comes back non-empty (both empty cannot happen — an
+// absent value resolves to the default path).
+func SplitDockerfile(value string) (path, content string) {
+	v := strings.TrimSpace(value)
+	if rest, ok := strings.CutPrefix(v, DockerfilePathPrefix); ok {
+		if p := strings.TrimSpace(rest); p != "" {
+			return p, ""
+		}
+		return "Dockerfile", ""
+	}
+	if v == "" {
+		return "Dockerfile", ""
+	}
+	return "", v
 }
 
 // Param types (design §4).

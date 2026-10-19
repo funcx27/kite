@@ -92,7 +92,7 @@ func TestBuildRunnerRun(t *testing.T) {
 		},
 		{
 			name:       "http source keeps explicit dockerfile and forwards logs",
-			props:      spec.Props{"http": map[string]any{"url": "https://acme/ctx.tar.gz"}, "outputRef": "reg/web:v1", "dockerfile": "build.Dockerfile"},
+			props:      spec.Props{"http": map[string]any{"url": "https://acme/ctx.tar.gz"}, "outputRef": "reg/web:v1", "dockerfile": "path:build.Dockerfile"},
 			deps:       stubBuildDeps{authorized: true, res: exec.BuildResult{ImageRef: "reg/web:v1"}},
 			wantDocker: "build.Dockerfile",
 			wantSource: func(t *testing.T, req exec.BuildRequest) {
