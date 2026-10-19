@@ -7,6 +7,7 @@ import {
   useQueries,
   useQuery,
   useQueryClient,
+  type Query,
 } from '@tanstack/react-query'
 
 import {
@@ -29,6 +30,7 @@ import type {
   ParamSpec,
   RevisionSummary,
   RunDetail,
+  RunStatus,
   RunSummary,
   RuntimeSettings,
   TriggerConfig,
@@ -310,6 +312,27 @@ const workflowKeys = {
   runtimeSettings: () => [...workflowKeys.all, 'runtime-settings'] as const,
 }
 
+// Run statuses the engine settles permanently; only the run page has SSE, so
+// every other surface polls until its runs turn terminal.
+const terminalRunStatus = new Set<RunStatus>([
+  'succeeded',
+  'failed',
+  'cancelled',
+])
+
+// Poll cadence for run-list queries: 3s while any listed run is still
+// non-terminal, a slow heartbeat otherwise — external triggers (cron,
+// webhook, another tab) never push, so the heartbeat is what keeps a resting
+// page from going stale.
+function activeRunPoll(
+  query: Query<{ runs: RunSummary[]; total: number }>
+): number {
+  const active = query.state.data?.runs.some(
+    (run) => !terminalRunStatus.has(run.status)
+  )
+  return active ? 3000 : 20000
+}
+
 export const useWorkflows = () =>
   useQuery({
     queryKey: workflowKeys.list(),
@@ -336,6 +359,7 @@ export const useRuns = (id: number | undefined, limit = 50) =>
     queryKey: [...workflowKeys.runs(id ?? 0), limit],
     queryFn: () => fetchRuns(id as number, limit),
     enabled: id !== undefined,
+    refetchInterval: activeRunPoll,
   })
 
 // Latest run per workflow for the list page (最近运行 column and the
@@ -347,6 +371,7 @@ export const useLatestRuns = (ids: number[]) =>
     queries: ids.map((id) => ({
       queryKey: [...workflowKeys.runs(id), 'latest'],
       queryFn: () => fetchRuns(id, 1),
+      refetchInterval: activeRunPoll,
     })),
     combine: (results) => {
       const latestById: Record<number, RunSummary | undefined> = {}
@@ -367,6 +392,12 @@ export const useRun = (runId: number | undefined) =>
     queryKey: workflowKeys.run(runId ?? 0),
     queryFn: () => fetchRun(runId as number),
     enabled: runId !== undefined,
+    // The run page also has SSE; this poll is the fallback for surfaces
+    // without it (the app page's progress preview) and for a dropped stream.
+    refetchInterval: (query) =>
+      query.state.data && !terminalRunStatus.has(query.state.data.status)
+        ? 3000
+        : 20000,
   })
 
 export const useCredentials = () =>
