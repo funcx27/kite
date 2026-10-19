@@ -427,8 +427,7 @@ export function YamlDiffViewer({
               options={baseEditorOptions}
               value={viewContent}
             />
-          ) : leftContent.trim() !== '' &&
-            leftContent === rightContent ? (
+          ) : leftContent.trim() !== '' && leftContent === rightContent ? (
             // Canonically identical sides (the normalization above already
             // erased key-order noise): two full columns would render with
             // zero highlights, so say so instead.

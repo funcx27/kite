@@ -199,7 +199,13 @@ export function isValidNodeNodeId(id: string): boolean {
 // Known output keys per node type, feeding the steps.* template refs
 // (mirrors the runners' outputs in engine/runner.go).
 export const outputKeysByType: Record<WorkflowNodeType, string[]> = {
-  'build-image': ['imageRef', 'digest', 'imageRefWithDigest', 'commit', 'fingerprint'],
+  'build-image': [
+    'imageRef',
+    'digest',
+    'imageRefWithDigest',
+    'commit',
+    'fingerprint',
+  ],
   'deploy-app': ['revision', 'preview'],
   approval: [],
   notify: ['delivered'],
