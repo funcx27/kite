@@ -879,6 +879,24 @@ export function WorkflowEditorPage() {
           </div>
         )}
         <div className="flex items-center gap-2">
+          {mode === 'canvas' && (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setParamsOpen(true)}
+              >
+                {t('workflow.editor.params')}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setTriggersOpen(true)}
+              >
+                {t('workflow.editor.triggers')}
+              </Button>
+            </>
+          )}
           {/* Single switch-to-the-other-view button, styled like the rest of
               the toolbar; switchMode stays put when the YAML apply fails. */}
           <Button
@@ -898,24 +916,6 @@ export function WorkflowEditorPage() {
               </>
             )}
           </Button>
-          {mode === 'canvas' && (
-            <>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setParamsOpen(true)}
-              >
-                {t('workflow.editor.params')}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setTriggersOpen(true)}
-              >
-                {t('workflow.editor.triggers')}
-              </Button>
-            </>
-          )}
           <Button variant="outline" size="sm" onClick={handleValidate}>
             ✓ {t('workflow.editor.validate')}
           </Button>

@@ -181,7 +181,6 @@
       "dockerfileModeText": "文本",
       "dockerfileEditText": "查看 / 编辑内容（{{count}} 行）",
       "dockerfileEditTextEmpty": "填写 Dockerfile 内容",
-      "dockerfileEnlarge": "放大编辑",
       "dockerfilePreview": "预览此路径的文件",
       "dockerfilePreviewVarRef": "存在无可解析默认值的变量，需运行时解析",
       "dockerfilePreviewNeedsGit": "预览需要 git 源来解析路径",

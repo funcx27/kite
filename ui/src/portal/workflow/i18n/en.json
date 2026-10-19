@@ -181,7 +181,6 @@
       "dockerfileModeText": "Text",
       "dockerfileEditText": "View / edit content ({{count}} lines)",
       "dockerfileEditTextEmpty": "Write Dockerfile content",
-      "dockerfileEnlarge": "Expand editor",
       "dockerfilePreview": "Preview the file at this path",
       "dockerfilePreviewVarRef": "A reference has no resolvable default and settles only at run time",
       "dockerfilePreviewNeedsGit": "Preview needs a git source to resolve the path",

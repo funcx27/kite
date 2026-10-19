@@ -14,7 +14,6 @@ import {
   IconChevronDown,
   IconChevronRight,
   IconEye,
-  IconMaximize,
   IconTrash,
   IconX,
 } from '@tabler/icons-react'
@@ -831,14 +830,6 @@ function BuildPropsForm({
   const [dockerfileEditorOpen, setDockerfileEditorOpen] = useState(false)
   const [dockerfilePreviewOpen, setDockerfilePreviewOpen] = useState(false)
   const dockerfile = readStringProp(node, 'dockerfile')
-  // Wire rule (mirrors the backend's SplitDockerfile): a "path:" prefix is
-  // a context path, any other non-empty value is inline content, empty
-  // falls back to the conventional Dockerfile path.
-  const dockerfileMode: 'path' | 'text' =
-    dockerfile === '' || dockerfile.startsWith('path:') ? 'path' : 'text'
-  const dockerfilePath = dockerfile.startsWith('path:')
-    ? dockerfile.slice('path:'.length).trim()
-    : ''
   const gitRef = readNestedString(node, 'git', 'ref')
   // Preview resolves {{params.*}}/{{ctx.*}} against declared defaults so a
   // templated source still previews; any other reference (git.*, a param
@@ -871,18 +862,46 @@ function BuildPropsForm({
   }
   const previewUrl = resolveTemplateDefaults(gitUrl)
   const previewRef = resolveTemplateDefaults(gitRef)
-  const previewPath = dockerfilePath || 'Dockerfile'
+  // The dockerfile value classifies by its RESOLVED form, so a field like
+  // {{params.dockerfile}} behaves as whatever its default resolves to; an
+  // unresolvable template guesses path (the field's default mode).
+  const resolvedDockerfile = resolveTemplateDefaults(dockerfile)
+  const resolvedPath =
+    resolvedDockerfile !== undefined && resolvedDockerfile.startsWith('path:')
+      ? resolvedDockerfile.slice('path:'.length).trim()
+      : ''
+  const previewPath = resolvedPath || 'Dockerfile'
+  // Mode is stateful, not derived from the value: an empty value is legal in
+  // both modes, so a derived tab could never leave the path default.
+  const [dockerfileMode, setDockerfileMode] = useState<'path' | 'text'>(() =>
+    resolvedDockerfile !== undefined &&
+    resolvedDockerfile !== '' &&
+    !resolvedDockerfile.startsWith('path:')
+      ? 'text'
+      : 'path'
+  )
+  const dockerfilePath = dockerfile.startsWith('path:')
+    ? dockerfile.slice('path:'.length).trim()
+    : ''
+  const dockerfileUnresolved =
+    dockerfile.includes('{{') && resolvedDockerfile === undefined
   const previewDisabled =
-    gitUrl === '' || previewUrl === undefined || previewRef === undefined
+    gitUrl === '' ||
+    previewUrl === undefined ||
+    previewRef === undefined ||
+    dockerfileUnresolved
   const previewHint =
     gitUrl === ''
       ? t('workflow.props.dockerfilePreviewNeedsGit')
-      : previewUrl === undefined || previewRef === undefined
+      : previewUrl === undefined ||
+          previewRef === undefined ||
+          dockerfileUnresolved
         ? t('workflow.props.dockerfilePreviewVarRef')
         : t('workflow.props.dockerfilePreview')
   // Switching modes abandons the other form's value: the path and the
   // inline content are unrelated payloads of one field.
   const switchDockerfileMode = (mode: 'path' | 'text') => {
+    setDockerfileMode(mode)
     if (mode !== dockerfileMode) patchProps('dockerfile', undefined)
   }
 
@@ -986,17 +1005,6 @@ function BuildPropsForm({
                 <IconEye className="h-3.5 w-3.5" />
               </Button>
             )}
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="h-6 w-6 text-muted-foreground"
-              aria-label={t('workflow.props.dockerfileEnlarge')}
-              title={t('workflow.props.dockerfileEnlarge')}
-              onClick={() => setDockerfileEditorOpen(true)}
-            >
-              <IconMaximize className="h-3.5 w-3.5" />
-            </Button>
           </span>
         }
       >
