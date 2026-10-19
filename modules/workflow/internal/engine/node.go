@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/funcx27/kite/modules/workflow/internal/spec"
 	"github.com/funcx27/kite/modules/workflow/internal/store"
@@ -70,12 +71,22 @@ func (e *Engine) execNode(parent context.Context, state *runState, node spec.Nod
 			"status": state.run.Status,
 			"url":    fmt.Sprintf("/portal/workflows/%d/runs/%d", state.wf.ID, state.run.ID),
 		},
+		Ctx: e.templateCtx(state.wf),
 	}
 	// git.* variables resolve via ls-remote before the full render — the
 	// commit must be known while the props still carry the {{git.*}} tokens.
 	// Only build nodes referencing git.* pay the round trip.
 	if node.Type == spec.NodeBuildImage && usesGitVars(node.Props) {
 		if err := e.injectGitVars(ctx, state.run, node, &env); err != nil {
+			e.completeNode(state.run.ID, node.ID, row.ID, row.Attempt, store.NodeFailed, nil, err, "")
+			return
+		}
+	}
+	// build.* variables need the same pre-render slot: the fingerprint covers
+	// the dockerfile content and the rendered args, neither of which exists
+	// before the full render.
+	if node.Type == spec.NodeBuildImage && usesBuildVars(node.Props) {
+		if err := e.injectBuildVars(ctx, state.run, node, &env); err != nil {
 			e.completeNode(state.run.ID, node.ID, row.ID, row.Attempt, store.NodeFailed, nil, err, "")
 			return
 		}
@@ -87,14 +98,25 @@ func (e *Engine) execNode(parent context.Context, state *runState, node spec.Nod
 		e.completeNode(state.run.ID, node.ID, row.ID, row.Attempt, store.NodeFailed, nil, err, "")
 		return
 	}
-	// A git-var resolution pins the build to the commit the render used:
-	// stamping it onto the git source lets the build runner verify (server
-	// mode) or fetch exactly that SHA (runtime mode), closing the window
-	// where a tag renders shortCommit abc123 but a moved branch tip builds
-	// def456. Auto-named builds resolve their pin inside the runner.
-	if node.Type == spec.NodeBuildImage && env.Git != nil {
-		if g, ok := rendered["git"].(map[string]any); ok {
-			g["pinnedCommit"] = env.Git["commit"]
+	if node.Type == spec.NodeBuildImage {
+		// A git-var resolution pins the build to the commit the render used:
+		// stamping it onto the git source lets the build runner verify (server
+		// mode) or fetch exactly that SHA (runtime mode), closing the window
+		// where a tag renders shortCommit abc123 but a moved branch tip builds
+		// def456. Auto-named builds resolve their pin inside the runner.
+		if env.Git != nil {
+			if g, ok := rendered["git"].(map[string]any); ok {
+				g["pinnedCommit"] = env.Git["commit"]
+			}
+		}
+		// The build space follows the workflow's single space binding when the
+		// props carry none (the form no longer edits it, and YAML saves never
+		// injected it); an ambiguous or absent binding keeps the empty string.
+		if s, _ := rendered["space"].(string); s == "" {
+			rendered["space"] = env.Ctx["space"]
+		}
+		if env.Build != nil {
+			rendered["resolvedFingerprint"] = env.Build["fingerprint"]
 		}
 	}
 	inputs, err := json.Marshal(rendered)
@@ -116,7 +138,7 @@ func (e *Engine) execNode(parent context.Context, state *runState, node spec.Nod
 	if node.Type == "" {
 		err = fmt.Errorf("node %q has no type", node.ID)
 	} else if runner, ok := e.runners[node.Type]; ok {
-		outputs, err = runner.Run(ctx, rendered, state.run, onLog)
+		outputs, err = runner.Run(ctx, rendered, state.run, state.wf, onLog)
 	} else {
 		err = fmt.Errorf("unknown node type %q", node.Type)
 	}
@@ -181,6 +203,96 @@ func (e *Engine) injectGitVars(ctx context.Context, run store.WorkflowRun, node 
 		return fmt.Errorf("could not resolve commit of %s@%s via ls-remote", url, shownRef)
 	}
 	env.Git = map[string]any{"commit": commit, "shortCommit": commit[:min(7, len(commit))]}
+	return nil
+}
+
+// templateCtx assembles the workflow-scope ctx.* variables: the workflow
+// name, the workflow's single space binding (empty with zero or several
+// bindings — an ambiguous space must not silently pick one) and the default
+// registry host (empty when unset or invalid).
+func (e *Engine) templateCtx(wf store.Workflow) map[string]any {
+	space := ""
+	if bound, err := store.LoadBindings(e.db, []uint{wf.ID}, store.BindingKindSpace); err != nil {
+		slog.Warn("workflow: load space bindings for template ctx", "workflow", wf.ID, "err", err)
+	} else if len(bound[wf.ID]) == 1 {
+		space = bound[wf.ID][0]
+	}
+	_, host, _ := e.deps.DefaultRegistry()
+	return map[string]any{"workflow": wf.Name, "space": space, "registry": host}
+}
+
+// usesBuildVars reports whether the props reference any build.* template
+// variable.
+func usesBuildVars(props spec.Props) bool {
+	return slices.ContainsFunc(spec.TemplateRefs(props), func(ref string) bool {
+		return strings.HasPrefix(ref, "build.")
+	})
+}
+
+// injectBuildVars resolves build.fingerprint into env.Build: the git source
+// and the build args render first (they may carry {{params.*}}), then the
+// dockerfile content — inline content directly, a path via the same probe the
+// auto-naming runner uses — feeds the variant fingerprint. The probe reads at
+// the ref's current tip; a ref that moves between this probe and the pinned
+// build can shift the rendered fingerprint, a cosmetic mismatch the default
+// (non-template) tag path rejects via its own moved-ref check.
+func (e *Engine) injectBuildVars(ctx context.Context, run store.WorkflowRun, node spec.Node, env *spec.ResolveEnv) error {
+	raw, ok := node.Props["git"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("build template variables require a git source")
+	}
+	// build.* cannot appear inside these inputs themselves: env.Build is nil
+	// during this partial render, so such a reference fails here.
+	rendered, err := spec.Resolve(spec.Props{
+		"url":              raw["url"],
+		"ref":              raw["ref"],
+		"subdir":           raw["subdir"],
+		"mode":             raw["mode"],
+		"gitCredentialRef": node.Props["gitCredentialRef"],
+		"args":             node.Props["args"],
+		"dockerfile":       node.Props["dockerfile"],
+	}, *env)
+	if err != nil {
+		return fmt.Errorf("resolve build inputs: %w", err)
+	}
+	str := func(key string) string {
+		s, _ := rendered[key].(string)
+		return s
+	}
+	url, ref, credRef := str("url"), str("ref"), str("gitCredentialRef")
+	if url == "" {
+		return fmt.Errorf("build template variables require a git source url")
+	}
+	if credRef != "" && !e.deps.AuthorizeUser(run.TriggeredBy, credentialsResource, "get", "", "") {
+		return fmt.Errorf("user %d does not have permission to use credential %q", run.TriggeredBy, credRef)
+	}
+	// One spec field, two wire shapes (the build runner's rule): whitespace
+	// marks inline content, a single token a context path.
+	v := strings.TrimSpace(str("dockerfile"))
+	content := v
+	if !strings.ContainsFunc(v, unicode.IsSpace) {
+		path := v
+		if path == "" {
+			path = "Dockerfile"
+		}
+		probe, err := e.deps.ProbeDockerfile(ctx, url, ref, str("subdir"), path, str("mode"), credRef)
+		if err != nil {
+			return fmt.Errorf("fetch dockerfile for build.fingerprint: %w", err)
+		}
+		if !probe.Exists {
+			return fmt.Errorf("build.fingerprint requires the dockerfile content, but %q was not found in the build context", path)
+		}
+		content = probe.Content
+	}
+	args := map[string]string{}
+	if rawArgs, ok := rendered["args"].(map[string]any); ok {
+		for k, val := range rawArgs {
+			if s, ok := val.(string); ok {
+				args[k] = s
+			}
+		}
+	}
+	env.Build = map[string]any{"fingerprint": variantFingerprint(content, args, str("subdir"))}
 	return nil
 }
 

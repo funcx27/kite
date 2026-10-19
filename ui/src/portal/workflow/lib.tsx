@@ -199,16 +199,17 @@ export function isValidNodeNodeId(id: string): boolean {
 // Known output keys per node type, feeding the steps.* template refs
 // (mirrors the runners' outputs in engine/runner.go).
 export const outputKeysByType: Record<WorkflowNodeType, string[]> = {
-  'build-image': ['imageRef', 'digest', 'imageRefWithDigest', 'commit'],
+  'build-image': ['imageRef', 'digest', 'imageRefWithDigest', 'commit', 'fingerprint'],
   'deploy-app': ['revision', 'preview'],
   approval: [],
   notify: ['delivered'],
 }
 
 // Template refs offered on a node's fields (autocomplete options): the
-// workflow params, the run fields and the outputs of the nodes that can
-// finish before it runs — itself and its DAG descendants excluded, since the
-// runtime only resolves steps.* against already-succeeded nodes.
+// workflow params, the ctx.* workflow globals, the run fields and the outputs
+// of the nodes that can finish before it runs — itself and its DAG
+// descendants excluded, since the runtime only resolves steps.* against
+// already-succeeded nodes.
 export function buildTemplateRefs(
   params: ParamSpec[],
   nodes: WorkflowNode[],
@@ -217,8 +218,9 @@ export function buildTemplateRefs(
   edges: DAGSpec['edges'] = []
 ): string[] {
   const refs = params.map((p) => `params.${p.name}`)
+  refs.push('ctx.workflow', 'ctx.space', 'ctx.registry')
   if (gitScope) {
-    refs.push('git.commit', 'git.shortCommit')
+    refs.push('git.commit', 'git.shortCommit', 'build.fingerprint')
   }
   refs.push('run.number', 'run.status', 'run.url')
   const unreachable = new Set<string>()

@@ -18,6 +18,13 @@ type ResolveEnv struct {
 	// with a git source (commit resolved via ls-remote before the full
 	// render; nil for every other node).
 	Git map[string]any
+	// Ctx holds workflow-scope variables (workflow, space, registry) —
+	// derived from the workflow itself, so every node resolves them.
+	Ctx map[string]any
+	// Build holds build-scope variables (fingerprint), populated only for
+	// build-image nodes whose props reference build.* — the fingerprint needs
+	// a dockerfile probe before the full render; nil for every other node.
+	Build map[string]any
 }
 
 // TemplateRefs lists every {{ path }} reference appearing in the props tree,
@@ -164,7 +171,25 @@ func lookup(path string, env ResolveEnv) (any, error) {
 			return nil, fmt.Errorf("template references unknown git variable %q", path)
 		}
 		return v, nil
+	case len(seg) == 2 && seg[0] == "ctx":
+		if env.Ctx == nil {
+			return nil, fmt.Errorf("template references ctx variable %q but none are available", path)
+		}
+		v, ok := env.Ctx[seg[1]]
+		if !ok {
+			return nil, fmt.Errorf("template references unknown ctx variable %q", path)
+		}
+		return v, nil
+	case len(seg) == 2 && seg[0] == "build":
+		if env.Build == nil {
+			return nil, fmt.Errorf("template references build variable %q but the node has no resolved build context", path)
+		}
+		v, ok := env.Build[seg[1]]
+		if !ok {
+			return nil, fmt.Errorf("template references unknown build variable %q", path)
+		}
+		return v, nil
 	default:
-		return nil, fmt.Errorf("malformed template reference %q (want params.<name>, steps.<id>.outputs.<key>, run.<number|status|url> or git.<commit|shortCommit>)", path)
+		return nil, fmt.Errorf("malformed template reference %q (want params.<name>, steps.<id>.outputs.<key>, run.<number|status|url>, git.<commit|shortCommit>, ctx.<workflow|space|registry> or build.<fingerprint>)", path)
 	}
 }

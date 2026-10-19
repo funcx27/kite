@@ -82,6 +82,9 @@ export interface PropertyDrawerProps {
   // Current editor edges: steps.* suggestions skip the node's DAG descendants.
   edges?: DAGSpec['edges']
   lockedTarget?: DeployTargetLock
+  // Owning workflow name: feeds the auto-named image preview (the app segment
+  // falls back to it when the props carry no app).
+  workflowName?: string
   onChange: (node: WorkflowNode) => void
   onDelete: () => void
 }
@@ -158,6 +161,7 @@ export function PropertyDrawer({
   nodes,
   edges,
   lockedTarget,
+  workflowName,
   onChange,
   onDelete,
 }: PropertyDrawerProps) {
@@ -247,7 +251,7 @@ export function PropertyDrawer({
             node={node}
             patchProps={patchProps}
             patchNode={patchNode}
-            onSelectApp={patchAppTarget}
+            workflowName={workflowName}
             templateVars={templateInputVars}
           />
         )}
@@ -777,14 +781,13 @@ function BuildPropsForm({
   node,
   patchProps,
   patchNode,
-  onSelectApp,
+  workflowName,
   templateVars,
 }: PropsFormShared & {
-  onSelectApp: (space: string, app: string) => void
+  workflowName?: string
 }) {
   const { t } = useTranslation()
   const { currentSpace } = useSpaces()
-  const { data: applications } = useApplications()
   const gitUrl = readNestedString(node, 'git', 'url')
   const sourceKind = gitUrl
     ? 'git'
@@ -849,22 +852,12 @@ function BuildPropsForm({
         ? t('workflow.props.dockerfilePreviewPathOnly')
         : t('workflow.props.dockerfilePreview')
 
-  // Auto-naming target, following the deploy form's app/space pattern: the
-  // space is fixed to the workflow's own space and only the app is picked.
-  // Picking an app writes the (space, app) pair in one change; the pair
-  // names the auto-generated outputRef when the ref field stays empty.
-  const savedSpace = readStringProp(node, 'space')
+  // Auto-naming preview mirrors the backend rule: the app segment is the
+  // saved app (legacy nodes) falling back to the workflow name, and the tag
+  // is the tag template when set, else <commit>[-<fingerprint>].
   const savedApp = readStringProp(node, 'app')
-  const selectedSpace = savedSpace || currentSpace || ''
-  const appOptions: AppOption[] = (applications ?? [])
-    .filter((app) => app.namespace === selectedSpace)
-    .map((app) => ({ value: app.name, label: app.name }))
-  const appEcho =
-    savedApp !== '' &&
-    selectedSpace !== '' &&
-    !appOptions.some((option) => option.value === savedApp)
-      ? { value: savedApp, label: savedApp }
-      : undefined
+  const tagTemplate = readStringProp(node, 'tagTemplate')
+  const autoNameApp = savedApp || workflowName || '…'
 
   const setGit = (key: string, value: string) => {
     const git = { ...((node.props?.git as Record<string, unknown>) ?? {}) }
@@ -979,30 +972,6 @@ function BuildPropsForm({
         />
       </Field>
       <Field
-        label={t('workflow.props.space')}
-        hint={t('workflow.props.buildSpaceFixedHint')}
-      >
-        <Input value={selectedSpace} disabled />
-      </Field>
-      <Field label={t('workflow.props.app')}>
-        <AppCombobox
-          value={savedApp}
-          label={savedApp}
-          options={appEcho ? [appEcho, ...appOptions] : appOptions}
-          echoValue={appEcho}
-          disabled={selectedSpace === ''}
-          onSelect={(option) => onSelectApp(selectedSpace, option.value)}
-          placeholder={
-            selectedSpace === ''
-              ? t('workflow.props.appPickSpaceHint')
-              : t('workflow.props.appPlaceholder')
-          }
-          searchPlaceholder={t('workflow.props.appSearch')}
-          emptyText={t('workflow.props.appEmpty')}
-          currentLabel={t('workflow.props.currentValue')}
-        />
-      </Field>
-      <Field
         label={t('workflow.props.outputRef')}
         hint={t('workflow.props.outputRefHint')}
       >
@@ -1026,11 +995,24 @@ function BuildPropsForm({
         {defaultRegistry?.valid && !outputRef && (
           <p className="break-all font-mono text-[11px] leading-4 text-muted-foreground">
             {t('workflow.props.outputRefAutoHint', {
-              ref: `${defaultRegistry.host}/${selectedSpace || '…'}/${savedApp || '…'}:<commit>[-<fingerprint>]`,
+              ref: `${defaultRegistry.host}/${currentSpace || '…'}/${autoNameApp}:${tagTemplate || '<commit>[-<fingerprint>]'}`,
             })}
           </p>
         )}
       </Field>
+      {!outputRef && (
+        <Field
+          label={t('workflow.props.tagTemplate')}
+          hint={t('workflow.props.tagTemplateHint')}
+        >
+          <TemplateInput
+            {...templateVars}
+            value={tagTemplate}
+            onValueChange={(v) => patchProps('tagTemplate', v || undefined)}
+            placeholder="{{git.shortCommit}}"
+          />
+        </Field>
+      )}
       <AdvancedCollapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
         <SharedAdvancedFields node={node} patchNode={patchNode} />
         {sourceKind === 'git' && (

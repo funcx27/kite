@@ -113,7 +113,7 @@ func TestBuildRunnerRun(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			runner := buildRunner{deps: &tt.deps}
 			var logs []string
-			outputs, err := runner.Run(context.Background(), tt.props, store.WorkflowRun{TriggeredBy: 7}, func(p string) { logs = append(logs, p) })
+			outputs, err := runner.Run(context.Background(), tt.props, store.WorkflowRun{TriggeredBy: 7}, store.Workflow{Name: "wf"}, func(p string) { logs = append(logs, p) })
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("Run err = %v, want containing %q", err, tt.wantErr)
@@ -146,7 +146,7 @@ func TestBuildRunnerBuildErrorPropagates(t *testing.T) {
 	deps := &stubBuildDeps{authorized: true, err: context.DeadlineExceeded}
 	runner := buildRunner{deps: deps}
 	_, err := runner.Run(context.Background(),
-		spec.Props{"git": map[string]any{"url": "u"}, "outputRef": "r"}, store.WorkflowRun{}, nil)
+		spec.Props{"git": map[string]any{"url": "u"}, "outputRef": "r"}, store.WorkflowRun{}, store.Workflow{}, nil)
 	if !strings.Contains(err.Error(), "deadline") {
 		t.Fatalf("Run err = %v, want the executor error propagated", err)
 	}
@@ -213,7 +213,7 @@ func TestDeployRunnerRun(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			runner := deployRunner{deps: &tt.deps}
-			outputs, err := runner.Run(context.Background(), tt.props, run, nil)
+			outputs, err := runner.Run(context.Background(), tt.props, run, store.Workflow{}, nil)
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("Run err = %v, want containing %q", err, tt.wantErr)
@@ -281,7 +281,7 @@ func TestNotifyRunnerRun(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			runner := notifyRunner{deps: &tt.deps}
-			outputs, err := runner.Run(context.Background(), tt.props, store.WorkflowRun{}, nil)
+			outputs, err := runner.Run(context.Background(), tt.props, store.WorkflowRun{}, store.Workflow{}, nil)
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("Run err = %v, want containing %q", err, tt.wantErr)
@@ -317,7 +317,7 @@ func TestBuildOutputsDigestShaping(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			out := buildOutputs(tt.res)
+			out := buildOutputs(tt.res, "")
 			got, ok := out["imageRefWithDigest"]
 			if tt.wantNone {
 				if ok {

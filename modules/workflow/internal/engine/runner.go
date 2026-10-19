@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"unicode"
@@ -18,9 +19,11 @@ import (
 // NodeRunner executes one task-node type. Decoding and checking the rendered
 // props is Run's first step — save-time validation lives in spec.Validate, so
 // the interface carries no ValidateProps. Approval is engine-native
-// (event-driven, design §5.3) and never reaches a runner.
+// (event-driven, design §5.3) and never reaches a runner. wf is the owning
+// workflow (auto-naming seeds the image path with its name when the props
+// carry no app).
 type NodeRunner interface {
-	Run(ctx context.Context, rendered spec.Props, run store.WorkflowRun, onLog func(string)) (map[string]any, error)
+	Run(ctx context.Context, rendered spec.Props, run store.WorkflowRun, wf store.Workflow, onLog func(string)) (map[string]any, error)
 }
 
 // buildDeps is the capability slice buildRunner consumes.
@@ -55,7 +58,7 @@ type buildRunner struct {
 const credentialsResource = "credentials"
 
 // Run implements NodeRunner for spec.NodeBuildImage.
-func (r buildRunner) Run(ctx context.Context, rendered spec.Props, run store.WorkflowRun, onLog func(string)) (map[string]any, error) {
+func (r buildRunner) Run(ctx context.Context, rendered spec.Props, run store.WorkflowRun, wf store.Workflow, onLog func(string)) (map[string]any, error) {
 	// Node-level authorization (design §8): the run executes with its
 	// trigger user's RBAC identity; missing permission fails the node
 	// loudly rather than skipping it. Buildfleet builds carry no cluster in
@@ -90,10 +93,13 @@ func (r buildRunner) Run(ctx context.Context, rendered spec.Props, run store.Wor
 	default:
 		return nil, fmt.Errorf("build node needs a git or http source")
 	}
+	fingerprint := p.ResolvedFingerprint
 	if p.OutputRef == "" {
-		if err := autoOutputRef(ctx, r.deps, &p, onLog); err != nil {
+		fp, err := autoOutputRef(ctx, r.deps, &p, wf.Name, onLog)
+		if err != nil {
 			return nil, err
 		}
+		fingerprint = fp
 	}
 	// Commit pin-back (a pin is set by auto-naming above, or by the engine
 	// stamping the git-var resolution onto the source): the build must
@@ -146,7 +152,7 @@ func (r buildRunner) Run(ctx context.Context, rendered spec.Props, run store.Wor
 	if err != nil {
 		return nil, err
 	}
-	return buildOutputs(res), nil
+	return buildOutputs(res, fingerprint), nil
 }
 
 // applyDefaultRegistry completes the build props from the credential
@@ -186,15 +192,23 @@ func needsRegistryPrefix(ref string) bool {
 	return !strings.Contains(first, ".") && !strings.Contains(first, ":") && first != "localhost"
 }
 
+// imageTagPattern is the registry tag grammar (docker distribution):
+// [A-Za-z0-9_][A-Za-z0-9_.-]{0,127}.
+var imageTagPattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
+
+// imageRepoSegmentPattern is one lowercase path component of an image
+// reference (docker distribution), used to judge name-derived path seeds.
+var imageRepoSegmentPattern = regexp.MustCompile(`^[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*$`)
+
 // autoOutputRef fills an empty outputRef with the content-addressed default
-// name <default-host>/<space>/<app>:<short-commit>[-<variant>]. The tag pins
-// the resolved commit; the variant fingerprint separates same-commit builds
-// that would produce different images. Any missing prerequisite keeps the
+// name <default-host>/<space>/<app>:<short-commit>[-<variant>]. The app
+// segment falls back to the workflow name; a tag template, when set, is the
+// tag verbatim (no variant appended). Any missing prerequisite keeps the
 // explicit-outputRef error, naming what is absent. Auto-naming is an
 // implicit git-variable use: it resolves the commit itself (reusing a pin
 // the engine already stamped for {{git.*}} renders), independent of the
-// explicit usesGitVars gate.
-func autoOutputRef(ctx context.Context, deps buildDeps, p *spec.BuildProps, onLog func(string)) error {
+// explicit usesGitVars gate. The returned fingerprint feeds the node outputs.
+func autoOutputRef(ctx context.Context, deps buildDeps, p *spec.BuildProps, wfName string, onLog func(string)) (string, error) {
 	_, host, ok := deps.DefaultRegistry()
 	var missing []string
 	if !ok {
@@ -203,29 +217,48 @@ func autoOutputRef(ctx context.Context, deps buildDeps, p *spec.BuildProps, onLo
 	if p.Space == "" {
 		missing = append(missing, "space")
 	}
-	if p.App == "" {
+	app := p.App
+	if app == "" {
+		app = strings.ToLower(wfName)
+	}
+	if app == "" {
 		missing = append(missing, "app")
+	} else if p.App == "" && !imageRepoSegmentPattern.MatchString(app) {
+		missing = append(missing, "an app (the workflow name cannot seed the image path)")
 	}
 	if p.Git == nil || p.Git.URL == "" {
 		missing = append(missing, "a git source (the tag carries its commit)")
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("build node needs outputRef (auto-naming is missing %s)", strings.Join(missing, ", "))
+		return "", fmt.Errorf("build node needs outputRef (auto-naming is missing %s)", strings.Join(missing, ", "))
 	}
 	commit, content, err := resolveAutoNameInputs(ctx, deps, p, onLog)
 	if err != nil {
-		return err
+		return "", err
 	}
-	tag := commit[:min(7, len(commit))]
-	if v := variantFingerprint(content, p.Args, p.Git.Subdir); v != "" {
-		tag += "-" + v
+	tag, fingerprint := "", variantFingerprint(content, p.Args, p.Git.Subdir)
+	if p.TagTemplate != "" {
+		// The template already rendered (engine pre-resolved build.fingerprint
+		// when referenced); prefer that value — it is the one the tag carries.
+		tag = p.TagTemplate
+		if p.ResolvedFingerprint != "" {
+			fingerprint = p.ResolvedFingerprint
+		}
+		if !imageTagPattern.MatchString(tag) {
+			return "", fmt.Errorf("tag template rendered to %q, which is not a valid image tag", tag)
+		}
+	} else {
+		tag = commit[:min(7, len(commit))]
+		if fingerprint != "" {
+			tag += "-" + fingerprint
+		}
 	}
-	p.OutputRef = host + "/" + p.Space + "/" + p.App + ":" + tag
+	p.OutputRef = host + "/" + p.Space + "/" + app + ":" + tag
 	p.Git.PinnedCommit = commit
 	if onLog != nil {
 		onLog(fmt.Sprintf("auto-named output image %s\n", p.OutputRef))
 	}
-	return nil
+	return fingerprint, nil
 }
 
 // resolveAutoNameInputs resolves the tag commit and the dockerfile content
@@ -330,11 +363,16 @@ func variantFingerprint(dockerfileContent string, args map[string]string, subdir
 
 // buildOutputs shapes the build executor result into the node Outputs; the
 // digest-carrying reference is the one downstream deploy nodes should
-// consume (design §5.1).
-func buildOutputs(res exec.BuildResult) map[string]any {
+// consume (design §5.1). fingerprint is the variant identity of the produced
+// image when the runner knows one (auto-naming, or an engine-resolved
+// build.fingerprint); absent for explicitly named builds nobody fingerprinted.
+func buildOutputs(res exec.BuildResult, fingerprint string) map[string]any {
 	out := map[string]any{
 		"imageRef": res.ImageRef,
 		"digest":   res.Digest,
+	}
+	if fingerprint != "" {
+		out["fingerprint"] = fingerprint
 	}
 	if res.Commit != "" {
 		out["commit"] = res.Commit
@@ -361,7 +399,7 @@ type deployRunner struct {
 }
 
 // Run implements NodeRunner for spec.NodeDeployApp.
-func (r deployRunner) Run(ctx context.Context, rendered spec.Props, run store.WorkflowRun, onLog func(string)) (map[string]any, error) {
+func (r deployRunner) Run(ctx context.Context, rendered spec.Props, run store.WorkflowRun, _ store.Workflow, onLog func(string)) (map[string]any, error) {
 	var p spec.DeployProps
 	if err := decodeProps(rendered, &p); err != nil {
 		return nil, fmt.Errorf("decode deploy props: %w", err)
@@ -404,7 +442,7 @@ type notifyRunner struct {
 }
 
 // Run implements NodeRunner for spec.NodeNotify.
-func (r notifyRunner) Run(ctx context.Context, rendered spec.Props, run store.WorkflowRun, onLog func(string)) (map[string]any, error) {
+func (r notifyRunner) Run(ctx context.Context, rendered spec.Props, run store.WorkflowRun, _ store.Workflow, onLog func(string)) (map[string]any, error) {
 	var p spec.NotifyProps
 	if err := decodeProps(rendered, &p); err != nil {
 		return nil, fmt.Errorf("decode notify props: %w", err)

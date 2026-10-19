@@ -191,6 +191,8 @@
       "outputRefResolved": "将通过默认镜像仓库推送为 {{ref}}",
       "outputRefAutoPlaceholder": "留空时自动命名",
       "outputRefAutoHint": "留空将自动命名为 {{ref}}",
+      "tagTemplate": "Tag 模板（可选）",
+      "tagTemplateHint": "自动命名的 tag；留空用 <commit>[-<指纹>]。模板即最终 tag，不追加指纹。可用 {{params.*}}、{{git.*}}、{{ctx.*}}、{{build.fingerprint}}",
       "gitCredentialRef": "Git 凭证",
       "gitCredentialRefHint": "已保存的 git 凭证名称；留空匿名拉取",
       "registryCredentialRef": "Registry 凭证",
@@ -230,14 +232,15 @@
       "payloadTemplateHint": "JSON 载荷；支持 {{params.*}} / {{steps.*.outputs.*}} / {{run.*}}",
       "advancedSection": "高级选项",
       "spaceFixedHint": "部署空间固定为流水线所属空间，不可切换",
-      "buildSpaceFixedHint": "构建空间固定为流水线所属空间；与应用共同决定自动命名的镜像名",
       "timeout": "审批超时",
       "timeoutHint": "超过该时长未审批，按超时动作处理；留空用平台默认",
       "platformsPlaceholder": "选择构建平台…"
     },
     "template": {
       "groupParams": "参数",
+      "groupCtx": "全局",
       "groupGit": "Git 源",
+      "groupBuild": "构建",
       "groupRun": "运行",
       "groupSteps": "节点输出"
     },

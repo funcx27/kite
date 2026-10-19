@@ -75,7 +75,9 @@ export function TemplateInput({
     const pick = (prefix: string) => refs.filter((r) => r.startsWith(prefix))
     return [
       { label: t('workflow.template.groupParams'), refs: pick('params.') },
+      { label: t('workflow.template.groupCtx'), refs: pick('ctx.') },
       { label: t('workflow.template.groupGit'), refs: pick('git.') },
+      { label: t('workflow.template.groupBuild'), refs: pick('build.') },
       { label: t('workflow.template.groupRun'), refs: pick('run.') },
       { label: t('workflow.template.groupSteps'), refs: pick('steps.') },
     ].filter((group) => group.refs.length > 0)

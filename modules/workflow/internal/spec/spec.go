@@ -71,11 +71,22 @@ type BuildProps struct {
 	Provider              string `json:"provider,omitempty"`
 	// Space selects the build-cluster default row (build_settings) when
 	// Provider is empty; the empty string resolves to the global default row.
-	// With App it also names the auto-generated outputRef.
+	// The engine stamps it from the workflow's single space binding at render
+	// time when a saved spec carries none.
 	Space string `json:"space,omitempty"`
 	// App names the application this image builds for: with Space it feeds
-	// the auto-generated outputRef when OutputRef is empty.
+	// the auto-generated outputRef when OutputRef is empty; empty falls back
+	// to the workflow name.
 	App string `json:"app,omitempty"`
+	// TagTemplate overrides the auto-named tag: the rendered template is the
+	// tag verbatim (no variant fingerprint appended — a stable tag such as
+	// {{params.version}} stays stable); empty keeps the default
+	// <short-commit>[-<fingerprint>] tag.
+	TagTemplate string `json:"tagTemplate,omitempty"`
+	// ResolvedFingerprint carries the engine's build.fingerprint resolution
+	// onto the rendered props (one probe feeds the tag render and the node
+	// outputs); never part of a hand-written spec.
+	ResolvedFingerprint string `json:"resolvedFingerprint,omitempty"`
 }
 
 // GitSource points the build at a git checkout.

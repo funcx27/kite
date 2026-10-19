@@ -1014,6 +1014,7 @@ export function WorkflowEditorPage() {
                     to: e.target,
                   }))}
                   lockedTarget={lockedTarget}
+                  workflowName={draftName}
                   onChange={updateSelectedNode}
                   onDelete={() => selectedNode && deleteNode(selectedNode.id)}
                 />
