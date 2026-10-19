@@ -176,7 +176,6 @@
       "httpUrl": "压缩包地址",
       "dockerfile": "Dockerfile",
       "dockerfileHint": "路径模式：上下文中的文件路径；文本模式：完整 Dockerfile 内容；留空用默认 Dockerfile",
-      "dockerfileInline": "文本",
       "dockerfileModePath": "路径",
       "dockerfileModeText": "文本",
       "dockerfileEditText": "查看 / 编辑内容（{{count}} 行）",

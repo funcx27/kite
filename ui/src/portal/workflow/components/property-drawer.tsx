@@ -985,27 +985,20 @@ function BuildPropsForm({
         label={t('workflow.props.dockerfile')}
         hint={t('workflow.props.dockerfileHint')}
         labelExtra={
-          <span className="flex items-center gap-1">
-            {dockerfileMode === 'text' && (
-              <Badge variant="secondary">
-                {t('workflow.props.dockerfileInline')}
-              </Badge>
-            )}
-            {dockerfileMode === 'path' && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-6 w-6 text-muted-foreground"
-                disabled={previewDisabled}
-                aria-label={previewHint}
-                title={previewHint}
-                onClick={() => setDockerfilePreviewOpen(true)}
-              >
-                <IconEye className="h-3.5 w-3.5" />
-              </Button>
-            )}
-          </span>
+          dockerfileMode === 'path' && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 text-muted-foreground"
+              disabled={previewDisabled}
+              aria-label={previewHint}
+              title={previewHint}
+              onClick={() => setDockerfilePreviewOpen(true)}
+            >
+              <IconEye className="h-3.5 w-3.5" />
+            </Button>
+          )
         }
       >
         <div className="space-y-1.5">

@@ -176,7 +176,6 @@
       "httpUrl": "Tarball URL",
       "dockerfile": "Dockerfile",
       "dockerfileHint": "Path mode: a file path in the build context; text mode: the full Dockerfile content; empty uses the default Dockerfile",
-      "dockerfileInline": "Text",
       "dockerfileModePath": "Path",
       "dockerfileModeText": "Text",
       "dockerfileEditText": "View / edit content ({{count}} lines)",
