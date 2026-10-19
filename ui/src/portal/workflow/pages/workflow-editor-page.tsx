@@ -25,7 +25,6 @@ import { toast } from 'sonner'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 import { useSaveWorkflowMutation, useWorkflow, WorkflowApiError } from '../api'
 import { ParamsDialog, TriggersDialog } from '../components/definition-dialogs'
@@ -880,23 +879,25 @@ export function WorkflowEditorPage() {
           </div>
         )}
         <div className="flex items-center gap-2">
-          {/* Compact canvas/YAML segmented switch (Radix Tabs, controlled):
-              switchMode('canvas') stays put when the YAML apply fails. */}
-          <Tabs
-            value={mode}
-            onValueChange={(value) => switchMode(value as 'canvas' | 'yaml')}
+          {/* Single switch-to-the-other-view button, styled like the rest of
+              the toolbar; switchMode stays put when the YAML apply fails. */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => switchMode(mode === 'canvas' ? 'yaml' : 'canvas')}
           >
-            <TabsList className="h-8">
-              <TabsTrigger value="canvas" className="px-2.5 text-xs">
-                <Network className="size-3.5" />
-                {t('workflow.editor.modeCanvas')}
-              </TabsTrigger>
-              <TabsTrigger value="yaml" className="px-2.5 text-xs">
+            {mode === 'canvas' ? (
+              <>
                 <FileCode className="size-3.5" />
                 {t('workflow.editor.modeYaml')}
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
+              </>
+            ) : (
+              <>
+                <Network className="size-3.5" />
+                {t('workflow.editor.modeCanvas')}
+              </>
+            )}
+          </Button>
           {mode === 'canvas' && (
             <>
               <Button
