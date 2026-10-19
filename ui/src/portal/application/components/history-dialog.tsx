@@ -375,6 +375,7 @@ export function HistoryDialog({
         original={diff.original}
         modified={diff.modified}
         title={diff.title}
+        hideUnchanged
       />
 
       <YamlDiffViewer

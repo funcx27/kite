@@ -181,7 +181,14 @@ func DeployWithImage(ctx context.Context, deps Deps, st *store.Store, space, app
 	}
 
 	resp, err := h.applyPublish(ctx, id, app, cfg, cli, manifests, dryRun, latestRev, "")
-	if err != nil {
+	var noChange *noChangeError
+	switch {
+	case errors.As(err, &noChange):
+		// Same image, same cluster: the pipeline publish stays green and only
+		// records the skip in the node log.
+		logf("no changes: configuration and cluster already match, skipping publish")
+		return &DeployOutcome{Revision: latestRev}, nil
+	case err != nil:
 		return nil, err
 	}
 	for _, r := range resp.Results {

@@ -486,11 +486,14 @@ func (h *Handler) publishFailure(c *gin.Context, err error) bool {
 	var nf *namespaceForbiddenError
 	var stale *previewStaleError
 	var masked *maskedSecretError
+	var noChange *noChangeError
 	switch {
 	case errors.As(err, &nf):
 		h.fail(c, http.StatusForbidden, err, err.Error())
 	case errors.As(err, &stale):
 		h.failStalePreview(c)
+	case errors.As(err, &noChange):
+		h.fail(c, http.StatusUnprocessableEntity, nil, err.Error())
 	case errors.As(err, &masked):
 		h.fail(c, http.StatusBadRequest, nil, masked.Error())
 	case err != nil:
@@ -733,6 +736,17 @@ func (h *Handler) applyPublish(ctx context.Context, id identity, app *store.App,
 		return deployResponse{}, &previewStaleError{}
 	}
 
+	// No-change gate: the set matches the newest revision and the cluster
+	// already runs it — nothing to publish. Live drift still passes (change
+	// is non-empty): the publish re-applies the desired set as drift repair.
+	if !dryRun && len(change) == 0 && h.manifestsMatchLatestRevision(cfg.ID, manifests) {
+		return deployResponse{}, &noChangeError{}
+	}
+	changedKeys := make(map[string]bool, len(change))
+	for _, d := range change {
+		changedKeys[store.DocKey(d.Kind, d.Namespace, d.Name)] = true
+	}
+
 	// The managed image pull secret rides every publish of a config with a
 	// credential: manual (DeployConfig), facade (DeployWithImage) and
 	// rollback all funnel here, so the namespace never publishes without it.
@@ -765,7 +779,7 @@ func (h *Handler) applyPublish(ctx context.Context, id identity, app *store.App,
 			failedKeys[key] = true
 			continue
 		}
-		action, applyErr := h.applyDoc(ctx, id, cli, app.Name, cfg, doc, live[key], anchorByKey[key], dryRun)
+		action, applyErr := h.applyDoc(ctx, id, cli, app.Name, cfg, doc, live[key], anchorByKey[key], dryRun, live[key] != nil && !changedKeys[key])
 		result.Action = action
 		if applyErr != nil {
 			result.Success, result.Error = false, applyErr.Error()
@@ -821,6 +835,32 @@ func previewTokenHash(diff []syncops.DocDiff) string {
 type previewStaleError struct{}
 
 func (e *previewStaleError) Error() string { return "cluster state changed, preview again" }
+
+// noChangeError marks a publish with nothing to do: the set equals the newest
+// revision and the live cluster already runs it. The manual deploy path
+// answers 422 with it; the facade catches it, logs a skip and keeps the
+// pipeline green.
+type noChangeError struct{}
+
+func (e *noChangeError) Error() string {
+	return "nothing to publish: the configuration and the cluster state are already up to date"
+}
+
+// manifestsMatchLatestRevision reports whether the encoded set is canonically
+// identical to the config's newest revision snapshot; a load or encode
+// failure reads as no match (fail toward publishing).
+func (h *Handler) manifestsMatchLatestRevision(cfgID uint, manifests []unstructured.Unstructured) bool {
+	var row store.ConfigRevision
+	if err := h.store.DB().Where("app_config_id = ?", cfgID).
+		Order("rev DESC").First(&row).Error; err != nil {
+		return false
+	}
+	data, err := store.EncodeManifests(manifests)
+	if err != nil {
+		return false
+	}
+	return store.ManifestsEqual(row.Manifests, data)
+}
 
 // previewDocs pairs each changed document with its normalized live (old) and
 // pending (new) view, both redacted. Documents the pending set no longer
@@ -1235,7 +1275,7 @@ func namespacedCopy(doc *unstructured.Unstructured, namespace string) (*unstruct
 // applyDoc creates or updates one document (design §6): RESTMapper scope →
 // per-resource RBAC → ownership-checked create/recreate → Create/Update with
 // resourceVersion, honoring dry-run. Returns the action taken.
-func (h *Handler) applyDoc(ctx context.Context, id identity, cli client.Client, appName string, cfg *store.AppConfig, doc *unstructured.Unstructured, liveObj, anchorDoc *unstructured.Unstructured, dryRun bool) (string, error) {
+func (h *Handler) applyDoc(ctx context.Context, id identity, cli client.Client, appName string, cfg *store.AppConfig, doc *unstructured.Unstructured, liveObj, anchorDoc *unstructured.Unstructured, dryRun, identicalLive bool) (string, error) {
 	mapping, err := syncops.RestMapping(cli, doc)
 	if err != nil {
 		return "", err
@@ -1271,6 +1311,12 @@ func (h *Handler) applyDoc(ctx context.Context, id identity, cli client.Client, 
 	if !id.authorize(resource, verb, cfg.Cluster, cfg.Namespace) {
 		return "", fmt.Errorf("user does not have permission to %s %s in namespace %s on cluster %s",
 			verb, resource, cfg.Namespace, cfg.Cluster)
+	}
+	if identicalLive {
+		// The change diff found no delta on this document: skip the no-op
+		// write that would only churn resourceVersion; the read-back in the
+		// caller still refreshes the anchor.
+		return "unchanged", nil
 	}
 
 	var applyErr error

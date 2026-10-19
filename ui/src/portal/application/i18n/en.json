@@ -9,7 +9,8 @@
     "diff": {
       "diffOnly": "Diff only",
       "showAllFields": "Show all fields",
-      "computing": "Computing diff…"
+      "computing": "Computing diff…",
+      "identical": "The two versions are identical — no differences"
     }
   },
   "sidebar": {
@@ -228,6 +229,7 @@
       "lastDeployed": "Last published {{time}}",
       "lastSynced": "last synced {{time}}",
       "previewStale": "Cluster state changed; the preview has been reloaded",
+      "noChanges": "Nothing to publish: the configuration and cluster state already match",
       "confirmPublish": "Confirm Publish",
       "confirmFirstPublish": "Confirm First Publish",
       "confirmCopyPublish": "Confirm Copy & Publish",

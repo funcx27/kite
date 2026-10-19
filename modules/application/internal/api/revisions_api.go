@@ -188,9 +188,20 @@ func (h *Handler) RollbackConfig(c *gin.Context) {
 	cfg.Manifests = store.SecretJSON(data)
 	resp, err := h.applyPublish(c.Request.Context(), h.requestIdentity(c), app, cfg, cli, rollbackDocs, false, newRev, "")
 	var nf *namespaceForbiddenError
+	var noChange *noChangeError
 	switch {
 	case errors.As(err, &nf):
 		h.fail(c, http.StatusForbidden, err, err.Error())
+		return
+	case errors.As(err, &noChange):
+		// Rolled back to content the cluster already runs: the revision
+		// landed (or deduped), nothing to apply.
+		c.JSON(http.StatusOK, gin.H{
+			"latestRev":    newRev,
+			"rolledBackTo": row.Rev,
+			"success":      true,
+			"results":      []deployDocResult{},
+		})
 		return
 	case err != nil:
 		h.fail(c, http.StatusInternalServerError, err, "")

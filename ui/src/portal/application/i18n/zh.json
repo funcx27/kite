@@ -9,7 +9,8 @@
     "diff": {
       "diffOnly": "仅看差异",
       "showAllFields": "展开全部字段",
-      "computing": "正在计算差异…"
+      "computing": "正在计算差异…",
+      "identical": "两个版本内容一致，无差异"
     }
   },
   "sidebar": {
@@ -228,6 +229,7 @@
       "lastDeployed": "上次发布 {{time}}",
       "lastSynced": "上次拉取 {{time}}",
       "previewStale": "集群状态已变化，已重新加载预览",
+      "noChanges": "没有可发布的变更：配置与集群状态已一致",
       "confirmPublish": "确认发布",
       "confirmFirstPublish": "确认首次发布",
       "confirmCopyPublish": "确认复制并发布",

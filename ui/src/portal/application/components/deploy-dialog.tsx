@@ -430,6 +430,12 @@ export function DeployDialog({
         toast.info(t('applications.deploy.previewStale'))
         await queryClient.invalidateQueries({ queryKey: ['applications'] })
         void runDryRun()
+      } else if (err instanceof ApplicationApiError && err.status === 422) {
+        // API-level no-change gate: the set matches the newest revision and
+        // the cluster already runs it.
+        toast.info(t('applications.deploy.noChanges'))
+        await queryClient.invalidateQueries({ queryKey: ['applications'] })
+        onOpenChange(false)
       } else {
         toast.error(translateError(err, t))
       }

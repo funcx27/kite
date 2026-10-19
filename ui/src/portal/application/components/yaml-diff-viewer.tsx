@@ -427,6 +427,17 @@ export function YamlDiffViewer({
               options={baseEditorOptions}
               value={viewContent}
             />
+          ) : leftContent.trim() !== '' &&
+            leftContent === rightContent ? (
+            // Canonically identical sides (the normalization above already
+            // erased key-order noise): two full columns would render with
+            // zero highlights, so say so instead.
+            <div
+              className="flex items-center justify-center text-sm text-muted-foreground"
+              style={{ height }}
+            >
+              {t('common.diff.identical')}
+            </div>
           ) : (
             <>
               {!diffReady && (
