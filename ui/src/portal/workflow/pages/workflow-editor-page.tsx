@@ -26,7 +26,12 @@ import { usePageTitle } from '@/hooks/use-page-title'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
-import { useSaveWorkflowMutation, useWorkflow, WorkflowApiError } from '../api'
+import {
+  useDefaultRegistry,
+  useSaveWorkflowMutation,
+  useWorkflow,
+  WorkflowApiError,
+} from '../api'
 import { ParamsDialog, TriggersDialog } from '../components/definition-dialogs'
 import { FlowCanvas } from '../components/flow'
 import { PropertyDrawer } from '../components/property-drawer'
@@ -199,8 +204,18 @@ export function WorkflowEditorPage() {
       : `/workflows/${id}/runs`
   const { data: copyWorkflow } = useWorkflow(copySourceId)
   const { data: applications } = useApplications()
+  const { data: defaultRegistry, isError: defaultRegistryFailed } =
+    useDefaultRegistry()
   const { spaces, currentSpace, setCurrentSpace } = useSpaces()
   const saveMutation = useSaveWorkflowMutation()
+
+  // The default registry's push/pull credential, prefilled into new build and
+  // deploy nodes (and the application-entry pipeline) so the created specs
+  // name it explicitly instead of relying on the runtime fallback.
+  const defaultRegistryCredential =
+    defaultRegistry?.valid && defaultRegistry.credential !== ''
+      ? defaultRegistry.credential
+      : undefined
 
   const [draftName, setDraftName] = useState('')
   const [draftDescription, setDraftDescription] = useState('')
@@ -335,18 +350,25 @@ export function WorkflowEditorPage() {
     const target = `${fromSpace}/${fromApp}`
     if (prefilledFrom.current === target) return
     if (applications === undefined) return
+    // The default-registry credential rides the staged props; wait for the
+    // query to settle (error counts as settled-empty) so it is never missed.
+    if (defaultRegistry === undefined && !defaultRegistryFailed) return
     const app = applications.find(
       (candidate) =>
         candidate.namespace === fromSpace && candidate.name === fromApp
     )
     if (!app) return
     prefilledFrom.current = target
+    const credentialProps: Record<string, unknown> = defaultRegistryCredential
+      ? { registryCredentialRef: defaultRegistryCredential }
+      : {}
     const deployProps: Record<string, unknown> = {
       space: fromSpace,
       app: fromApp,
       // Empty image deploys the app's current config (deployRunner), so wire
       // the build node's output through to deploy the built artifact.
       image: '{{steps.build1.outputs.imageRef}}',
+      ...credentialProps,
     }
     if (fromCluster) deployProps.cluster = fromCluster
     // Positions come from specToFlow's auto-layout fallback (no legacy
@@ -361,6 +383,7 @@ export function WorkflowEditorPage() {
             git: { url: '{{params.gitRepo}}', ref: '{{params.gitBranch}}' },
             dockerfile: '{{params.dockerfile}}',
             outputRef: DEFAULT_BUILD_OUTPUT,
+            ...credentialProps,
           },
         },
         {
@@ -399,7 +422,18 @@ export function WorkflowEditorPage() {
       fromCluster ? `${fromApp}-${fromCluster}-workflow` : `${fromApp}-workflow`
     )
     setBoundSpaces([fromSpace])
-  }, [isCreate, fromApp, fromSpace, fromCluster, copySourceId, applications, t])
+  }, [
+    isCreate,
+    fromApp,
+    fromSpace,
+    fromCluster,
+    copySourceId,
+    applications,
+    defaultRegistry,
+    defaultRegistryFailed,
+    defaultRegistryCredential,
+    t,
+  ])
 
   // Session-only deploy-target lock for the application entry: the drawer
   // grays out the app/cluster picks on every deploy-app node; it is never
@@ -729,16 +763,28 @@ export function WorkflowEditorPage() {
             nodeType,
             label: t(`workflow.nodeTypes.${nodeType}`),
             // Build nodes start from the auto-naming rule as an editable
-            // template (the ctx globals resolve at run time); everything
-            // else starts empty.
-            ...(nodeType === 'build-image'
-              ? { props: { outputRef: DEFAULT_BUILD_OUTPUT } }
+            // template (the ctx globals resolve at run time); build and
+            // deploy nodes carry the default registry's credential — the
+            // created specs name it instead of the runtime fallback.
+            ...(nodeType === 'build-image' || nodeType === 'deploy-app'
+              ? {
+                  props: {
+                    ...(defaultRegistryCredential
+                      ? {
+                          registryCredentialRef: defaultRegistryCredential,
+                        }
+                      : {}),
+                    ...(nodeType === 'build-image'
+                      ? { outputRef: DEFAULT_BUILD_OUTPUT }
+                      : {}),
+                  },
+                }
               : {}),
           },
         },
       ])
     },
-    [t]
+    [t, defaultRegistryCredential]
   )
 
   // Renaming a node id rewires its edges so template paths (steps.<id>.*)
