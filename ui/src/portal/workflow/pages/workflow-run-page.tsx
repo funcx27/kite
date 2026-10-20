@@ -252,7 +252,15 @@ export function WorkflowRunPage() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => navigate(`/workflows/${id}`)}
+            onClick={() =>
+              // The editor renders the same back-to-app control from
+              // returnTo — never drop the app context on internal hops.
+              navigate(
+                returnTo
+                  ? `/workflows/${id}?returnTo=${encodeURIComponent(returnTo)}`
+                  : `/workflows/${id}`
+              )
+            }
           >
             {t('workflow.run.openEditor')}
           </Button>

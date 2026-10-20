@@ -38,12 +38,12 @@ export function WorkflowRunsPage() {
   const runs = data?.runs ?? []
 
   // Keep ?returnTo on run links so the run view keeps its back-to-app
-  // control.
+  // control; the editor link rides along for the same reason (the editor
+  // renders the same back control and bounces back after save).
   const runHref = (runId: number) =>
     returnTo
       ? `/workflows/${id}/runs/${runId}?returnTo=${encodeURIComponent(returnTo)}`
       : `/workflows/${id}/runs/${runId}`
-
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -52,10 +52,10 @@ export function WorkflowRunsPage() {
             {t('workflow.list.runsTitle', { name: displayName })}
           </h1>
           <p className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Link to={`/workflows/${id}`} className="hover:underline">
-              ← {displayName}
-            </Link>
-            {returnTo && (
+            {/* Came-from-app replaces the editor breadcrumb: two back
+                controls side by side read as one duplicated arrow row. The
+                editor stays reachable via the run view and the app page. */}
+            {returnTo ? (
               <Button
                 variant="outline"
                 size="sm"
@@ -63,6 +63,10 @@ export function WorkflowRunsPage() {
               >
                 ← {t('workflow.run.backToApp')}
               </Button>
+            ) : (
+              <Link to={`/workflows/${id}`} className="hover:underline">
+                ← {displayName}
+              </Link>
             )}
           </p>
         </div>
