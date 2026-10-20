@@ -248,16 +248,6 @@ export function WorkflowRunPage() {
           {(run.startedAt && formatDate(run.startedAt)) || '—'} ·{' '}
           {formatDuration(run.startedAt, run.finishedAt)}
         </span>
-        {Object.entries(run.params ?? {}).map(([key, value]) => (
-          <Badge
-            key={key}
-            variant="secondary"
-            className="font-mono text-xs"
-            title={key}
-          >
-            {key}={String(value)}
-          </Badge>
-        ))}
         <div className="ml-auto flex items-center gap-2">
           <Button
             variant="outline"
@@ -306,6 +296,22 @@ export function WorkflowRunPage() {
             ⟳ {t('workflow.run.retry')}
           </Button>
         </div>
+        {/* Run params get their own full-width line: inline badges wrap into
+            the status metadata and read as one jumbled row. */}
+        {Object.entries(run.params ?? {}).length > 0 && (
+          <div className="flex w-full flex-wrap items-center gap-1.5">
+            {Object.entries(run.params ?? {}).map(([key, value]) => (
+              <Badge
+                key={key}
+                variant="secondary"
+                className="font-mono text-xs"
+                title={key}
+              >
+                {key}={String(value)}
+              </Badge>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Canvas + overlays */}
