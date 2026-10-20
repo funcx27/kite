@@ -18,7 +18,7 @@ type ResolveEnv struct {
 	// with a git source (commit resolved via ls-remote before the full
 	// render; nil for every other node).
 	Git map[string]any
-	// Ctx holds workflow-scope variables (workflow, space, registry) —
+	// Ctx holds workflow-scope variables (workflow, space, registry, app) —
 	// derived from the workflow itself, so every node resolves them.
 	Ctx map[string]any
 	// Build holds build-scope variables (fingerprint), populated only for
@@ -190,6 +190,6 @@ func lookup(path string, env ResolveEnv) (any, error) {
 		}
 		return v, nil
 	default:
-		return nil, fmt.Errorf("malformed template reference %q (want params.<name>, steps.<id>.outputs.<key>, run.<number|status|url>, git.<commit|shortCommit>, ctx.<workflow|space|registry> or build.<fingerprint>)", path)
+		return nil, fmt.Errorf("malformed template reference %q (want params.<name>, steps.<id>.outputs.<key>, run.<number|status|url>, git.<commit|shortCommit>, ctx.<workflow|space|registry|app> or build.<fingerprint>)", path)
 	}
 }

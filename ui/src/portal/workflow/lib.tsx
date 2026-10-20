@@ -224,7 +224,7 @@ export function buildTemplateRefs(
   edges: DAGSpec['edges'] = []
 ): string[] {
   const refs = params.map((p) => `params.${p.name}`)
-  refs.push('ctx.workflow', 'ctx.space', 'ctx.registry')
+  refs.push('ctx.workflow', 'ctx.space', 'ctx.registry', 'ctx.app')
   if (gitScope) {
     refs.push('git.commit', 'git.shortCommit', 'build.fingerprint')
   }

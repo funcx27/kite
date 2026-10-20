@@ -188,12 +188,10 @@
       "platforms": "平台",
       "platformsHint": "构建的目标平台，可多选；留空跟随构建节点的原生平台",
       "outputRef": "输出镜像",
-      "outputRefHint": "支持 {{params.*}} / {{git.*}} / {{ctx.*}} 变量；不带仓库域名的裸名称自动补默认镜像仓库，如 {{ctx.space}}/myapp:{{git.shortCommit}}",
+      "outputRefHint": "支持 {{params.*}} / {{git.*}} / {{ctx.*}} / {{build.fingerprint}} 变量；不带仓库域名的裸名称自动补默认镜像仓库，如 {{ctx.space}}/myapp:{{git.shortCommit}}",
       "outputRefResolved": "将通过默认镜像仓库推送为 {{ref}}",
       "outputRefAutoPlaceholder": "留空时自动命名",
-      "outputRefAutoHint": "留空自动命名（空间取流水线空间，应用取流水线名）：{{ref}}",
-      "tagTemplate": "Tag 模板（可选）",
-      "tagTemplateHint": "自动命名的 tag；留空用 <commit>[-<指纹>]。模板即最终 tag，不追加指纹。可用 {{params.*}}、{{git.*}}、{{ctx.*}}、{{build.fingerprint}}",
+      "outputRefAutoHint": "留空自动命名（空间取流水线空间，应用取部署应用或流水线名）：{{ref}}",
       "gitCredentialRef": "Git 凭证",
       "gitCredentialRefHint": "已保存的 git 凭证名称；留空匿名拉取",
       "registryCredentialRef": "Registry 凭证",
@@ -235,7 +233,9 @@
       "spaceFixedHint": "部署空间固定为流水线所属空间，不可切换",
       "timeout": "审批超时",
       "timeoutHint": "超过该时长未审批，按超时动作处理；留空用平台默认",
-      "platformsPlaceholder": "选择构建平台…"
+      "platformsPlaceholder": "选择构建平台…",
+      "appFixedHint": "应用是流水线的部署目标，设定后不可切换；应用本身请在应用界面维护",
+      "registryCredentialRefDefaultHint": "留空时自动使用默认镜像仓库关联的推送凭证：{{name}}"
     },
     "template": {
       "groupParams": "参数",

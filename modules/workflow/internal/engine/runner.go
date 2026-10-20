@@ -179,18 +179,13 @@ func needsRegistryPrefix(ref string) bool {
 	return !strings.Contains(first, ".") && !strings.Contains(first, ":") && first != "localhost"
 }
 
-// imageTagPattern is the registry tag grammar (docker distribution):
-// [A-Za-z0-9_][A-Za-z0-9_.-]{0,127}.
-var imageTagPattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
-
 // imageRepoSegmentPattern is one lowercase path component of an image
 // reference (docker distribution), used to judge name-derived path seeds.
 var imageRepoSegmentPattern = regexp.MustCompile(`^[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*$`)
 
 // autoOutputRef fills an empty outputRef with the content-addressed default
 // name <default-host>/<space>/<app>:<short-commit>[-<variant>]. The app
-// segment falls back to the workflow name; a tag template, when set, is the
-// tag verbatim (no variant appended). Any missing prerequisite keeps the
+// segment falls back to the workflow name. Any missing prerequisite keeps the
 // explicit-outputRef error, naming what is absent. Auto-naming is an
 // implicit git-variable use: it resolves the commit itself (reusing a pin
 // the engine already stamped for {{git.*}} renders), independent of the
@@ -223,22 +218,10 @@ func autoOutputRef(ctx context.Context, deps buildDeps, p *spec.BuildProps, wfNa
 	if err != nil {
 		return "", err
 	}
-	tag, fingerprint := "", variantFingerprint(content, p.Args, p.Git.Subdir)
-	if p.TagTemplate != "" {
-		// The template already rendered (engine pre-resolved build.fingerprint
-		// when referenced); prefer that value — it is the one the tag carries.
-		tag = p.TagTemplate
-		if p.ResolvedFingerprint != "" {
-			fingerprint = p.ResolvedFingerprint
-		}
-		if !imageTagPattern.MatchString(tag) {
-			return "", fmt.Errorf("tag template rendered to %q, which is not a valid image tag", tag)
-		}
-	} else {
-		tag = commit[:min(7, len(commit))]
-		if fingerprint != "" {
-			tag += "-" + fingerprint
-		}
+	fingerprint := variantFingerprint(content, p.Args, p.Git.Subdir)
+	tag := commit[:min(7, len(commit))]
+	if fingerprint != "" {
+		tag += "-" + fingerprint
 	}
 	p.OutputRef = host + "/" + p.Space + "/" + app + ":" + tag
 	p.Git.PinnedCommit = commit

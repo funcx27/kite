@@ -238,7 +238,7 @@ func validateTemplates(n Node, nodeIDs, paramNames map[string]bool) []string {
 			}
 		case len(seg) == 2 && seg[0] == "ctx":
 			switch seg[1] {
-			case "workflow", "space", "registry":
+			case "workflow", "space", "registry", "app":
 			default:
 				errs = append(errs, fmt.Sprintf("node %q: unknown ctx variable %q", n.ID, ref))
 			}
@@ -255,7 +255,7 @@ func validateTemplates(n Node, nodeIDs, paramNames map[string]bool) []string {
 				errs = append(errs, fmt.Sprintf("node %q: build.* template variables require a git source", n.ID))
 			}
 		default:
-			errs = append(errs, fmt.Sprintf("node %q: malformed template reference %q (want params.<name>, steps.<id>.outputs.<key>, run.<number|status|url>, git.<commit|shortCommit>, ctx.<workflow|space|registry> or build.<fingerprint>)", n.ID, ref))
+			errs = append(errs, fmt.Sprintf("node %q: malformed template reference %q (want params.<name>, steps.<id>.outputs.<key>, run.<number|status|url>, git.<commit|shortCommit>, ctx.<workflow|space|registry|app> or build.<fingerprint>)", n.ID, ref))
 		}
 	}
 	if n.Type != "" && !isKnownNodeType(n.Type) {

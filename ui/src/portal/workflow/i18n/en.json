@@ -188,12 +188,10 @@
       "platforms": "Platforms",
       "platformsHint": "Target build platforms, multi-select; empty follows the build node's native platform",
       "outputRef": "Output Image Ref",
-      "outputRefHint": "Supports {{params.*}} / {{git.*}} / {{ctx.*}} variables; a bare name without a registry host gets the default registry prefixed, e.g. {{ctx.space}}/myapp:{{git.shortCommit}}",
+      "outputRefHint": "Supports {{params.*}} / {{git.*}} / {{ctx.*}} / {{build.fingerprint}} variables; a bare name without a registry host gets the default registry prefixed, e.g. {{ctx.space}}/myapp:{{git.shortCommit}}",
       "outputRefResolved": "Pushes as {{ref}} via the default registry",
       "outputRefAutoPlaceholder": "Auto-named when empty",
-      "outputRefAutoHint": "Auto-named when empty (space from the workflow's space, app from the workflow name): {{ref}}",
-      "tagTemplate": "Tag template (optional)",
-      "tagTemplateHint": "The auto-named tag; empty uses <commit>[-<fingerprint>]. The template is the final tag verbatim — no fingerprint appended. Variables: {{params.*}}, {{git.*}}, {{ctx.*}}, {{build.fingerprint}}",
+      "outputRefAutoHint": "Auto-named when empty (space from the workflow's space, app from the deploy target or workflow name): {{ref}}",
       "gitCredentialRef": "Git Credential",
       "gitCredentialRefHint": "Name of a stored git credential; empty = anonymous fetch",
       "registryCredentialRef": "Registry Credential",
@@ -235,7 +233,9 @@
       "spaceFixedHint": "The deploy space is fixed to the workflow’s own space.",
       "timeout": "Approval Timeout",
       "timeoutHint": "On expiry the timeout action applies; empty = platform default",
-      "platformsPlaceholder": "Pick build platforms…"
+      "platformsPlaceholder": "Pick build platforms…",
+      "appFixedHint": "The app is the pipeline's deploy target and cannot be switched once set; maintain the app itself on the application page",
+      "registryCredentialRefDefaultHint": "Empty falls back to the default registry's push credential: {{name}}"
     },
     "template": {
       "groupParams": "Params",

@@ -203,6 +203,12 @@ export function PropertyDrawer({
       props: { ...(node.props ?? {}), space, app },
     })
 
+  // The pipeline's app for ctx.app previews: the first deploy-app node that
+  // carries a target — mirrors the engine's templateCtx derivation.
+  const deployApp = nodes.find(
+    (n) => n.type === 'deploy-app' && readStringProp(n, 'app') !== ''
+  )
+
   const templateInputVars = {
     params,
     nodes,
@@ -251,6 +257,7 @@ export function PropertyDrawer({
             patchProps={patchProps}
             patchNode={patchNode}
             workflowName={workflowName}
+            deployApp={deployApp ? readStringProp(deployApp, 'app') : undefined}
             templateVars={templateInputVars}
           />
         )}
@@ -781,9 +788,13 @@ function BuildPropsForm({
   patchProps,
   patchNode,
   workflowName,
+  deployApp,
   templateVars,
 }: PropsFormShared & {
   workflowName?: string
+  // The workflow's first deploy-app target: feeds ctx.app previews (the
+  // engine falls back to the workflow name when absent).
+  deployApp?: string
 }) {
   const { t } = useTranslation()
   const { currentSpace } = useSpaces()
@@ -812,10 +823,35 @@ function BuildPropsForm({
   // only — the form value keeps what the user typed.
   const { data: defaultRegistry } = useDefaultRegistry()
   const outputRef = readStringProp(node, 'outputRef')
-  const resolvedOutputRef =
-    defaultRegistry?.valid && outputRef && isBareImageName(outputRef)
-      ? `${defaultRegistry.host}/${outputRef}`
-      : undefined
+  // Display resolution of the outputRef template: ctx values come from the
+  // editor state, params from declared defaults, and run-time-only tokens
+  // (git/build) stand in as placeholders. Bare names — templates included —
+  // still get the default-registry prefix, mirroring the backend rule.
+  const displayResolveOutputRef = (text: string): string =>
+    text.replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (token, path: string) => {
+      if (path === 'ctx.registry')
+        return defaultRegistry?.valid ? defaultRegistry.host : token
+      if (path === 'ctx.space') return currentSpace || token
+      if (path === 'ctx.app') return deployApp || workflowName || token
+      if (path === 'ctx.workflow') return workflowName || token
+      if (path === 'git.commit' || path === 'git.shortCommit') return '<commit>'
+      if (path === 'build.fingerprint') return '<fingerprint>'
+      if (path.startsWith('params.')) {
+        const param = templateVars.params.find(
+          (p) => `params.${p.name}` === path
+        )
+        if (param?.default != null && param.default !== '')
+          return String(param.default)
+      }
+      return token
+    })
+  const resolvedOutputRef = (() => {
+    if (!outputRef || !defaultRegistry?.valid) return undefined
+    const ref = outputRef.includes('{{')
+      ? displayResolveOutputRef(outputRef)
+      : outputRef
+    return isBareImageName(ref) ? `${defaultRegistry.host}/${ref}` : ref
+  })()
   // The advanced section starts collapsed unless one of its fields already
   // carries a value, so configured options never hide behind the fold.
   const [advancedOpen, setAdvancedOpen] = useState(
@@ -849,6 +885,8 @@ function BuildPropsForm({
         if (param && param.default != null) value = String(param.default)
       } else if (m[1] === 'ctx.workflow') {
         value = workflowName
+      } else if (m[1] === 'ctx.app') {
+        value = deployApp || workflowName
       } else if (m[1] === 'ctx.space') {
         value = currentSpace ?? undefined
       } else if (m[1] === 'ctx.registry') {
@@ -907,9 +945,8 @@ function BuildPropsForm({
 
   // Auto-naming preview mirrors the backend rule: the app segment is the
   // saved app (legacy nodes) falling back to the workflow name, and the tag
-  // is the tag template when set, else <commit>[-<fingerprint>].
+  // is <commit>[-<fingerprint>].
   const savedApp = readStringProp(node, 'app')
-  const tagTemplate = readStringProp(node, 'tagTemplate')
   const autoNameApp = savedApp || workflowName || '…'
 
   const setGit = (key: string, value: string) => {
@@ -936,7 +973,18 @@ function BuildPropsForm({
         saved={savedRegistryCredential}
         names={registryCredentialNames}
         label={t('workflow.props.registryCredentialRef')}
-        hint={t('workflow.props.registryCredentialRefHint')}
+        hint={
+          // An empty ref already falls back to the default registry's push
+          // credential at run time (applyDefaultRegistry); say so instead of
+          // letting the field read as anonymous.
+          savedRegistryCredential === '' &&
+          defaultRegistry?.valid &&
+          defaultRegistry.credential !== ''
+            ? t('workflow.props.registryCredentialRefDefaultHint', {
+                name: defaultRegistry.credential,
+              })
+            : t('workflow.props.registryCredentialRefHint')
+        }
         noneLabel={t('workflow.props.credentialRefNone')}
         currentLabel={t('workflow.props.currentValue')}
         patchProps={patchProps}
@@ -1072,24 +1120,11 @@ function BuildPropsForm({
         {defaultRegistry?.valid && !outputRef && (
           <p className="break-all font-mono text-[11px] leading-4 text-muted-foreground">
             {t('workflow.props.outputRefAutoHint', {
-              ref: `${defaultRegistry.host}/${currentSpace || '…'}/${autoNameApp}:${tagTemplate || '<commit>[-<fingerprint>]'}`,
+              ref: `${defaultRegistry.host}/${currentSpace || '…'}/${autoNameApp}:<commit>[-<fingerprint>]`,
             })}
           </p>
         )}
       </Field>
-      {!outputRef && (
-        <Field
-          label={t('workflow.props.tagTemplate')}
-          hint={t('workflow.props.tagTemplateHint')}
-        >
-          <TemplateInput
-            {...templateVars}
-            value={tagTemplate}
-            onValueChange={(v) => patchProps('tagTemplate', v || undefined)}
-            placeholder="{{git.shortCommit}}"
-          />
-        </Field>
-      )}
       <AdvancedCollapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
         <SharedAdvancedFields node={node} patchNode={patchNode} />
         {sourceKind === 'git' && (
@@ -1167,7 +1202,8 @@ function BuildPropsForm({
 
 // Deploy targets address an application by its (space, name) identity. The
 // space is fixed to the workflow's own space (the editor locks the workflow
-// to one space) — only the app is picked, from that space's app list.
+// to one space); the app is picked once from that space's list and stays
+// fixed afterwards — the app itself is maintained on the application page.
 interface AppOption {
   value: string
   label: string
@@ -1301,7 +1337,11 @@ function DeployPropsForm({
       <Field
         label={t('workflow.props.app')}
         hint={
-          lockedApp !== undefined ? t('workflow.props.lockedHint') : undefined
+          lockedApp !== undefined
+            ? t('workflow.props.lockedHint')
+            : displayApp !== ''
+              ? t('workflow.props.appFixedHint')
+              : undefined
         }
       >
         <AppCombobox
@@ -1309,7 +1349,9 @@ function DeployPropsForm({
           label={displayApp}
           options={options}
           echoValue={appEcho}
-          disabled={lockedApp !== undefined || selectedSpace === ''}
+          disabled={
+            lockedApp !== undefined || selectedSpace === '' || displayApp !== ''
+          }
           onSelect={(option) => onSelectApp(selectedSpace, option.value)}
           placeholder={
             selectedSpace === ''

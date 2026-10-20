@@ -70,7 +70,7 @@ func (e *Engine) execNode(parent context.Context, state *runState, node spec.Nod
 			"status": state.run.Status,
 			"url":    fmt.Sprintf("/portal/workflows/%d/runs/%d", state.wf.ID, state.run.ID),
 		},
-		Ctx: e.templateCtx(state.wf),
+		Ctx: e.templateCtx(state.wf, state.dag),
 	}
 	// git.* variables resolve via ls-remote before the full render — the
 	// commit must be known while the props still carry the {{git.*}} tokens.
@@ -206,10 +206,11 @@ func (e *Engine) injectGitVars(ctx context.Context, run store.WorkflowRun, node 
 }
 
 // templateCtx assembles the workflow-scope ctx.* variables: the workflow
-// name, the workflow's single space binding (empty with zero or several
-// bindings — an ambiguous space must not silently pick one) and the default
-// registry host (empty when unset or invalid).
-func (e *Engine) templateCtx(wf store.Workflow) map[string]any {
+// name, the app (the first deploy-app node's target — the pipeline's subject —
+// falling back to the workflow name), the workflow's single space binding
+// (empty with zero or several bindings — an ambiguous space must not silently
+// pick one) and the default registry host (empty when unset or invalid).
+func (e *Engine) templateCtx(wf store.Workflow, dag spec.DAGSpec) map[string]any {
 	space := ""
 	if bound, err := store.LoadBindings(e.db, []uint{wf.ID}, store.BindingKindSpace); err != nil {
 		slog.Warn("workflow: load space bindings for template ctx", "workflow", wf.ID, "err", err)
@@ -217,7 +218,20 @@ func (e *Engine) templateCtx(wf store.Workflow) map[string]any {
 		space = bound[wf.ID][0]
 	}
 	_, host, _ := e.deps.DefaultRegistry()
-	return map[string]any{"workflow": wf.Name, "space": space, "registry": host}
+	app := ""
+	for _, n := range dag.Nodes {
+		if n.Type != spec.NodeDeployApp {
+			continue
+		}
+		if a, _ := n.Props["app"].(string); a != "" {
+			app = a
+			break
+		}
+	}
+	if app == "" {
+		app = strings.ToLower(wf.Name)
+	}
+	return map[string]any{"workflow": wf.Name, "space": space, "registry": host, "app": app}
 }
 
 // usesBuildVars reports whether the props reference any build.* template

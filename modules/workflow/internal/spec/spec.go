@@ -79,14 +79,10 @@ type BuildProps struct {
 	// the auto-generated outputRef when OutputRef is empty; empty falls back
 	// to the workflow name.
 	App string `json:"app,omitempty"`
-	// TagTemplate overrides the auto-named tag: the rendered template is the
-	// tag verbatim (no variant fingerprint appended — a stable tag such as
-	// {{params.version}} stays stable); empty keeps the default
-	// <short-commit>[-<fingerprint>] tag.
-	TagTemplate string `json:"tagTemplate,omitempty"`
 	// ResolvedFingerprint carries the engine's build.fingerprint resolution
-	// onto the rendered props (one probe feeds the tag render and the node
-	// outputs); never part of a hand-written spec.
+	// onto the rendered props (one probe feeds the node outputs even when
+	// OutputRef is set and auto-naming never runs); never part of a
+	// hand-written spec.
 	ResolvedFingerprint string `json:"resolvedFingerprint,omitempty"`
 }
 

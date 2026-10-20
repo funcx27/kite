@@ -63,6 +63,12 @@ import {
   type WorkflowYamlEnvelope,
 } from '../yaml'
 
+// The auto-naming rule expressed as an editable template: prefilled on new
+// build nodes (and the application-entry pipeline) so the default image name
+// is visible and adjustable; the ctx globals resolve at run time.
+const DEFAULT_BUILD_OUTPUT =
+  '{{ctx.registry}}/{{ctx.space}}/{{ctx.app}}:{{git.shortCommit}}-{{build.fingerprint}}'
+
 function nextNodeId(type: WorkflowNodeType, taken: Set<string>): string {
   const prefix = type.replace(/-/g, '')
   for (let i = 1; i < 10000; i++) {
@@ -354,7 +360,7 @@ export function WorkflowEditorPage() {
           props: {
             git: { url: '{{params.gitRepo}}', ref: '{{params.gitBranch}}' },
             dockerfile: '{{params.dockerfile}}',
-            outputRef: `{{params.registry}}/${fromApp}:{{git.shortCommit}}`,
+            outputRef: DEFAULT_BUILD_OUTPUT,
           },
         },
         {
@@ -384,9 +390,8 @@ export function WorkflowEditorPage() {
         name: 'dockerfile',
         type: 'string',
         required: false,
-        default: 'Dockerfile',
+        default: 'path:Dockerfile',
       },
-      { name: 'registry', type: 'string', required: false },
     ])
     // Cluster in the default name keeps same-app pipelines across clusters
     // distinguishable in the list.
@@ -720,7 +725,16 @@ export function WorkflowEditorPage() {
           id: nextNodeId(nodeType, new Set(prev.map((n) => n.id))),
           type: WORKFLOW_NODE_CARD,
           position,
-          data: { nodeType, label: t(`workflow.nodeTypes.${nodeType}`) },
+          data: {
+            nodeType,
+            label: t(`workflow.nodeTypes.${nodeType}`),
+            // Build nodes start from the auto-naming rule as an editable
+            // template (the ctx globals resolve at run time); everything
+            // else starts empty.
+            ...(nodeType === 'build-image'
+              ? { props: { outputRef: DEFAULT_BUILD_OUTPUT } }
+              : {}),
+          },
         },
       ])
     },
