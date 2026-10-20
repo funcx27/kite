@@ -530,7 +530,8 @@ function RelatedWorkflows({
   )
 }
 
-// One related-workflow row: the name links into the runs list with the same
+// One related-workflow row: the name links into the latest run's detail
+// (the runs list while the workflow has no run yet) with the same
 // fromApp/fromSpace/cluster/returnTo params as the edit link; the tail shows
 // the latest run's status chip and finish time. A latest run that has not
 // reached a succeeded terminal state expands the node step bar under the
@@ -554,7 +555,11 @@ function RelatedWorkflowRow({
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <Link
-            to={`/workflows/${wf.id}/runs?${paramsQuery}`}
+            to={
+              latest
+                ? `/workflows/${wf.id}/runs/${latest.id}?${paramsQuery}`
+                : `/workflows/${wf.id}/runs?${paramsQuery}`
+            }
             className="font-mono text-sm font-medium hover:underline"
           >
             {wf.name}
