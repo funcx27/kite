@@ -136,6 +136,14 @@ function sanitizeSpec(spec: DAGSpec): DAGSpec {
   const nodes = spec.nodes.map((n) => {
     const { layout: _legacy, ...props } = n.props ?? {}
     void _legacy
+    // The inline dockerfile is the one multiline prop. CR line endings
+    // (Monaco keeps a pasted CRLF buffer EOL) force the YAML dump into
+    // escaped quoted strings — block scalars cannot carry \r — and shift
+    // the content fingerprint for identical logical content, so they fold
+    // to \n here on the way into any saved or exported spec.
+    if (typeof props.dockerfile === 'string') {
+      props.dockerfile = props.dockerfile.replace(/\r\n?/g, '\n')
+    }
     return { ...n, props: Object.keys(props).length > 0 ? props : undefined }
   })
   return { nodes, edges: spec.edges }
