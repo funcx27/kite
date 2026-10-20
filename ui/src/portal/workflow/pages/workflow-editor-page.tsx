@@ -381,7 +381,11 @@ export function WorkflowEditorPage() {
           name: t('workflow.nodeTypes.build-image'),
           props: {
             git: { url: '{{params.gitRepo}}', ref: '{{params.gitBranch}}' },
-            dockerfile: '{{params.dockerfile}}',
+            // The path: prefix rides the prop, not the param default: the
+            // drawer input then shows {{params.dockerfile}} (visible,
+            // editable, autocomplete-friendly) and the run-dialog override
+            // stays a clean bare path like "Dockerfile".
+            dockerfile: 'path:{{params.dockerfile}}',
             outputRef: DEFAULT_BUILD_OUTPUT,
             ...credentialProps,
           },
@@ -413,7 +417,7 @@ export function WorkflowEditorPage() {
         name: 'dockerfile',
         type: 'string',
         required: false,
-        default: 'path:Dockerfile',
+        default: 'Dockerfile',
       },
     ])
     // Cluster in the default name keeps same-app pipelines across clusters
