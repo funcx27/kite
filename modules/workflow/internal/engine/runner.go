@@ -185,11 +185,13 @@ var imageRepoSegmentPattern = regexp.MustCompile(`^[a-z0-9]+(?:(?:[._]|__|-+)[a-
 
 // autoOutputRef fills an empty outputRef with the content-addressed default
 // name <default-host>/<space>/<app>:<short-commit>[-<variant>]. The app
-// segment falls back to the workflow name. Any missing prerequisite keeps the
-// explicit-outputRef error, naming what is absent. Auto-naming is an
-// implicit git-variable use: it resolves the commit itself (reusing a pin
-// the engine already stamped for {{git.*}} renders), independent of the
-// explicit usesGitVars gate. The returned fingerprint feeds the node outputs.
+// segment is the engine-stamped ctx app (the deploy target, falling back to
+// the workflow name) unless a legacy saved app overrides it. Any missing
+// prerequisite keeps the explicit-outputRef error, naming what is absent.
+// Auto-naming is an implicit git-variable use: it resolves the commit itself
+// (reusing a pin the engine already stamped for {{git.*}} renders),
+// independent of the explicit usesGitVars gate. The returned fingerprint
+// feeds the node outputs.
 func autoOutputRef(ctx context.Context, deps buildDeps, p *spec.BuildProps, wfName string, onLog func(string)) (string, error) {
 	_, host, ok := deps.DefaultRegistry()
 	var missing []string
@@ -205,8 +207,11 @@ func autoOutputRef(ctx context.Context, deps buildDeps, p *spec.BuildProps, wfNa
 	}
 	if app == "" {
 		missing = append(missing, "app")
-	} else if p.App == "" && !imageRepoSegmentPattern.MatchString(app) {
-		missing = append(missing, "an app (the workflow name cannot seed the image path)")
+	} else if !imageRepoSegmentPattern.MatchString(app) {
+		// Whatever seeded the app segment (deploy target via the engine's
+		// ctx stamp, a legacy saved app, the workflow name), the produced
+		// path must stay a valid image reference.
+		missing = append(missing, fmt.Sprintf("an app that can seed the image path (%q cannot)", app))
 	}
 	if p.Git == nil || p.Git.URL == "" {
 		missing = append(missing, "a git source (the tag carries its commit)")

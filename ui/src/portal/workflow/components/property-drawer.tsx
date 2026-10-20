@@ -832,7 +832,10 @@ function BuildPropsForm({
       if (path === 'ctx.registry')
         return defaultRegistry?.valid ? defaultRegistry.host : token
       if (path === 'ctx.space') return currentSpace || token
-      if (path === 'ctx.app') return deployApp || workflowName || token
+      if (path === 'ctx.app') {
+        const app = deployApp || workflowName
+        return app ? app.toLowerCase() : token
+      }
       if (path === 'ctx.workflow') return workflowName || token
       if (path === 'git.commit' || path === 'git.shortCommit') return '<commit>'
       if (path === 'build.fingerprint') return '<fingerprint>'
@@ -850,6 +853,9 @@ function BuildPropsForm({
     const ref = outputRef.includes('{{')
       ? displayResolveOutputRef(outputRef)
       : outputRef
+    // Only surface a derived value: echoing a fully-qualified ref under a
+    // "will be pushed as" caption would imply a rewrite that never happens.
+    if (ref === outputRef) return undefined
     return isBareImageName(ref) ? `${defaultRegistry.host}/${ref}` : ref
   })()
   // The advanced section starts collapsed unless one of its fields already
@@ -886,7 +892,8 @@ function BuildPropsForm({
       } else if (m[1] === 'ctx.workflow') {
         value = workflowName
       } else if (m[1] === 'ctx.app') {
-        value = deployApp || workflowName
+        const app = deployApp || workflowName
+        value = app ? app.toLowerCase() : undefined
       } else if (m[1] === 'ctx.space') {
         value = currentSpace ?? undefined
       } else if (m[1] === 'ctx.registry') {
@@ -944,10 +951,15 @@ function BuildPropsForm({
   }
 
   // Auto-naming preview mirrors the backend rule: the app segment is the
-  // saved app (legacy nodes) falling back to the workflow name, and the tag
-  // is <commit>[-<fingerprint>].
+  // saved app (legacy nodes), else the deploy target, else the lowercased
+  // workflow name; the tag is <commit>[-<fingerprint>].
   const savedApp = readStringProp(node, 'app')
-  const autoNameApp = savedApp || workflowName || '…'
+  const autoNameApp = (
+    savedApp ||
+    deployApp ||
+    workflowName ||
+    '…'
+  ).toLowerCase()
 
   const setGit = (key: string, value: string) => {
     const git = { ...((node.props?.git as Record<string, unknown>) ?? {}) }

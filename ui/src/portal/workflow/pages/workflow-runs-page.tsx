@@ -38,8 +38,7 @@ export function WorkflowRunsPage() {
   const runs = data?.runs ?? []
 
   // Keep ?returnTo on run links so the run view keeps its back-to-app
-  // control; the editor link rides along for the same reason (the editor
-  // renders the same back control and bounces back after save).
+  // control.
   const runHref = (runId: number) =>
     returnTo
       ? `/workflows/${id}/runs/${runId}?returnTo=${encodeURIComponent(returnTo)}`

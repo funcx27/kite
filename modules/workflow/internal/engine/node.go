@@ -114,6 +114,12 @@ func (e *Engine) execNode(parent context.Context, state *runState, node spec.Nod
 		if s, _ := rendered["space"].(string); s == "" {
 			rendered["space"] = env.Ctx["space"]
 		}
+		// The build app follows the pipeline's subject the same way: the
+		// deploy target (falling back to the workflow name) feeds
+		// auto-naming's app segment without the form ever writing it.
+		if a, _ := rendered["app"].(string); a == "" {
+			rendered["app"] = env.Ctx["app"]
+		}
 		if env.Build != nil {
 			rendered["resolvedFingerprint"] = env.Build["fingerprint"]
 		}
