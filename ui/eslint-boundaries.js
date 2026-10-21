@@ -24,6 +24,7 @@ const SHARED_COMPONENT_ALLOWS = [
   '!@/components/action-table',
   '!@/components/appearance-provider',
   '!@/components/chart',
+  '!@/components/chart/chart-utils',
   '!@/components/chart/cpu-usage-chart',
   '!@/components/chart/disk-io-usage-chart',
   '!@/components/chart/memory-usage-chart',

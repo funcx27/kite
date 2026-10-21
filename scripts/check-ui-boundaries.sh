@@ -26,7 +26,7 @@ PORTAL_MODULE_RE='^portal/(application|workflow|buildfleet|kcross)(/|$)'
 HOST_RE='^(App(\.tsx)?$|pages/|components/|contexts/|lib/)'
 
 # Keep in sync with SHARED_COMPONENT_ALLOWS in ui/eslint-boundaries.js.
-SHARED_OK='^components/ui(/|$)|^components/(account-settings-dialog|action-table|ai-chat/ai-chat-stream|appearance-provider|chart/cpu-usage-chart|chart/disk-io-usage-chart|chart/memory-usage-chart|chart/network-usage-chart|color-theme-provider|connection-indicator|delete-confirmation-dialog|error-message|language-toggle|mode-toggle|network-speed-indicator|selector/configmap-selector|selector/container-selector|selector/pod-selector|selector/secret-selector|settings/cluster-dialog|simple-yaml-editor|yaml-diff-viewer)$'
+SHARED_OK='^components/ui(/|$)|^components/(account-settings-dialog|action-table|ai-chat/ai-chat-stream|appearance-provider|chart/chart-utils|chart/cpu-usage-chart|chart/disk-io-usage-chart|chart/memory-usage-chart|chart/network-usage-chart|color-theme-provider|connection-indicator|delete-confirmation-dialog|error-message|language-toggle|mode-toggle|network-speed-indicator|selector/configmap-selector|selector/container-selector|selector/pod-selector|selector/secret-selector|settings/cluster-dialog|simple-yaml-editor|yaml-diff-viewer)$'
 
 # Keep in sync with CROSS_MODULE_WHITELIST in ui/eslint-boundaries.js; the
 # reasons for each entry are documented there.

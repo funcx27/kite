@@ -49,8 +49,10 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 import { ApplicationStatusChip } from './status-badge'
+import { WorkloadMonitoring } from './workload-monitoring'
 import { YamlDiffViewer } from './yaml-diff-viewer'
 
 interface ClusterTabProps {
@@ -86,6 +88,8 @@ function formatSpecPair(
 }
 
 type SideChoice = 'db' | 'cluster'
+
+type Segment = 'overview' | 'monitoring'
 
 function driftDocKey(doc: {
   kind: string
@@ -218,6 +222,9 @@ export function ClusterTab({
   // Warning events are high-noise: folded by default, the count on the
   // trigger header keeps the signal visible.
   const [eventsOpen, setEventsOpen] = useState(false)
+  // Overview/monitoring segment; local state only — the real version should
+  // sync it into the URL query so views are shareable.
+  const [segment, setSegment] = useState<Segment>('overview')
 
   useEffect(() => () => window.clearTimeout(confirmTimer.current), [])
 
@@ -508,314 +515,350 @@ export function ClusterTab({
         </div>
       ) : (
         <>
-          {/* Pods */}
-          <div className="overflow-hidden rounded-xl border bg-card">
-            <div className="flex items-center justify-between border-b px-5 py-3">
-              <span className="text-sm font-semibold">
-                {t('applications.detail.pods', {
-                  count: runtime?.pods?.items.length ?? 0,
-                })}
-              </span>
-              {runtime?.pods?.metricsAvailable && (
-                <span className="text-xs text-muted-foreground">
-                  {t('applications.detail.autoRefresh')}
-                </span>
-              )}
-            </div>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t('applications.detail.podName')}</TableHead>
-                  <TableHead>{t('applications.detail.podStatus')}</TableHead>
-                  <TableHead>{t('applications.detail.podIP')}</TableHead>
-                  <TableHead>{t('applications.detail.podUsage')}</TableHead>
-                  <TableHead>{t('applications.detail.podRestarts')}</TableHead>
-                  <TableHead>{t('applications.detail.podAge')}</TableHead>
-                  <TableHead>{t('applications.detail.podNode')}</TableHead>
-                  <TableHead className="text-right">
-                    {t('common.fields.actions')}
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {(runtime?.pods?.items ?? []).map((pod) => (
-                  <TableRow key={pod.name}>
-                    <TableCell className="font-mono text-xs">
-                      <button
-                        type="button"
-                        className="hover:underline"
-                        title={(pod.images ?? []).join('\n')}
-                        onClick={() =>
-                          navigate(
-                            `/applications/${app.namespace}/${app.name}/clusters/${config.cluster}/pods/${pod.name}`
-                          )
-                        }
-                      >
-                        {pod.name}
-                      </button>
-                    </TableCell>
-                    <TableCell>
-                      <span
-                        className={
-                          (pod.status || pod.phase) === 'Running'
-                            ? 'inline-flex items-center gap-1.5 rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 dark:border-green-800 dark:bg-green-950 dark:text-green-400'
-                            : 'inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-400'
-                        }
-                      >
-                        {pod.status || pod.phase || '—'}
-                      </span>
-                    </TableCell>
-                    <TableCell className="font-mono text-xs">
-                      {pod.ip || '—'}
-                    </TableCell>
-                    <TableCell
-                      className="font-mono text-xs"
-                      title={t('applications.detail.podUsageHint')}
-                    >
-                      <div>
-                        {pod.cpu !== undefined || pod.memory !== undefined
-                          ? `${pod.cpu ?? 0}m / ${formatBytes(pod.memory ?? 0)}`
-                          : '—'}
-                      </div>
-                      <div className="text-muted-foreground">
-                        {formatSpecPair(pod.requests, pod.limits)}
-                      </div>
-                    </TableCell>
-                    <TableCell>{pod.restarts}</TableCell>
-                    <TableCell>{podAge(pod.startTime)}</TableCell>
-                    <TableCell className="font-mono text-xs">
-                      {pod.node || '—'}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="inline-flex gap-1">
+          {/* Overview / monitoring segment switch (below the always-on
+              overview bar; the offlined state keeps its single panel). */}
+          <Tabs
+            value={segment}
+            onValueChange={(value) => setSegment(value as Segment)}
+          >
+            <TabsList className="h-7">
+              <TabsTrigger value="overview" className="px-2.5 text-xs">
+                {t('applications.monitoring.overview')}
+              </TabsTrigger>
+              <TabsTrigger value="monitoring" className="px-2.5 text-xs">
+                {t('applications.monitoring.monitoring')}
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+
+          {segment === 'monitoring' ? (
+            <WorkloadMonitoring
+              namespace={app.namespace}
+              name={app.name}
+              cluster={config.cluster}
+            />
+          ) : (
+            <>
+              {/* Pods */}
+              <div className="overflow-hidden rounded-xl border bg-card">
+                <div className="flex items-center justify-between border-b px-5 py-3">
+                  <span className="text-sm font-semibold">
+                    {t('applications.detail.pods', {
+                      count: runtime?.pods?.items.length ?? 0,
+                    })}
+                  </span>
+                  {runtime?.pods?.metricsAvailable && (
+                    <span className="text-xs text-muted-foreground">
+                      {t('applications.detail.autoRefresh')}
+                    </span>
+                  )}
+                </div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{t('applications.detail.podName')}</TableHead>
+                      <TableHead>
+                        {t('applications.detail.podStatus')}
+                      </TableHead>
+                      <TableHead>{t('applications.detail.podIP')}</TableHead>
+                      <TableHead>{t('applications.detail.podUsage')}</TableHead>
+                      <TableHead>
+                        {t('applications.detail.podRestarts')}
+                      </TableHead>
+                      <TableHead>{t('applications.detail.podAge')}</TableHead>
+                      <TableHead>{t('applications.detail.podNode')}</TableHead>
+                      <TableHead className="text-right">
+                        {t('common.fields.actions')}
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(runtime?.pods?.items ?? []).map((pod) => (
+                      <TableRow key={pod.name}>
+                        <TableCell className="font-mono text-xs">
+                          <button
+                            type="button"
+                            className="hover:underline"
+                            title={(pod.images ?? []).join('\n')}
+                            onClick={() =>
+                              navigate(
+                                `/applications/${app.namespace}/${app.name}/clusters/${config.cluster}/pods/${pod.name}`
+                              )
+                            }
+                          >
+                            {pod.name}
+                          </button>
+                        </TableCell>
+                        <TableCell>
+                          <span
+                            className={
+                              (pod.status || pod.phase) === 'Running'
+                                ? 'inline-flex items-center gap-1.5 rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 dark:border-green-800 dark:bg-green-950 dark:text-green-400'
+                                : 'inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-400'
+                            }
+                          >
+                            {pod.status || pod.phase || '—'}
+                          </span>
+                        </TableCell>
+                        <TableCell className="font-mono text-xs">
+                          {pod.ip || '—'}
+                        </TableCell>
+                        <TableCell
+                          className="font-mono text-xs"
+                          title={t('applications.detail.podUsageHint')}
+                        >
+                          <div>
+                            {pod.cpu !== undefined || pod.memory !== undefined
+                              ? `${pod.cpu ?? 0}m / ${formatBytes(pod.memory ?? 0)}`
+                              : '—'}
+                          </div>
+                          <div className="text-muted-foreground">
+                            {formatSpecPair(pod.requests, pod.limits)}
+                          </div>
+                        </TableCell>
+                        <TableCell>{pod.restarts}</TableCell>
+                        <TableCell>{podAge(pod.startTime)}</TableCell>
+                        <TableCell className="font-mono text-xs">
+                          {pod.node || '—'}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="inline-flex gap-1">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className={
+                                confirmTarget === pod.name
+                                  ? 'border-destructive text-destructive hover:bg-destructive/10 hover:text-destructive'
+                                  : undefined
+                              }
+                              disabled={restarting}
+                              title={t(
+                                'applications.detail.restartConfirmHint'
+                              )}
+                              onClick={() =>
+                                askRestart(
+                                  pod.name,
+                                  () => void handleRestartPod(pod.name)
+                                )
+                              }
+                            >
+                              {confirmTarget === pod.name
+                                ? t('applications.detail.confirmRestart')
+                                : t('applications.detail.restartShort')}
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {(runtime?.pods?.items.length ?? 0) === 0 && (
+                      <TableRow>
+                        <TableCell
+                          colSpan={8}
+                          className="py-8 text-center text-sm text-muted-foreground"
+                        >
+                          {runtime?.pods?.unauthorized
+                            ? t('applications.detail.unauthorized')
+                            : t('applications.detail.noPods')}
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {/* Network */}
+              <div className="rounded-xl border bg-card px-5 py-4">
+                <div className="mb-3 text-sm font-semibold">
+                  {t('applications.detail.network')}
+                </div>
+                <div className="grid gap-3 md:grid-cols-2">
+                  {(runtime?.services?.items ?? []).map((service) => (
+                    <div key={service.name} className="rounded-lg border p-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium text-muted-foreground">
+                          {t('applications.detail.service')} ·{' '}
+                          {service.type || '—'}
+                        </span>
                         <Button
                           size="sm"
-                          variant="outline"
-                          className={
-                            confirmTarget === pod.name
-                              ? 'border-destructive text-destructive hover:bg-destructive/10 hover:text-destructive'
-                              : undefined
-                          }
-                          disabled={restarting}
-                          title={t('applications.detail.restartConfirmHint')}
-                          onClick={() =>
-                            askRestart(
-                              pod.name,
-                              () => void handleRestartPod(pod.name)
+                          variant="ghost"
+                          className="h-6 px-2 py-0 text-xs"
+                          onClick={() => {
+                            const text = `${service.name}.${namespace}:${(
+                              service.ports ?? []
                             )
-                          }
+                              .map((port) => port.port)
+                              .join(':')}`
+                            void navigator.clipboard.writeText(text)
+                            toast.success(t('common.messages.copied'))
+                          }}
                         >
-                          {confirmTarget === pod.name
-                            ? t('applications.detail.confirmRestart')
-                            : t('applications.detail.restartShort')}
+                          {t('common.actions.copy')}
                         </Button>
                       </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-                {(runtime?.pods?.items.length ?? 0) === 0 && (
-                  <TableRow>
-                    <TableCell
-                      colSpan={8}
-                      className="py-8 text-center text-sm text-muted-foreground"
-                    >
-                      {runtime?.pods?.unauthorized
-                        ? t('applications.detail.unauthorized')
-                        : t('applications.detail.noPods')}
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </div>
-
-          {/* Network */}
-          <div className="rounded-xl border bg-card px-5 py-4">
-            <div className="mb-3 text-sm font-semibold">
-              {t('applications.detail.network')}
-            </div>
-            <div className="grid gap-3 md:grid-cols-2">
-              {(runtime?.services?.items ?? []).map((service) => (
-                <div key={service.name} className="rounded-lg border p-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium text-muted-foreground">
-                      {t('applications.detail.service')} · {service.type || '—'}
-                    </span>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-6 px-2 py-0 text-xs"
-                      onClick={() => {
-                        const text = `${service.name}.${namespace}:${(
-                          service.ports ?? []
-                        )
+                      <div className="mt-1 font-mono text-sm">
+                        {service.name} :{' '}
+                        {(service.ports ?? [])
                           .map((port) => port.port)
-                          .join(':')}`
-                        void navigator.clipboard.writeText(text)
-                        toast.success(t('common.messages.copied'))
-                      }}
-                    >
-                      {t('common.actions.copy')}
-                    </Button>
-                  </div>
-                  <div className="mt-1 font-mono text-sm">
-                    {service.name} :{' '}
-                    {(service.ports ?? []).map((port) => port.port).join(' · ')}
-                  </div>
-                  <div className="mt-0.5 font-mono text-xs text-muted-foreground">
-                    {service.clusterIP || '—'}
-                  </div>
+                          .join(' · ')}
+                      </div>
+                      <div className="mt-0.5 font-mono text-xs text-muted-foreground">
+                        {service.clusterIP || '—'}
+                      </div>
+                    </div>
+                  ))}
+                  {(runtime?.ingresses?.items ?? []).map((ingress) => (
+                    <div key={ingress.name} className="rounded-lg border p-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium text-muted-foreground">
+                          Ingress
+                        </span>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 px-2 py-0 text-xs"
+                          onClick={() => {
+                            const host = ingress.rules?.[0]?.host
+                            if (host) {
+                              void navigator.clipboard.writeText(host)
+                              toast.success(t('common.messages.copied'))
+                            }
+                          }}
+                        >
+                          {t('common.actions.copy')}
+                        </Button>
+                      </div>
+                      <div className="mt-1 font-mono text-sm">
+                        {ingress.rules
+                          ?.map(
+                            (rule) =>
+                              `${rule.host || '*'} → ${(rule.paths ?? [])
+                                .map((path) => path.path || '/')
+                                .join(', ')}`
+                          )
+                          .join(' · ') || '—'}
+                      </div>
+                      <div className="mt-0.5 font-mono text-xs text-muted-foreground">
+                        {(ingress.lbAddresses ?? []).join(', ') || '—'}
+                      </div>
+                    </div>
+                  ))}
+                  {(runtime?.services?.items.length ?? 0) === 0 &&
+                    (runtime?.ingresses?.items.length ?? 0) === 0 && (
+                      <div className="text-sm text-muted-foreground">
+                        {runtime?.services?.unauthorized
+                          ? t('applications.detail.unauthorized')
+                          : t('applications.detail.noNetwork')}
+                      </div>
+                    )}
                 </div>
-              ))}
-              {(runtime?.ingresses?.items ?? []).map((ingress) => (
-                <div key={ingress.name} className="rounded-lg border p-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium text-muted-foreground">
-                      Ingress
-                    </span>
+              </div>
+
+              {/* Consistency */}
+              <div className="rounded-xl border bg-card px-5 py-4">
+                <div className="mb-3 flex items-center gap-2">
+                  <span className="text-sm font-semibold">
+                    {t('applications.detail.consistency')}
+                  </span>
+                  <ApplicationStatusChip status={status} />
+                  <span className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
+                    {statusReport?.checkedAt &&
+                      t('applications.detail.checkedAt', {
+                        time: formatDate(statusReport.checkedAt),
+                      })}
                     <Button
                       size="sm"
-                      variant="ghost"
-                      className="h-6 px-2 py-0 text-xs"
-                      onClick={() => {
-                        const host = ingress.rules?.[0]?.host
-                        if (host) {
-                          void navigator.clipboard.writeText(host)
-                          toast.success(t('common.messages.copied'))
-                        }
-                      }}
+                      variant="outline"
+                      onClick={() => void refetchStatus()}
                     >
-                      {t('common.actions.copy')}
+                      {t('common.actions.refresh')}
                     </Button>
-                  </div>
-                  <div className="mt-1 font-mono text-sm">
-                    {ingress.rules
-                      ?.map(
-                        (rule) =>
-                          `${rule.host || '*'} → ${(rule.paths ?? [])
-                            .map((path) => path.path || '/')
-                            .join(', ')}`
-                      )
-                      .join(' · ') || '—'}
-                  </div>
-                  <div className="mt-0.5 font-mono text-xs text-muted-foreground">
-                    {(ingress.lbAddresses ?? []).join(', ') || '—'}
-                  </div>
+                  </span>
                 </div>
-              ))}
-              {(runtime?.services?.items.length ?? 0) === 0 &&
-                (runtime?.ingresses?.items.length ?? 0) === 0 && (
-                  <div className="text-sm text-muted-foreground">
-                    {runtime?.services?.unauthorized
-                      ? t('applications.detail.unauthorized')
-                      : t('applications.detail.noNetwork')}
+
+                {status === 'error' ? (
+                  <div className="text-sm text-destructive">
+                    {statusReport?.error || t('applications.status.error')}
+                  </div>
+                ) : (status === 'drift' || status === 'pending') &&
+                  statusReport ? (
+                  <div className="space-y-2">
+                    {statusReport.docs.map((doc) => (
+                      <DriftDocCard
+                        key={driftDocKey(doc)}
+                        doc={doc}
+                        onView={setViewDoc}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm text-muted-foreground">
+                      {status === 'synced'
+                        ? t('applications.detail.syncedBanner')
+                        : t('applications.detail.checkingStatus')}
+                    </span>
                   </div>
                 )}
-            </div>
-          </div>
+              </div>
 
-          {/* Consistency */}
-          <div className="rounded-xl border bg-card px-5 py-4">
-            <div className="mb-3 flex items-center gap-2">
-              <span className="text-sm font-semibold">
-                {t('applications.detail.consistency')}
-              </span>
-              <ApplicationStatusChip status={status} />
-              <span className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
-                {statusReport?.checkedAt &&
-                  t('applications.detail.checkedAt', {
-                    time: formatDate(statusReport.checkedAt),
+              {/* Warning events: folded by default (count stays on the trigger) */}
+              <Collapsible
+                open={eventsOpen}
+                onOpenChange={setEventsOpen}
+                className="overflow-hidden rounded-xl border bg-card"
+              >
+                <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 px-5 py-3 text-left text-sm font-semibold">
+                  {t('applications.detail.events', {
+                    count: runtime?.events?.items.length ?? 0,
                   })}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => void refetchStatus()}
-                >
-                  {t('common.actions.refresh')}
-                </Button>
-              </span>
-            </div>
-
-            {status === 'error' ? (
-              <div className="text-sm text-destructive">
-                {statusReport?.error || t('applications.status.error')}
-              </div>
-            ) : (status === 'drift' || status === 'pending') && statusReport ? (
-              <div className="space-y-2">
-                {statusReport.docs.map((doc) => (
-                  <DriftDocCard
-                    key={driftDocKey(doc)}
-                    doc={doc}
-                    onView={setViewDoc}
+                  <ChevronRight
+                    className={cn(
+                      'h-4 w-4 shrink-0 text-muted-foreground transition-transform',
+                      eventsOpen && 'rotate-90'
+                    )}
                   />
-                ))}
-              </div>
-            ) : (
-              <div className="flex items-center gap-3">
-                <span className="text-sm text-muted-foreground">
-                  {status === 'synced'
-                    ? t('applications.detail.syncedBanner')
-                    : t('applications.detail.checkingStatus')}
-                </span>
-              </div>
-            )}
-          </div>
-
-          {/* Warning events: folded by default (count stays on the trigger) */}
-          <Collapsible
-            open={eventsOpen}
-            onOpenChange={setEventsOpen}
-            className="overflow-hidden rounded-xl border bg-card"
-          >
-            <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 px-5 py-3 text-left text-sm font-semibold">
-              {t('applications.detail.events', {
-                count: runtime?.events?.items.length ?? 0,
-              })}
-              <ChevronRight
-                className={cn(
-                  'h-4 w-4 shrink-0 text-muted-foreground transition-transform',
-                  eventsOpen && 'rotate-90'
-                )}
-              />
-            </CollapsibleTrigger>
-            <CollapsibleContent className="border-t">
-              <div className="divide-y">
-                {(runtime?.events?.items ?? []).map((event, index) => (
-                  <div
-                    key={index}
-                    className="flex items-center gap-3 px-5 py-2.5 text-sm"
-                  >
-                    <Badge variant="destructive" className="shrink-0">
-                      Warning
-                    </Badge>
-                    <span className="font-mono text-xs text-muted-foreground">
-                      {event.reason || '—'}
-                    </span>
-                    <span className="text-muted-foreground">
-                      {event.message || '—'}
-                    </span>
-                    <span className="ml-auto shrink-0 text-xs text-muted-foreground">
-                      {event.count
-                        ? t('applications.detail.eventCount', {
-                            count: event.count,
-                          })
-                        : ''}{' '}
-                      {event.lastTimestamp
-                        ? formatDate(event.lastTimestamp)
-                        : ''}
-                    </span>
+                </CollapsibleTrigger>
+                <CollapsibleContent className="border-t">
+                  <div className="divide-y">
+                    {(runtime?.events?.items ?? []).map((event, index) => (
+                      <div
+                        key={index}
+                        className="flex items-center gap-3 px-5 py-2.5 text-sm"
+                      >
+                        <Badge variant="destructive" className="shrink-0">
+                          Warning
+                        </Badge>
+                        <span className="font-mono text-xs text-muted-foreground">
+                          {event.reason || '—'}
+                        </span>
+                        <span className="text-muted-foreground">
+                          {event.message || '—'}
+                        </span>
+                        <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                          {event.count
+                            ? t('applications.detail.eventCount', {
+                                count: event.count,
+                              })
+                            : ''}{' '}
+                          {event.lastTimestamp
+                            ? formatDate(event.lastTimestamp)
+                            : ''}
+                        </span>
+                      </div>
+                    ))}
+                    {(runtime?.events?.items.length ?? 0) === 0 && (
+                      <div className="px-5 py-6 text-center text-sm text-muted-foreground">
+                        {runtime?.events?.unauthorized
+                          ? t('applications.detail.unauthorized')
+                          : t('applications.detail.noEvents')}
+                      </div>
+                    )}
                   </div>
-                ))}
-                {(runtime?.events?.items.length ?? 0) === 0 && (
-                  <div className="px-5 py-6 text-center text-sm text-muted-foreground">
-                    {runtime?.events?.unauthorized
-                      ? t('applications.detail.unauthorized')
-                      : t('applications.detail.noEvents')}
-                  </div>
-                )}
-              </div>
-            </CollapsibleContent>
-          </Collapsible>
+                </CollapsibleContent>
+              </Collapsible>
+            </>
+          )}
         </>
       )}
 
