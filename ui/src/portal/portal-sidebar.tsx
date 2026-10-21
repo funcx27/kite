@@ -7,6 +7,7 @@ import {
   IconChevronsRight,
   IconGitMerge,
   IconSettings,
+  IconWorld,
 } from '@tabler/icons-react'
 import { useTranslation } from 'react-i18next'
 import { Link, useLocation } from 'react-router-dom'
@@ -61,6 +62,22 @@ export function PortalSidebar(props: React.ComponentProps<typeof Sidebar>) {
                 >
                   <IconApps className="text-sidebar-primary" />
                   <span className="font-medium">{t('nav.applications')}</span>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                tooltip={t('nav.network')}
+                asChild
+                isActive={location.pathname.startsWith('/network')}
+                className="transition-all duration-200 hover:bg-accent/60 active:scale-95 data-[active=true]:bg-primary/10 data-[active=true]:text-primary data-[active=true]:shadow-sm"
+              >
+                <Link
+                  to={withSpaceParam('/network', currentSpace)}
+                  onClick={handleMenuItemClick}
+                >
+                  <IconWorld className="text-sidebar-primary" />
+                  <span className="font-medium">{t('nav.network')}</span>
                 </Link>
               </SidebarMenuButton>
             </SidebarMenuItem>

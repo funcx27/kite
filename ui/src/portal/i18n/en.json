@@ -1,7 +1,8 @@
 {
   "nav": {
     "applications": "Applications",
-    "monitoring": "Monitoring"
+    "monitoring": "Monitoring",
+    "network": "Network"
   },
   "sidebar": {
     "expand": "Expand",

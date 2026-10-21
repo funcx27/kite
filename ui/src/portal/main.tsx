@@ -20,6 +20,7 @@ import '../i18n'
 import '@/portal/application/i18n'
 import '@/portal/buildfleet/i18n'
 import '@/portal/monitoring/i18n'
+import '@/portal/network/i18n'
 import '@/portal/notifications/i18n'
 import '@/portal/workflow/i18n'
 import './i18n'
@@ -27,6 +28,7 @@ import './i18n'
 import { applicationRoutes } from '@/portal/application/routes'
 import { buildfleetRoutes } from '@/portal/buildfleet/routes'
 import { monitoringRoutes } from '@/portal/monitoring/routes'
+import { networkRoutes } from '@/portal/network/routes'
 import { notificationsRoutes } from '@/portal/notifications/routes'
 import { workflowRoutes } from '@/portal/workflow/routes'
 
@@ -152,6 +154,7 @@ const router = createBrowserRouter(
           element: <Navigate to="/applications" replace />,
         },
         ...applicationRoutes,
+        ...networkRoutes,
         ...monitoringRoutes,
         ...notificationsRoutes,
         ...workflowRoutes,

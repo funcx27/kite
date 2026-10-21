@@ -246,6 +246,8 @@ type PortSpec struct {
 // Service/Ingress 文档由 Render 按 Ports 推导，不再单独建模
 ```
 
+**独立网络模块（已定稿待实施，将替代上文应用内嵌域名）**：域名从应用向导剥离为全局网络页——host 绑定单一集群、(cluster, host) 唯一归属一个空间、host 内路径唯一、每 host 单渲染器发布其集群的 Ingress，应用 ExtraYAML 禁止 Ingress/HTTPRoute。渲染产物命名不采用纯 sanitize(host)：`.` 与 `-` 等非法字符折叠后同空间必撞（`aaa.bb.com` 与 `aaa-bb.com` 同为 `aaa-bb-com`），且 host 可达 253 字符超出名称预算；统一为 `截断(sanitize(host)) + '-' + sha256(小写规范化 host) 前 8 位 hex`，Ingress 与 TLS Secret 同源推导（确定性保证幂等 Apply），完整 host 写 annotation 便于排查。注解为 host 级：写入唯一 Ingress 的 metadata.annotations、对全域名生效（路径级策略需拆分对象或 Gateway API policy attachment，暂缓）。注解键走平台目录：全局表仅 key/说明/所属 IngressClass 三列（无空间维度、不记来源），管理员维护（内置种子 + 批量导入），硬白名单、无自定义入口；编辑时键只能从目录按域名 IngressClass 选取（已被其他行选用的键禁用，重复构造性不可能），说明随目录 API 下发，控制器默认值仅作为说明文案、不自动填充 value。管理界面为设置的子页面（settings/annotation-keys：全局设置不展示空间维度；设置页后续按此模式继续拆分子页面）。ingressClass/证书同为 host 级设置：class 选项取自目标集群的 IngressClass 清单并在发布前校验存在性；换 class 需重发布，换证书仅触发证书重同步（Secret 名由 host 派生、内容随证书变）。页面按集群单选切换视图；host 的新建与编辑只读展示所属集群（创建时取当前视图集群，不可改）；同域名在不同集群是相互独立的登记（各自路由表与状态），跨集群复制走显式新建。交互以域名为中心：页面级仅「新建域名」（弹窗只承载域名/class/证书，集群只读），路由的增/改/删在域名卡片内完成。
+
 ## 9. 配置管理与挂载（ConfigMap / Secret）
 
 **应用自带配置文件是一等能力，但是可选项**——向导独立一步「配置文件」，默认为空态并提示可直接跳过（不是所有应用都有配置文件）：
@@ -316,7 +318,7 @@ type WorkloadSpec struct {
 | M3 | 漂移报告（Normalize/Diff + StatusSummary 回写）+ 运行视图聚合 | 待启动 |
 | M4 | 前端接入（路由/双模式侧边栏/API hooks/页面：发布弹窗/合并预览/首次发布/历史版本）+ i18n | 待启动 |
 
-**Backlog（不承诺）**：列表「导入」入口（收编 helm/kubectl 部署的存量应用，sync 语义已支持）；HPA 字段忽略（ArgoCD ignore-differences 式——合并已缓解大半：库不碰 replicas 即无碰撞；HPA 管理的工作负载建议 YAML 模式删除 replicas 字段）。
+**Backlog（不承诺）**：列表「导入」入口（收编 helm/kubectl 部署的存量应用，sync 语义已支持）；HPA 字段忽略（ArgoCD ignore-differences 式——合并已缓解大半：库不碰 replicas 即无碰撞；HPA 管理的工作负载建议 YAML 模式删除 replicas 字段）；发布策略（分批/金丝雀，方案未定）：① 原生粗分批——strategy 字段进表单，Deployment 整数 maxUnavailable 步长 + spec.paused 暂停/undo 回退（pause 落点有 ±1 步惯性，粒度=批大小），StatefulSet 用 partition 步进（原生精确）；② 金丝雀——双 Deployment 副本编排 + 同域名双 backend 权重切流（依赖网络模块落地，Argo Rollouts 思路）；③ 指标自动推进/回退暂不做。未决：①②非竞争（安全分批 vs 流量灰度），真正分叉是要否自建副本编排接管原生滚动控制器；生产发布保护（API 层权限，暂缓）：设置中维护集群角色清单（仅服务权限判断，不派生其他语义），deploy/offline 及后续网络发布 API 按「目标集群角色 × 用户角色」做授权检查并给明确拒绝文案——kite 是集群操作集中代理，API 边界即唯一闸口；审计已全量记录操作者+集群+资源，追溯无需补建。
 
 ## 13. 验证口径
 

@@ -11,6 +11,13 @@ import { Link, useSearchParams } from 'react-router-dom'
 
 import { usePageTitle } from '@/hooks/use-page-title'
 import { Button } from '@/components/ui/button'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
 
 // Application-mode settings (design §11). The view follows the space: a
 // ?space=<name> shows that space's settings (resource quotas, build
@@ -65,6 +72,22 @@ export function ApplicationSettingsPage() {
         <div className="space-y-6">
           <CredentialsManagement />
           <CertificatesManagement />
+          {/* Global catalog hosted as a settings sub-page (no space scope). */}
+          <Card>
+            <CardHeader>
+              <CardTitle>{t('network.annotationKeys.title')}</CardTitle>
+              <CardDescription>
+                {t('network.annotationKeys.description')}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button variant="outline" size="sm" asChild>
+                <Link to="/settings/annotation-keys">
+                  {t('network.annotationKeys.open')}
+                </Link>
+              </Button>
+            </CardContent>
+          </Card>
           <BuildProvidersManagement />
           <BuildRuntimeSettings />
           <KcrossManagement />

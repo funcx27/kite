@@ -1,0 +1,149 @@
+{
+  "network": {
+    "title": "Network",
+    "description": "Hosts and routes are published independently of applications; every host owns one route table (demo data)",
+    "searchPlaceholder": "Search hosts or apps",
+    "newHost": "New Host",
+    "emptyRoutes": "No routes yet",
+    "summary": {
+      "hosts": "hosts",
+      "routes": "routes",
+      "pending": "pending publish",
+      "certPending": "cert pending sync"
+    },
+    "columns": {
+      "path": "Path",
+      "app": "App",
+      "port": "Port"
+    },
+    "status": {
+      "synced": "Synced",
+      "drift": "Drifted",
+      "pending": "Pending",
+      "error": "Error",
+      "undeployed": "Undeployed"
+    },
+    "cert": {
+      "none": "No certificate",
+      "expires": "Expires {{date}}",
+      "expiringSoon": "Expiring soon",
+      "pendingSync": "Cert pending sync",
+      "sync": "Sync certificate"
+    },
+    "actions": {
+      "publish": "Publish",
+      "edit": "Edit",
+      "delete": "Delete",
+      "addRoute": "Add route",
+      "editHost": "Edit host",
+      "editAnnotations": "Edit annotations",
+      "offline": "Take offline"
+    },
+    "lb": "LB",
+    "emptyTitle": "No matching hosts",
+    "emptyDescription": "Adjust the search, or create a route",
+    "hostCreate": {
+      "title": "New Host",
+      "description": "The host binds to the current cluster (fixed after creation); add routes on its card afterwards",
+      "host": "Host",
+      "hostPlaceholder": "api.example.com",
+      "cluster": "Cluster",
+      "ingressClass": "IngressClass",
+      "certificate": "TLS certificate (optional)",
+      "certNone": "No certificate",
+      "create": "Create",
+      "cancel": "Cancel",
+      "invalid": "Fill in the host name",
+      "duplicate": "This host already exists on the cluster"
+    },
+    "routeDialog": {
+      "titleAdd": "Add Route",
+      "titleEdit": "Edit Route",
+      "description": "{{host}}: path → app port",
+      "path": "Path",
+      "pathPlaceholder": "/",
+      "app": "App",
+      "appPlaceholder": "e.g. web-console",
+      "port": "Port",
+      "portPlaceholder": "80",
+      "save": "Save",
+      "cancel": "Cancel",
+      "invalid": "Fill in the app and a port between 1 and 65535",
+      "duplicate": "This path already exists on the host"
+    },
+    "annotationsDialog": {
+      "title": "Edit Annotations",
+      "description": "Annotations land on {{host}}'s Ingress metadata and apply to every path; keys come from the platform catalog, filtered by IngressClass",
+      "keyPlaceholder": "Select an annotation key",
+      "valuePlaceholder": "8m",
+      "add": "Add annotation",
+      "empty": "No annotations yet",
+      "remove": "Remove row",
+      "save": "Save",
+      "cancel": "Cancel"
+    },
+    "annotationKeys": {
+      "title": "Annotation Key Catalog",
+      "description": "Platform-wide annotation key catalog; host annotation editing picks keys from here, filtered by IngressClass",
+      "open": "Manage",
+      "backToSettings": "Back to settings",
+      "add": "New key",
+      "import": "Batch import",
+      "columns": {
+        "key": "Key",
+        "class": "IngressClass",
+        "description": "Description"
+      },
+      "dialog": {
+        "addTitle": "New Annotation Key",
+        "editTitle": "Edit Annotation Key",
+        "description": "The key is the identity and cannot change; description and IngressClass can be updated",
+        "key": "Key",
+        "keyPlaceholder": "nginx.ingress.kubernetes.io/proxy-body-size",
+        "class": "IngressClass",
+        "descriptionLabel": "Description",
+        "descriptionPlaceholder": "Request body size limit, controller default 1m",
+        "create": "Create",
+        "save": "Save",
+        "cancel": "Cancel",
+        "invalid": "Fill in the key and description",
+        "duplicate": "This key already exists"
+      },
+      "importDialog": {
+        "title": "Batch Import Annotation Keys",
+        "description": "One entry per line: key,description (comma or tab separated); the IngressClass applies to the whole batch; existing or malformed lines are skipped",
+        "class": "IngressClass",
+        "lines": "Entries",
+        "linesPlaceholder": "nginx.ingress.kubernetes.io/proxy-read-timeout,Backend read timeout in seconds, default 60\nnginx.ingress.kubernetes.io/proxy-send-timeout,Send timeout in seconds, default 60",
+        "import": "Import",
+        "cancel": "Cancel"
+      },
+      "toast": {
+        "added": "Added annotation key {{key}}",
+        "updated": "Updated annotation key {{key}}",
+        "deleted": "Deleted annotation key {{key}}",
+        "imported": "Imported {{count}}, skipped {{skipped}}"
+      }
+    },
+    "hostSettings": {
+      "title": "Edit Host",
+      "description": "Adjust {{host}}'s IngressClass and certificate binding; a class change needs republish, a cert change only a cert sync",
+      "cluster": "Cluster",
+      "ingressClass": "IngressClass",
+      "certificate": "TLS certificate",
+      "certNone": "No certificate",
+      "save": "Save",
+      "cancel": "Cancel"
+    },
+    "toast": {
+      "published": "Published {{host}}",
+      "certSynced": "Certificate synced for {{host}}",
+      "routeDeleted": "Deleted {{path}} on {{host}}",
+      "routeSaved": "Saved {{path}} on {{host}}",
+      "hostCreated": "Created {{host}} — add routes on its card",
+      "annotationsSaved": "Updated annotations for {{host}}",
+      "hostSettingsSaved": "Updated host settings for {{host}}",
+      "mockOnly": "Demo mode: this action is not implemented"
+    }
+  }
+}

@@ -1,7 +1,8 @@
 {
   "nav": {
     "applications": "应用",
-    "monitoring": "监控"
+    "monitoring": "监控",
+    "network": "网络"
   },
   "sidebar": {
     "expand": "展开",

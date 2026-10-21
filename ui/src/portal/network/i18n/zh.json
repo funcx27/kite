@@ -1,0 +1,149 @@
+{
+  "network": {
+    "title": "网络",
+    "description": "域名与路由独立于应用发布，每个域名一张路由表（当前为演示数据）",
+    "searchPlaceholder": "搜索域名或应用",
+    "newHost": "新建域名",
+    "emptyRoutes": "暂无路由",
+    "summary": {
+      "hosts": "个域名",
+      "routes": "条路由",
+      "pending": "个待发布",
+      "certPending": "个证书待同步"
+    },
+    "columns": {
+      "path": "路径",
+      "app": "应用",
+      "port": "端口"
+    },
+    "status": {
+      "synced": "已同步",
+      "drift": "漂移",
+      "pending": "待发布",
+      "error": "错误",
+      "undeployed": "未部署"
+    },
+    "cert": {
+      "none": "未配置证书",
+      "expires": "{{date}} 到期",
+      "expiringSoon": "即将到期",
+      "pendingSync": "证书待同步",
+      "sync": "同步证书"
+    },
+    "actions": {
+      "publish": "发布",
+      "edit": "编辑",
+      "delete": "删除",
+      "addRoute": "添加路由",
+      "editHost": "编辑域名",
+      "editAnnotations": "编辑注解",
+      "offline": "下线"
+    },
+    "lb": "LB",
+    "emptyTitle": "没有匹配的域名",
+    "emptyDescription": "调整搜索条件，或新建一条路由",
+    "hostCreate": {
+      "title": "新建域名",
+      "description": "域名绑定当前集群（创建后不可改），创建后在卡片内添加路由",
+      "host": "域名",
+      "hostPlaceholder": "api.example.com",
+      "cluster": "集群",
+      "ingressClass": "IngressClass",
+      "certificate": "TLS 证书（可选）",
+      "certNone": "不使用证书",
+      "create": "创建",
+      "cancel": "取消",
+      "invalid": "请填写域名",
+      "duplicate": "该集群下域名已存在"
+    },
+    "routeDialog": {
+      "titleAdd": "添加路由",
+      "titleEdit": "编辑路由",
+      "description": "{{host}}：路径 → 应用端口",
+      "path": "路径",
+      "pathPlaceholder": "/",
+      "app": "应用",
+      "appPlaceholder": "如 web-console",
+      "port": "端口",
+      "portPlaceholder": "80",
+      "save": "保存",
+      "cancel": "取消",
+      "invalid": "请填写应用与端口（1-65535）",
+      "duplicate": "该域名下路径已存在"
+    },
+    "annotationsDialog": {
+      "title": "编辑注解",
+      "description": "注解写入 {{host}} 的 Ingress 元数据，对所有路径生效；键来自平台注解目录，按 IngressClass 过滤",
+      "keyPlaceholder": "选择注解键",
+      "valuePlaceholder": "8m",
+      "add": "添加注解",
+      "empty": "暂无注解",
+      "remove": "删除该行",
+      "save": "保存",
+      "cancel": "取消"
+    },
+    "annotationKeys": {
+      "title": "注解目录",
+      "description": "平台全局的注解键目录；编辑域名注解时只能从目录中选取（按 IngressClass 过滤）",
+      "open": "管理",
+      "backToSettings": "返回设置",
+      "add": "新建键",
+      "import": "批量导入",
+      "columns": {
+        "key": "键",
+        "class": "IngressClass",
+        "description": "说明"
+      },
+      "dialog": {
+        "addTitle": "新建注解键",
+        "editTitle": "编辑注解键",
+        "description": "键作为标识不可修改；说明与所属 IngressClass 可更新",
+        "key": "键",
+        "keyPlaceholder": "nginx.ingress.kubernetes.io/proxy-body-size",
+        "class": "IngressClass",
+        "descriptionLabel": "说明",
+        "descriptionPlaceholder": "请求体大小上限，控制器默认 1m",
+        "create": "创建",
+        "save": "保存",
+        "cancel": "取消",
+        "invalid": "请填写键与说明",
+        "duplicate": "该键已存在"
+      },
+      "importDialog": {
+        "title": "批量导入注解键",
+        "description": "每行一条「键,说明」（逗号或制表符分隔）；IngressClass 对整批生效，已存在或格式无效的行自动跳过",
+        "class": "IngressClass",
+        "lines": "键列表",
+        "linesPlaceholder": "nginx.ingress.kubernetes.io/proxy-read-timeout,后端读超时（秒），默认 60\nnginx.ingress.kubernetes.io/proxy-send-timeout,发送超时（秒），默认 60",
+        "import": "导入",
+        "cancel": "取消"
+      },
+      "toast": {
+        "added": "已新增注解键 {{key}}",
+        "updated": "已更新注解键 {{key}}",
+        "deleted": "已删除注解键 {{key}}",
+        "imported": "导入 {{count}} 条，跳过 {{skipped}} 条"
+      }
+    },
+    "hostSettings": {
+      "title": "编辑域名",
+      "description": "调整 {{host}} 的 IngressClass 与证书绑定；换 Class 需重新发布，换证书仅需同步证书",
+      "cluster": "集群",
+      "ingressClass": "IngressClass",
+      "certificate": "TLS 证书",
+      "certNone": "不使用证书",
+      "save": "保存",
+      "cancel": "取消"
+    },
+    "toast": {
+      "published": "已发布 {{host}}",
+      "certSynced": "已同步 {{host}} 的证书",
+      "routeDeleted": "已删除 {{host}} 的路由 {{path}}",
+      "routeSaved": "已保存 {{host}} 的路由 {{path}}",
+      "hostCreated": "已创建 {{host}}，可在卡片内添加路由",
+      "annotationsSaved": "已保存 {{host}} 的注解",
+      "hostSettingsSaved": "已保存 {{host}} 的域名设置",
+      "mockOnly": "演示模式：该动作未实现"
+    }
+  }
+}
