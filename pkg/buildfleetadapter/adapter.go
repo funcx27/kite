@@ -66,13 +66,20 @@ type Deps struct {
 
 // New resolves the raw buildfleet config subtree (internal.BuildFleetConfig)
 // through the module's own config loader — preserving its env-expansion and
-// KnownFields validation — and assembles the runtime via app.Setup. cm backs
-// the managed build provider API (cluster validation, kubeconfig export).
-// creds may be nil: requests without credential refs stay anonymous either way.
+// KnownFields validation — and assembles the runtime via app.Setup. A nil
+// cfgNode (no buildfleet section in the config file) boots the module on its
+// embedded defaults; the managed providers it serves live in the database.
+// cm backs the managed build provider API (cluster validation, kubeconfig
+// export). creds may be nil: requests without credential refs stay anonymous
+// either way.
 func New(ctx context.Context, cm *cluster.ClusterManager, cfgNode *yaml.Node, creds credentialsadapter.FleetCredentialInjector) (*Deps, error) {
-	data, err := yaml.Marshal(cfgNode)
-	if err != nil {
-		return nil, fmt.Errorf("marshal buildfleet config: %w", err)
+	var data []byte
+	if cfgNode != nil {
+		var err error
+		data, err = yaml.Marshal(cfgNode)
+		if err != nil {
+			return nil, fmt.Errorf("marshal buildfleet config: %w", err)
+		}
 	}
 	cfg, err := config.LoadFromBytes(data)
 	if err != nil {

@@ -10,14 +10,17 @@ import (
 // per read is negligible against keeping the shared type untouched).
 
 // buildFleetNode is the raw buildfleet config subtree from the most recent
-// config file read; nil when the section is absent or null (module disabled).
-// The host builds the buildfleet runtime from it once at startup; config file
-// reloads replace the node but do not re-provision the module.
+// config file read; nil when the section is absent or null (the module then
+// boots on its embedded defaults). The host builds the buildfleet runtime
+// from it once at startup; config file reloads replace the node but do not
+// re-provision the module.
 var buildFleetNode *yaml.Node
 
-// BuildFleetConfig returns the raw buildfleet config subtree, or nil when the
-// buildfleet section is missing or empty. Values are already ${ENV_VAR}
-// expanded, matching the rest of the config file.
+// BuildFleetConfig returns the raw buildfleet config subtree. nil means the
+// buildfleet section is missing or empty: the module then assembles from its
+// embedded defaults (store path, runtime profiles) instead of being skipped.
+// Values are already ${ENV_VAR} expanded, matching the rest of the config
+// file.
 func BuildFleetConfig() *yaml.Node {
 	return buildFleetNode
 }
@@ -43,8 +46,8 @@ func captureBuildFleetNode(expanded string) {
 
 // enabledNode normalizes "section absent" (zero Node), "section null"
 // (buildfleet:) and "empty mapping" (buildfleet: {}) to nil, so all three
-// mean the module is disabled. An empty mapping would otherwise fall through
-// to the module's built-in defaults and silently start a build service.
+// mean the module boots on its embedded defaults rather than a partial
+// overlay.
 func enabledNode(n *yaml.Node) *yaml.Node {
 	if n == nil || n.Kind == 0 ||
 		(n.Kind == yaml.ScalarNode && n.Tag == "!!null") ||

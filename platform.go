@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/funcx27/kite/modules/application"
+	"github.com/funcx27/kite/modules/network"
 	"github.com/funcx27/kite/modules/workflow"
 	"github.com/gin-gonic/gin"
 	"github.com/zxh326/kite/internal"
@@ -20,6 +21,7 @@ import (
 	"github.com/zxh326/kite/pkg/credentialsadapter"
 	"github.com/zxh326/kite/pkg/kcross"
 	"github.com/zxh326/kite/pkg/model"
+	"github.com/zxh326/kite/pkg/networkadapter"
 	"github.com/zxh326/kite/pkg/users"
 	"github.com/zxh326/kite/pkg/workflowadapter"
 	"k8s.io/klog/v2"
@@ -31,6 +33,7 @@ var platformModules struct {
 	buildfleet *buildfleetadapter.Deps
 	credDeps   *credentialsadapter.Deps
 	appDeps    *applicationadapter.Deps
+	netDeps    *networkadapter.Deps
 	wfModule   *workflow.Module
 }
 
@@ -40,26 +43,22 @@ var platformModules struct {
 // initializeApp once the cluster manager exists.
 func initPlatformModules(ctx context.Context, cm *cluster.ClusterManager) {
 	credDeps := credentialsadapter.New()
-	var buildfleet *buildfleetadapter.Deps
-	if node := internal.BuildFleetConfig(); node != nil {
-		// Fail fast: a present but broken buildfleet section must not
-		// silently start kite without the module.
-		b, err := buildfleetadapter.New(ctx, cm, node, credDeps)
-		if err != nil {
-			panic("failed to initialize buildfleet module: " + err.Error())
-		}
-		buildfleet = b
+	// The buildfleet module always mounts: an absent config section boots it
+	// on the module's embedded defaults (its managed providers live in the
+	// database). A present but broken section still fails fast — it must not
+	// silently start kite without the module.
+	b, err := buildfleetadapter.New(ctx, cm, internal.BuildFleetConfig(), credDeps)
+	if err != nil {
+		panic("failed to initialize buildfleet module: " + err.Error())
 	}
 	platformModules.credDeps = credDeps
-	platformModules.buildfleet = buildfleet
+	platformModules.buildfleet = b
+	platformModules.netDeps = networkadapter.New(cm)
 }
 
 // drainPlatformModules disposes the buildfleet pool at shutdown. Hook: called
 // from main after the HTTP shutdown budget is spent.
 func drainPlatformModules() {
-	if platformModules.buildfleet == nil {
-		return
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := platformModules.buildfleet.Close(ctx); err != nil {
@@ -74,6 +73,9 @@ func initPlatformRoutes(cm *cluster.ClusterManager) {
 	platformModules.appDeps = applicationadapter.NewDeps(cm, platformModules.credDeps)
 	if err := applicationadapter.Migrate(model.DB); err != nil {
 		panic("failed to migrate application module: " + err.Error())
+	}
+	if err := networkadapter.Migrate(model.DB); err != nil {
+		panic("failed to migrate network module: " + err.Error())
 	}
 	if err := credentialsadapter.Migrate(model.DB); err != nil {
 		panic("failed to migrate credentials module: " + err.Error())
@@ -102,9 +104,8 @@ func initPlatformRoutes(cm *cluster.ClusterManager) {
 // are non-resource shapes and authorize themselves (design §8).
 func registerPlatformModuleRoutes(api *gin.RouterGroup) {
 	application.RegisterRoutes(api, platformModules.appDeps)
-	if platformModules.buildfleet != nil {
-		platformModules.buildfleet.RegisterRoutes(api.Group("/buildfleet"))
-	}
+	network.RegisterRoutes(api, platformModules.netDeps)
+	platformModules.buildfleet.RegisterRoutes(api.Group("/buildfleet"))
 	platformModules.wfModule.RegisterRoutes(api)
 	platformModules.credDeps.RegisterRoutes(api)
 	// Read-only certificate metadata for the application wizard's picker.
@@ -129,4 +130,5 @@ func registerPlatformAdminRoutes(adminAPI *gin.RouterGroup) {
 	kcrossAPI := adminAPI.Group("/kcross")
 	kcross.RegisterRoutes(kcrossAPI)
 	certificate.RegisterAdminRoutes(adminAPI.Group("/certificates"))
+	network.RegisterAdminRoutes(adminAPI.Group("/network"), platformModules.netDeps)
 }
