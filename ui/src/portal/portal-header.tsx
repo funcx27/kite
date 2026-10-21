@@ -1,4 +1,5 @@
 import { SpacePicker } from '@/portal/application/components/space-picker'
+import { NotificationBell } from '@/portal/notifications/components/bell-menu'
 
 import { useIsMobile } from '@/hooks/use-mobile'
 import { SidebarTrigger } from '@/components/ui/sidebar'
@@ -29,6 +30,7 @@ export function PortalHeader() {
       )}
       <SpacePicker />
       <HeaderActions>
+        <NotificationBell />
         {!isMobile && (
           <>
             <HeaderDivider />

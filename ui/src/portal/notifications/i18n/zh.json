@@ -1,0 +1,83 @@
+{
+  "notifications": {
+    "title": "通知中心",
+    "description": "个人通知与订阅规则（当前为演示数据）",
+    "tabs": {
+      "notifications": "通知",
+      "rules": "订阅规则"
+    },
+    "type": {
+      "pipeline": "流水线",
+      "approval": "审批",
+      "alert": "告警",
+      "cert": "证书"
+    },
+    "filter": {
+      "all": "全部",
+      "unread": "未读"
+    },
+    "unreadCount": "{{count}} 条未读",
+    "actions": {
+      "markRead": "标记已读",
+      "markAllRead": "全部已读"
+    },
+    "item": {
+      "pipelineFailed": "流水线 {{name}} #{{run}} 失败",
+      "pipelineFailedBody": "{{name}} 第 #{{run}} 次运行失败，请查看运行日志。",
+      "approvalRequired": "待审批",
+      "approvalRequiredBody": "发布 {{app}} 至 {{env}} 需要你的确认。",
+      "alertNotReady": "告警：{{app}} 未就绪",
+      "alertNotReadyBody": "{{app}} 存在副本超过 10 分钟未就绪。",
+      "certExpiring": "证书即将到期",
+      "certExpiringBody": "证书 {{cert}} 将在 {{days}} 天后到期。",
+      "pipelineSucceeded": "流水线 {{name}} #{{run}} 成功",
+      "pipelineSucceededBody": "{{name}} 第 #{{run}} 次运行成功完成。",
+      "alertDrift": "告警：{{app}} 配置漂移",
+      "alertDriftBody": "{{app}} 的运行配置与期望配置不一致。",
+      "alertRecovered": "告警：{{app}} 已恢复",
+      "alertRecoveredBody": "{{app}} 的重启风暴已恢复。",
+      "approvalApproved": "发布已通过",
+      "approvalApprovedBody": "{{app}} 发布至 {{env}} 的申请已通过审批。"
+    },
+    "channels": {
+      "inApp": "站内通知",
+      "webhook": "Webhook"
+    },
+    "source": {
+      "pipeline": "流水线结果",
+      "approval": "待审批",
+      "appNotReady": "应用未就绪",
+      "configDrift": "应用漂移",
+      "certExpiring": "证书即将到期",
+      "restartStorm": "重启风暴"
+    },
+    "rules": {
+      "new": "新建规则",
+      "delete": "删除规则",
+      "scopeAllSpaces": "全部空间",
+      "emptyTitle": "暂无订阅规则",
+      "emptyDescription": "创建一条规则，把事件投递到站内通知或 Webhook",
+      "toast": {
+        "created": "订阅规则已创建",
+        "deleted": "订阅规则已删除"
+      },
+      "dialog": {
+        "title": "新建订阅规则",
+        "description": "选择事件源与投递面",
+        "source": "事件源",
+        "channels": "投递面",
+        "webhookUrl": "Webhook URL",
+        "invalid": "至少选择一个投递面；勾选 Webhook 时需填写 URL",
+        "cancel": "取消",
+        "submit": "创建"
+      }
+    },
+    "bell": {
+      "title": "通知",
+      "viewAll": "查看全部",
+      "empty": "暂无通知"
+    },
+    "emptyTitle": "这里没有通知",
+    "emptyDescription": "已全部处理完，当前筛选下没有通知"
+  }
+}

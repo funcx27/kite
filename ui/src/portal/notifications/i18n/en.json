@@ -1,0 +1,83 @@
+{
+  "notifications": {
+    "title": "Notifications",
+    "description": "Personal notifications and subscription rules (demo data)",
+    "tabs": {
+      "notifications": "Notifications",
+      "rules": "Subscription Rules"
+    },
+    "type": {
+      "pipeline": "Pipeline",
+      "approval": "Approval",
+      "alert": "Alert",
+      "cert": "Certificate"
+    },
+    "filter": {
+      "all": "All",
+      "unread": "Unread"
+    },
+    "unreadCount": "{{count}} unread",
+    "actions": {
+      "markRead": "Mark read",
+      "markAllRead": "Mark all read"
+    },
+    "item": {
+      "pipelineFailed": "Pipeline {{name}} #{{run}} failed",
+      "pipelineFailedBody": "Run #{{run}} of {{name}} failed. Check the run log for details.",
+      "approvalRequired": "Approval required",
+      "approvalRequiredBody": "Publishing {{app}} to {{env}} needs your confirmation.",
+      "alertNotReady": "Alert: {{app}} not ready",
+      "alertNotReadyBody": "{{app}} has replicas not ready for over 10 minutes.",
+      "certExpiring": "Certificate expiring soon",
+      "certExpiringBody": "Certificate {{cert}} expires in {{days}} days.",
+      "pipelineSucceeded": "Pipeline {{name}} #{{run}} succeeded",
+      "pipelineSucceededBody": "Run #{{run}} of {{name}} finished successfully.",
+      "alertDrift": "Alert: {{app}} config drift",
+      "alertDriftBody": "The live config of {{app}} drifted from the desired state.",
+      "alertRecovered": "Alert: {{app}} recovered",
+      "alertRecoveredBody": "The restart storm on {{app}} has recovered.",
+      "approvalApproved": "Publish approved",
+      "approvalApprovedBody": "Your publish of {{app}} to {{env}} was approved."
+    },
+    "channels": {
+      "inApp": "In-app",
+      "webhook": "Webhook"
+    },
+    "source": {
+      "pipeline": "Pipeline result",
+      "approval": "Pending approval",
+      "appNotReady": "App not ready",
+      "configDrift": "Config drift",
+      "certExpiring": "Certificate expiring",
+      "restartStorm": "Restart storm"
+    },
+    "rules": {
+      "new": "New Rule",
+      "delete": "Delete rule",
+      "scopeAllSpaces": "All spaces",
+      "emptyTitle": "No subscription rules",
+      "emptyDescription": "Create a rule to deliver events to in-app or webhook",
+      "toast": {
+        "created": "Subscription rule created",
+        "deleted": "Subscription rule deleted"
+      },
+      "dialog": {
+        "title": "New Subscription Rule",
+        "description": "Choose an event source and the delivery channels",
+        "source": "Event source",
+        "channels": "Delivery channels",
+        "webhookUrl": "Webhook URL",
+        "invalid": "Pick at least one channel; a webhook needs a URL",
+        "cancel": "Cancel",
+        "submit": "Create"
+      }
+    },
+    "bell": {
+      "title": "Notifications",
+      "viewAll": "View all",
+      "empty": "No notifications yet"
+    },
+    "emptyTitle": "No notifications here",
+    "emptyDescription": "All caught up — nothing matches this filter"
+  }
+}
