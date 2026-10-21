@@ -1,0 +1,66 @@
+{
+  "monitoring": {
+    "title": "Monitoring",
+    "description": "Alerts and space health overview (demo data)",
+    "summary": {
+      "apps": "apps",
+      "unhealthy": "unhealthy",
+      "drifted": "drifted configs",
+      "certExpiring": "certs expiring soon",
+      "activeAlerts": "active alerts"
+    },
+    "filter": {
+      "all": "All",
+      "critical": "Critical",
+      "warning": "Warning",
+      "info": "Info",
+      "active": "Active",
+      "recovered": "Recovered",
+      "acknowledged": "Acknowledged",
+      "severity": "Severity",
+      "state": "State"
+    },
+    "severity": {
+      "critical": "Critical",
+      "warning": "Warning",
+      "info": "Info"
+    },
+    "state": {
+      "active": "Active",
+      "recovered": "Recovered",
+      "acknowledged": "Acknowledged"
+    },
+    "source": {
+      "appNotReady": "App not ready",
+      "configDrift": "Config drift",
+      "certExpiring": "Certificate expiring",
+      "restartStorm": "Restart storm",
+      "pipelineFailed": "Pipeline failed"
+    },
+    "detail": {
+      "appNotReady": "{{ready}} of {{total}} replicas ready",
+      "configDrift": "Live config drifted from the desired state",
+      "certExpiring": "Certificate expires in {{days}} days",
+      "restartStorm": "{{count}} restarts within {{minutes}} minutes",
+      "pipelineFailed": "Run #{{run}} failed"
+    },
+    "columns": {
+      "severity": "Severity",
+      "state": "State",
+      "source": "Source",
+      "target": "Target",
+      "cluster": "Cluster",
+      "detail": "Detail",
+      "triggeredAt": "Triggered",
+      "count": "Count"
+    },
+    "actions": {
+      "acknowledge": "Acknowledge"
+    },
+    "toast": {
+      "acknowledged": "Alert acknowledged"
+    },
+    "emptyTitle": "No matching alerts",
+    "emptyDescription": "Adjust the severity or state filters"
+  }
+}

@@ -1,6 +1,7 @@
 {
   "nav": {
-    "applications": "Applications"
+    "applications": "Applications",
+    "monitoring": "Monitoring"
   },
   "sidebar": {
     "expand": "Expand",

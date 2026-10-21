@@ -19,11 +19,13 @@ import '../App.css'
 import '../i18n'
 import '@/portal/application/i18n'
 import '@/portal/buildfleet/i18n'
+import '@/portal/monitoring/i18n'
 import '@/portal/workflow/i18n'
 import './i18n'
 
 import { applicationRoutes } from '@/portal/application/routes'
 import { buildfleetRoutes } from '@/portal/buildfleet/routes'
+import { monitoringRoutes } from '@/portal/monitoring/routes'
 import { workflowRoutes } from '@/portal/workflow/routes'
 
 import { AppearanceProvider } from '../components/appearance-provider'
@@ -148,6 +150,7 @@ const router = createBrowserRouter(
           element: <Navigate to="/applications" replace />,
         },
         ...applicationRoutes,
+        ...monitoringRoutes,
         ...workflowRoutes,
         ...buildfleetRoutes,
       ],

@@ -1,6 +1,7 @@
 {
   "nav": {
-    "applications": "应用"
+    "applications": "应用",
+    "monitoring": "监控"
   },
   "sidebar": {
     "expand": "展开",

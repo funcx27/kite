@@ -1,6 +1,7 @@
 import { useCallback } from 'react'
 import { useSpaces, withSpaceParam } from '@/portal/space-context'
 import {
+  IconActivity,
   IconApps,
   IconChevronsLeft,
   IconChevronsRight,
@@ -60,6 +61,22 @@ export function PortalSidebar(props: React.ComponentProps<typeof Sidebar>) {
                 >
                   <IconApps className="text-sidebar-primary" />
                   <span className="font-medium">{t('nav.applications')}</span>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                tooltip={t('nav.monitoring')}
+                asChild
+                isActive={location.pathname.startsWith('/monitoring')}
+                className="transition-all duration-200 hover:bg-accent/60 active:scale-95 data-[active=true]:bg-primary/10 data-[active=true]:text-primary data-[active=true]:shadow-sm"
+              >
+                <Link
+                  to={withSpaceParam('/monitoring', currentSpace)}
+                  onClick={handleMenuItemClick}
+                >
+                  <IconActivity className="text-sidebar-primary" />
+                  <span className="font-medium">{t('nav.monitoring')}</span>
                 </Link>
               </SidebarMenuButton>
             </SidebarMenuItem>

@@ -1,0 +1,66 @@
+{
+  "monitoring": {
+    "title": "监控中心",
+    "description": "告警与空间健康总览（当前为演示数据）",
+    "summary": {
+      "apps": "个应用",
+      "unhealthy": "个异常",
+      "drifted": "个漂移配置",
+      "certExpiring": "个证书即将到期",
+      "activeAlerts": "条活跃告警"
+    },
+    "filter": {
+      "all": "全部",
+      "critical": "严重",
+      "warning": "警告",
+      "info": "提示",
+      "active": "活跃",
+      "recovered": "已恢复",
+      "acknowledged": "已确认",
+      "severity": "严重度",
+      "state": "状态"
+    },
+    "severity": {
+      "critical": "严重",
+      "warning": "警告",
+      "info": "提示"
+    },
+    "state": {
+      "active": "活跃",
+      "recovered": "已恢复",
+      "acknowledged": "已确认"
+    },
+    "source": {
+      "appNotReady": "应用未就绪",
+      "configDrift": "配置漂移",
+      "certExpiring": "证书即将到期",
+      "restartStorm": "重启风暴",
+      "pipelineFailed": "流水线失败"
+    },
+    "detail": {
+      "appNotReady": "{{total}} 个副本中 {{ready}} 个就绪",
+      "configDrift": "运行配置与期望配置不一致",
+      "certExpiring": "证书将在 {{days}} 天后到期",
+      "restartStorm": "{{minutes}} 分钟内重启 {{count}} 次",
+      "pipelineFailed": "第 #{{run}} 次运行失败"
+    },
+    "columns": {
+      "severity": "严重度",
+      "state": "状态",
+      "source": "来源",
+      "target": "目标",
+      "cluster": "集群",
+      "detail": "详情",
+      "triggeredAt": "触发时间",
+      "count": "次数"
+    },
+    "actions": {
+      "acknowledge": "确认"
+    },
+    "toast": {
+      "acknowledged": "已确认该告警"
+    },
+    "emptyTitle": "没有匹配的告警",
+    "emptyDescription": "调整严重度或状态筛选条件"
+  }
+}
