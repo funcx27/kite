@@ -128,7 +128,7 @@
       "title": "编辑注解",
       "description": "注解写入 {{host}} 的 Ingress 元数据，对所有路径生效；键来自平台注解目录，按 IngressClass 过滤",
       "keyPlaceholder": "选择注解键",
-      "valuePlaceholder": "8m",
+      "valuePlaceholder": "值",
       "add": "添加注解",
       "empty": "暂无注解",
       "remove": "删除该行",

@@ -191,7 +191,13 @@ export function NetworkHostCard({
       header: t('network.columns.path'),
       cell: ({ row }) => (
         <span className="flex items-center gap-1.5 font-mono text-xs">
-          <IssueDot issues={row.original.issues} />
+          {/* Each dot marks its own column: path drift on the path, service
+              problems on the service. */}
+          <IssueDot
+            issues={row.original.issues?.filter(
+              (issue) => issue === 'path-drift'
+            )}
+          />
           {row.original.path}
         </span>
       ),
@@ -203,7 +209,11 @@ export function NetworkHostCard({
         const service = `${row.original.appName}:${row.original.port}`
         return (
           <span className="flex items-center gap-1.5 text-xs">
-            <IssueDot issues={row.original.issues} />
+            <IssueDot
+              issues={row.original.issues?.filter(
+                (issue) => issue !== 'path-drift'
+              )}
+            />
             {isKiteApp(row.original.appName) ? (
               <Link
                 to={`/applications/${host.space}/${row.original.appName}`}

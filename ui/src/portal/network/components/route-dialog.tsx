@@ -200,7 +200,9 @@ export function RouteDialog({ host, editing, onClose }: RouteDialogProps) {
         if (!open) onClose()
       }}
     >
-      <DialogContent className="sm:max-w-md">
+      {/* grid-cols-1 pins the content track to minmax(0,1fr): the auto track
+          would size to the annotation row's nowrap key text and overflow. */}
+      <DialogContent className="grid-cols-1 sm:max-w-md">
         <DialogHeader>
           <DialogTitle>
             {editing

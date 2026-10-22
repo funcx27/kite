@@ -128,7 +128,7 @@
       "title": "Edit Annotations",
       "description": "Annotations land on {{host}}'s Ingress metadata and apply to every path; keys come from the platform catalog, filtered by IngressClass",
       "keyPlaceholder": "Select an annotation key",
-      "valuePlaceholder": "8m",
+      "valuePlaceholder": "Value",
       "add": "Add annotation",
       "empty": "No annotations yet",
       "remove": "Remove row",

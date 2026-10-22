@@ -54,44 +54,51 @@ export function AnnotationRows({
         return (
           <div key={index} className="space-y-1">
             <div className="flex items-center gap-2">
-              <Select
-                value={row.key}
-                onValueChange={(value) => {
-                  const entry = catalog.find(
-                    (candidate) => candidate.key === value
-                  )
-                  update(index, {
-                    key: value,
-                    value: entry?.defaultValue ?? '',
-                  })
-                }}
-              >
-                <SelectTrigger className="h-8 min-w-0 flex-1 truncate font-mono text-xs">
-                  <SelectValue
-                    className="truncate"
-                    placeholder={t('network.annotationsDialog.keyPlaceholder')}
-                  />
-                </SelectTrigger>
-                <SelectContent>
-                  {catalog.map((entry) => (
-                    <SelectItem
-                      key={entry.key}
-                      value={entry.key}
-                      disabled={rows.some((other) => other.key === entry.key)}
-                      className="font-mono"
-                    >
-                      {entry.key}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {/* The key select fills the remaining row width and truncates:
+                  catalog keys are long, so w-full inside a shrinkable wrapper
+                  keeps the value field and remove button inside the dialog. */}
+              <div className="min-w-0 flex-1">
+                <Select
+                  value={row.key}
+                  onValueChange={(value) => {
+                    const entry = catalog.find(
+                      (candidate) => candidate.key === value
+                    )
+                    update(index, {
+                      key: value,
+                      value: entry?.defaultValue ?? '',
+                    })
+                  }}
+                >
+                  <SelectTrigger className="h-8 w-full font-mono text-xs">
+                    <SelectValue
+                      className="truncate"
+                      placeholder={t(
+                        'network.annotationsDialog.keyPlaceholder'
+                      )}
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {catalog.map((entry) => (
+                      <SelectItem
+                        key={entry.key}
+                        value={entry.key}
+                        disabled={rows.some((other) => other.key === entry.key)}
+                        className="font-mono"
+                      >
+                        {entry.key}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
               <Input
                 value={row.value}
                 onChange={(event) =>
                   update(index, { value: event.target.value })
                 }
                 placeholder={t('network.annotationsDialog.valuePlaceholder')}
-                className="h-8 w-36 font-mono text-xs"
+                className="h-8 w-28 shrink-0 font-mono text-xs"
               />
               <Button
                 type="button"
