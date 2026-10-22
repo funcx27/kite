@@ -1,18 +1,43 @@
+import { useState, type ComponentType } from 'react'
+import { useApplications } from '@/portal/application/api'
+import {
+  AlbIcon,
+  GlobeIcon,
+  KongIcon,
+  NginxIcon,
+  TraefikIcon,
+} from '@/portal/application/components/brand-icons'
 import { ActionTable } from '@/portal/components/action-table'
+import { downloadTextFile } from '@/portal/components/download'
+import {
+  fetchHostExport,
+  useNetworkIngressClasses,
+  usePublishHostMutation,
+  useSyncCertMutation,
+} from '@/portal/network/api'
+import { OfflineDialog } from '@/portal/network/components/offline-dialog'
+import {
+  familyOfController,
+  type IngressFamily,
+} from '@/portal/network/ingress-family'
 import {
   type NetworkConfigStatus,
   type NetworkHostOverview,
   type NetworkRoute,
+  type NetworkRouteIssue,
 } from '@/portal/network/types'
 import { ColumnDef } from '@tanstack/react-table'
+import { format } from 'date-fns'
 import {
   ExternalLink,
   Lock,
   LockOpen,
   MoreHorizontal,
+  Pencil,
   Plus,
   RefreshCw,
   Tag,
+  Trash2,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
@@ -28,9 +53,15 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 
-// Local to this module on purpose: the network page is a frontend mock and
-// must not reach into the application module's status styling.
+// Local to this module on purpose: the application module's status styling
+// tracks workload state, not Ingress desired-vs-live state. Drives both the
+// card's left color bar and the status dot next to the host name.
 const configDotStyles: Record<NetworkConfigStatus, string> = {
   synced: 'bg-emerald-500',
   drift: 'bg-amber-500',
@@ -39,27 +70,53 @@ const configDotStyles: Record<NetworkConfigStatus, string> = {
   undeployed: 'bg-zinc-400',
 }
 
+const familyIcons: Record<
+  IngressFamily,
+  ComponentType<{ className?: string }>
+> = {
+  nginx: NginxIcon,
+  traefik: TraefikIcon,
+  kong: KongIcon,
+  alb: AlbIcon,
+  other: GlobeIcon,
+}
+
 const EXPIRING_SOON_MS = 30 * 24 * 60 * 60 * 1000
 
 function isExpiringSoon(expiresAt: string): boolean {
   return new Date(expiresAt).getTime() - Date.now() < EXPIRING_SOON_MS
 }
 
+// One red dot per cell carrying the route's server-side issues; the
+// tooltip spells out each problem (missing service/port, path drift).
+function IssueDot({ issues }: { issues: NetworkRouteIssue[] | undefined }) {
+  const { t } = useTranslation()
+  if (!issues || issues.length === 0) return null
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="h-1.5 w-1.5 shrink-0 cursor-default rounded-full bg-red-500" />
+      </TooltipTrigger>
+      <TooltipContent className="flex max-w-60 flex-col gap-0.5 whitespace-normal">
+        {issues.map((issue) => (
+          <span key={issue}>{t(`network.issues.${issue}`)}</span>
+        ))}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
 interface NetworkHostCardProps {
   host: NetworkHostOverview
-  onPublish: (host: string) => void
-  onSyncCert: (host: string) => void
-  onDeleteRoute: (host: string, path: string) => void
+  onDeleteRoute: (host: NetworkHostOverview, path: string) => void
   onAddRoute: (host: string) => void
   onEditRoute: (host: string, route: NetworkRoute) => void
-  onEditHost: (host: string) => void
-  onEditAnnotations: (host: string) => void
+  onEditHost: (host: NetworkHostOverview) => void
+  onEditAnnotations: (host: NetworkHostOverview) => void
 }
 
 export function NetworkHostCard({
   host,
-  onPublish,
-  onSyncCert,
   onDeleteRoute,
   onAddRoute,
   onEditRoute,
@@ -67,49 +124,133 @@ export function NetworkHostCard({
   onEditAnnotations,
 }: NetworkHostCardProps) {
   const { t } = useTranslation()
+  const publishMutation = usePublishHostMutation()
+  const syncCertMutation = useSyncCertMutation()
+  const [offlineOpen, setOfflineOpen] = useState(false)
+  const [exporting, setExporting] = useState(false)
+
+  const { data: ingressClasses } = useNetworkIngressClasses(host.cluster)
+  const family = familyOfController(
+    ingressClasses?.find((entry) => entry.name === host.ingressClass)
+      ?.controller ?? ''
+  )
+  const FamilyIcon = familyIcons[family]
+
   const cert = host.tlsCertificate
+  const certDomains = cert?.domains ?? []
   const certPendingSync = !host.certSynced
   // Publishing a route-less host is meaningless; it waits for its first route.
   const needsPublish = host.status !== 'synced' && host.routes.length > 0
   const annotationEntries = Object.entries(host.annotations ?? {})
+  const failureReason =
+    host.status === 'error' && host.lastError !== '' ? host.lastError : null
+
+  // Routes link to the target only when it is a kite application in the
+  // host's space; plain service names stay text.
+  const { data: apps } = useApplications()
+  const isKiteApp = (appName: string) =>
+    apps?.some((app) => app.namespace === host.space && app.name === appName)
+
+  const hostIdentity = {
+    space: host.space,
+    cluster: host.cluster,
+    host: host.host,
+  }
+
+  const publish = () => {
+    publishMutation.mutate(hostIdentity, {
+      onSuccess: () =>
+        toast.success(t('network.toast.published', { host: host.host })),
+      onError: (err) => toast.error(err.message),
+    })
+  }
+
+  const syncCert = () => {
+    syncCertMutation.mutate(hostIdentity, {
+      onSuccess: () =>
+        toast.success(t('network.toast.certSynced', { host: host.host })),
+      onError: (err) => toast.error(err.message),
+    })
+  }
+
+  const exportYaml = async () => {
+    setExporting(true)
+    try {
+      const text = await fetchHostExport(host.space, host.cluster, host.host)
+      downloadTextFile(`${host.host}.yaml`, text, 'text/yaml')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setExporting(false)
+    }
+  }
 
   const columns: ColumnDef<NetworkRoute>[] = [
     {
       accessorKey: 'path',
       header: t('network.columns.path'),
       cell: ({ row }) => (
-        <span className="font-mono text-xs">{row.original.path}</span>
+        <span className="flex items-center gap-1.5 font-mono text-xs">
+          <IssueDot issues={row.original.issues} />
+          {row.original.path}
+        </span>
       ),
     },
     {
       accessorKey: 'appName',
-      header: t('network.columns.app'),
-      cell: ({ row }) => (
-        <Link
-          to={`/applications/${row.original.appNamespace}/${row.original.appName}`}
-          className="text-primary hover:underline"
-        >
-          {row.original.appName}
-        </Link>
-      ),
-    },
-    {
-      accessorKey: 'port',
-      header: t('network.columns.port'),
-      cell: ({ row }) => (
-        <span className="text-xs text-muted-foreground">
-          {row.original.port}
-        </span>
-      ),
+      header: t('network.columns.service'),
+      cell: ({ row }) => {
+        const service = `${row.original.appName}:${row.original.port}`
+        return (
+          <span className="flex items-center gap-1.5 text-xs">
+            <IssueDot issues={row.original.issues} />
+            {isKiteApp(row.original.appName) ? (
+              <Link
+                to={`/applications/${host.space}/${row.original.appName}`}
+                className="font-mono text-primary hover:underline"
+              >
+                {service}
+              </Link>
+            ) : (
+              <span className="font-mono">{service}</span>
+            )}
+          </span>
+        )
+      },
     },
   ]
 
   return (
-    <Card>
-      <CardContent className="space-y-3">
+    <Card className="relative overflow-hidden">
+      <span
+        className={cn(
+          'absolute inset-y-0 left-0 w-1',
+          configDotStyles[host.status]
+        )}
+      />
+      <CardContent className="space-y-3 pl-4">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div className="space-y-2">
             <div className="flex flex-wrap items-center gap-2">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span
+                    className={cn(
+                      'h-2 w-2 shrink-0 cursor-default rounded-full',
+                      configDotStyles[host.status]
+                    )}
+                  />
+                </TooltipTrigger>
+                <TooltipContent className="flex max-w-60 flex-col gap-0.5 whitespace-normal">
+                  <span>{t(`network.status.${host.status}`)}</span>
+                  {failureReason && <span>{host.lastError}</span>}
+                  {host.lbAddress && (
+                    <span>
+                      {t('network.lb')} {host.lbAddress}
+                    </span>
+                  )}
+                </TooltipContent>
+              </Tooltip>
               <span className="font-mono font-semibold">{host.host}</span>
               <a
                 href={`${cert ? 'https' : 'http'}://${host.host}`}
@@ -120,15 +261,41 @@ export function NetworkHostCard({
               >
                 <ExternalLink className="h-3.5 w-3.5" />
               </a>
-              <Badge variant="outline">{host.space}</Badge>
-              <Badge variant="outline">{host.ingressClass}</Badge>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="cursor-default">
+                    <FamilyIcon className="h-4 w-4" />
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>{host.ingressClass}</TooltipContent>
+              </Tooltip>
             </div>
             {cert ? (
               <div className="flex flex-wrap items-center gap-2 text-xs">
                 <Lock className="h-3.5 w-3.5 text-emerald-500" />
-                <span className="font-mono">{cert.name}</span>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="cursor-default font-mono">
+                      {certDomains[0] ?? cert.name}
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent className="flex max-w-60 flex-col gap-0.5 whitespace-normal">
+                    {certDomains.map((domain) => (
+                      <span key={domain} className="font-mono">
+                        {domain}
+                      </span>
+                    ))}
+                    <span>
+                      {t('network.cert.expires', {
+                        date: format(new Date(cert.expiresAt), 'yyyy-MM-dd'),
+                      })}
+                    </span>
+                  </TooltipContent>
+                </Tooltip>
                 <span className="text-muted-foreground">
-                  {t('network.cert.expires', { date: cert.expiresAt })}
+                  {t('network.cert.expires', {
+                    date: format(new Date(cert.expiresAt), 'yyyy-MM-dd'),
+                  })}
                 </span>
                 {isExpiringSoon(cert.expiresAt) && (
                   <Badge
@@ -142,9 +309,10 @@ export function NetworkHostCard({
                   <Badge variant="outline" asChild>
                     <button
                       type="button"
-                      onClick={() => onSyncCert(host.host)}
+                      disabled={syncCertMutation.isPending}
+                      onClick={syncCert}
                       title={t('network.cert.sync')}
-                      className="cursor-pointer border-amber-500/50 text-amber-600 hover:bg-amber-500/10 dark:text-amber-400"
+                      className="cursor-pointer border-amber-500/50 text-amber-600 hover:bg-amber-500/10 disabled:cursor-not-allowed disabled:opacity-60 dark:text-amber-400"
                     >
                       <RefreshCw />
                       {t('network.cert.pendingSync')}
@@ -158,23 +326,6 @@ export function NetworkHostCard({
                 {t('network.cert.none')}
               </div>
             )}
-            <div className="flex flex-wrap items-center gap-2 text-xs">
-              <span className="flex items-center gap-1.5 whitespace-nowrap">
-                <span
-                  className={cn(
-                    'h-2 w-2 shrink-0 rounded-full',
-                    configDotStyles[host.status]
-                  )}
-                />
-                <span className="font-mono">{host.cluster}</span>
-                <span>{t(`network.status.${host.status}`)}</span>
-              </span>
-              {host.lbAddress && (
-                <span className="text-muted-foreground">
-                  · {t('network.lb')} {host.lbAddress}
-                </span>
-              )}
-            </div>
             {annotationEntries.length > 0 && (
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                 <Tag className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -203,7 +354,8 @@ export function NetworkHostCard({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => onPublish(host.host)}
+                disabled={publishMutation.isPending}
+                onClick={publish}
               >
                 <RefreshCw className="h-3.5 w-3.5" />
                 {t('network.actions.publish')}
@@ -221,15 +373,19 @@ export function NetworkHostCard({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => onEditHost(host.host)}>
+                <DropdownMenuItem onClick={() => onEditHost(host)}>
                   {t('network.actions.editHost')}
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => onEditAnnotations(host.host)}>
+                <DropdownMenuItem onClick={() => onEditAnnotations(host)}>
                   {t('network.actions.editAnnotations')}
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                  onClick={() => toast.info(t('network.toast.mockOnly'))}
+                  disabled={exporting}
+                  onClick={() => void exportYaml()}
                 >
+                  {t('network.actions.exportYaml')}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setOfflineOpen(true)}>
                   {t('network.actions.offline')}
                 </DropdownMenuItem>
               </DropdownMenuContent>
@@ -244,19 +400,45 @@ export function NetworkHostCard({
           <ActionTable<NetworkRoute>
             data={host.routes}
             columns={columns}
-            actions={[
-              {
-                label: t('network.actions.edit'),
-                onClick: (route) => onEditRoute(host.host, route),
-              },
-              {
-                label: t('network.actions.delete'),
-                onClick: (route) => onDeleteRoute(host.host, route.path),
-              },
-            ]}
+            actions={[]}
+            renderActions={(route) => (
+              <>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      aria-label={t('network.actions.edit')}
+                      onClick={() => onEditRoute(host.host, route)}
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t('network.actions.edit')}</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      aria-label={t('network.actions.delete')}
+                      onClick={() => onDeleteRoute(host, route.path)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t('network.actions.delete')}</TooltipContent>
+                </Tooltip>
+              </>
+            )}
           />
         )}
       </CardContent>
+      {offlineOpen && (
+        <OfflineDialog host={host} onClose={() => setOfflineOpen(false)} />
+      )}
     </Card>
   )
 }

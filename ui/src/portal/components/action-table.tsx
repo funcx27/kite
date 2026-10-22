@@ -30,6 +30,8 @@ interface ActionTableProps<T> {
   actions: Action<T>[]
   /** 操作列内、菜单按钮之前渲染的内容（如状态徽标） */
   actionCellPrefix?: (item: T) => React.ReactNode
+  /** 逃生舱：完全接管操作列渲染（如行内图标按钮）；设置后忽略 actions 下拉 */
+  renderActions?: (item: T) => React.ReactNode
 }
 
 export interface Action<T> {
@@ -50,24 +52,27 @@ export function ActionTable<T>({
   columns,
   actions,
   actionCellPrefix,
+  renderActions,
 }: ActionTableProps<T>) {
   const { t } = useTranslation()
   const tableColumns = useMemo(() => {
     // 无 actions 但有前置内容（如状态徽标/直接操作按钮）时仍渲染操作列
-    if (actions.length > 0 || actionCellPrefix) {
+    if (actions.length > 0 || actionCellPrefix || renderActions) {
       const actionColumn: ColumnDef<T> = {
         id: 'actions',
         header: t('common.fields.actions'),
         cell: ({ row }) => (
           <div
             className={
-              actionCellPrefix
+              actionCellPrefix || renderActions
                 ? 'flex items-center justify-end gap-2'
                 : 'text-right'
             }
           >
             {actionCellPrefix?.(row.original)}
-            {actions.length > 0 && (
+            {renderActions ? (
+              renderActions(row.original)
+            ) : actions.length > 0 ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
@@ -93,14 +98,14 @@ export function ActionTable<T>({
                   ))}
                 </DropdownMenuContent>
               </DropdownMenu>
-            )}
+            ) : null}
           </div>
         ),
       }
       return [...columns, actionColumn]
     }
     return columns
-  }, [actions, columns, actionCellPrefix, t])
+  }, [actions, columns, actionCellPrefix, renderActions, t])
 
   const table = useReactTable<T>({
     data,
@@ -119,7 +124,7 @@ export function ActionTable<T>({
                   key={header.id}
                   className={
                     header.id === 'actions'
-                      ? actionCellPrefix
+                      ? actionCellPrefix || renderActions
                         ? 'text-right'
                         : 'w-14 text-right'
                       : ''
@@ -142,7 +147,7 @@ export function ActionTable<T>({
                   key={cell.id}
                   className={
                     cell.column.id === 'actions'
-                      ? actionCellPrefix
+                      ? actionCellPrefix || renderActions
                         ? 'text-right'
                         : 'w-14 text-right'
                       : ''

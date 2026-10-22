@@ -1,10 +1,13 @@
 {
   "network": {
     "title": "Network",
-    "description": "Hosts and routes are published independently of applications; every host owns one route table (demo data)",
+    "description": "Hosts and routes are published independently of applications; every host owns one route table",
     "searchPlaceholder": "Search hosts or apps",
     "newHost": "New Host",
     "emptyRoutes": "No routes yet",
+    "loading": "Loading hosts...",
+    "loadFailed": "Failed to load hosts",
+    "needSpace": "Select a space in the header first",
     "summary": {
       "hosts": "hosts",
       "routes": "routes",
@@ -13,8 +16,12 @@
     },
     "columns": {
       "path": "Path",
-      "app": "App",
-      "port": "Port"
+      "service": "Service"
+    },
+    "issues": {
+      "service-missing": "Service does not exist",
+      "port-missing": "Port does not exist",
+      "path-drift": "Path differs from the live environment"
     },
     "status": {
       "synced": "Synced",
@@ -37,11 +44,48 @@
       "addRoute": "Add route",
       "editHost": "Edit host",
       "editAnnotations": "Edit annotations",
+      "exportYaml": "Export YAML",
       "offline": "Take offline"
     },
     "lb": "LB",
     "emptyTitle": "No matching hosts",
     "emptyDescription": "Adjust the search, or create a route",
+    "offlineDialog": {
+      "title": "Take Offline",
+      "description": "How should {{host}} be taken offline?",
+      "clusterTitle": "Take offline, keep config",
+      "clusterHint": "Keeps the saved config — republish later",
+      "allTitle": "Take offline & delete config",
+      "allHint": "Removes the cluster config and the saved config",
+      "cancel": "Cancel"
+    },
+    "import": {
+      "action": "Import",
+      "title": "Import Hosts",
+      "description": "Paste Ingress YAML; every rules[].host becomes a host with its route table. TLS sections are not imported — pick one certificate below.",
+      "contentPlaceholder": "apiVersion: networking.k8s.io/v1\nkind: Ingress\n...",
+      "fileReadError": "Failed to read the file",
+      "routeCount": "{{count}} routes",
+      "skippedAnnotations": "Skipped annotation keys not in the catalog: {{keys}}",
+      "cluster": "Cluster",
+      "certificate": "TLS certificate (optional)",
+      "certNone": "No certificate",
+      "resultCreated": "Created",
+      "import": "Import",
+      "importing": "Importing...",
+      "cancel": "Cancel",
+      "reason": {
+        "invalidYaml": "Invalid YAML",
+        "noDocs": "No documents found",
+        "invalidKind": "apiVersion missing or kind is not Ingress",
+        "invalidName": "metadata.name is missing",
+        "invalidClass": "spec.ingressClassName is missing",
+        "invalidRules": "rules is empty or malformed",
+        "invalidHost": "rule.host is missing",
+        "invalidPath": "path must start with /",
+        "invalidBackend": "backend.service.name and port.number are required"
+      }
+    },
     "hostCreate": {
       "title": "New Host",
       "description": "The host binds to the current cluster (fixed after creation); add routes on its card afterwards",
@@ -49,26 +93,35 @@
       "hostPlaceholder": "api.example.com",
       "cluster": "Cluster",
       "ingressClass": "IngressClass",
+      "classPlaceholder": "Select an IngressClass",
       "certificate": "TLS certificate (optional)",
       "certNone": "No certificate",
+      "certAutoMatch": "ALB matches account certificates automatically",
       "create": "Create",
       "cancel": "Cancel",
       "invalid": "Fill in the host name",
-      "duplicate": "This host already exists on the cluster"
+      "duplicate": "This host already exists on the cluster",
+      "hostInvalid": "Lowercase DNS name: letters, digits and '-' separated by dots, at most 253 characters",
+      "certUncovered": "Certificate does not cover: {{host}}"
     },
     "routeDialog": {
       "titleAdd": "Add Route",
       "titleEdit": "Edit Route",
-      "description": "{{host}}: path → app port",
+      "description": "{{host}}: path → service port",
       "path": "Path",
       "pathPlaceholder": "/",
-      "app": "App",
-      "appPlaceholder": "e.g. web-console",
+      "service": "Service",
+      "servicePlaceholder": "Select or type a service name",
+      "servicePickerSearch": "Search services...",
+      "servicePickerEmpty": "No services in this space — type a service name",
+      "servicePickerCustom": "use",
+      "serviceNameInvalid": "Lowercase letters, digits and '-', up to 63 characters",
       "port": "Port",
       "portPlaceholder": "80",
+      "serviceAnnotations": "Service annotations",
       "save": "Save",
       "cancel": "Cancel",
-      "invalid": "Fill in the app and a port between 1 and 65535",
+      "invalid": "Fill in the service and a port between 1 and 65535",
       "duplicate": "This path already exists on the host"
     },
     "annotationsDialog": {
@@ -89,9 +142,11 @@
       "backToSettings": "Back to settings",
       "add": "New key",
       "import": "Batch import",
+      "loading": "Loading annotation keys...",
       "columns": {
         "key": "Key",
         "class": "IngressClass",
+        "defaultValue": "Default value",
         "description": "Description"
       },
       "dialog": {
@@ -101,18 +156,22 @@
         "key": "Key",
         "keyPlaceholder": "nginx.ingress.kubernetes.io/proxy-body-size",
         "class": "IngressClass",
+        "classPlaceholder": "e.g. nginx",
         "descriptionLabel": "Description",
         "descriptionPlaceholder": "Request body size limit, controller default 1m",
+        "defaultValueLabel": "Default value",
+        "defaultValuePlaceholder": "e.g. 8m (prefilled when the key is picked)",
         "create": "Create",
         "save": "Save",
         "cancel": "Cancel",
-        "invalid": "Fill in the key and description",
+        "invalid": "Fill in the key, IngressClass and description",
         "duplicate": "This key already exists"
       },
       "importDialog": {
         "title": "Batch Import Annotation Keys",
         "description": "One entry per line: key,description (comma or tab separated); the IngressClass applies to the whole batch; existing or malformed lines are skipped",
         "class": "IngressClass",
+        "classPlaceholder": "e.g. nginx",
         "lines": "Entries",
         "linesPlaceholder": "nginx.ingress.kubernetes.io/proxy-read-timeout,Backend read timeout in seconds, default 60\nnginx.ingress.kubernetes.io/proxy-send-timeout,Send timeout in seconds, default 60",
         "import": "Import",
@@ -122,7 +181,8 @@
         "added": "Added annotation key {{key}}",
         "updated": "Updated annotation key {{key}}",
         "deleted": "Deleted annotation key {{key}}",
-        "imported": "Imported {{count}}, skipped {{skipped}}"
+        "imported": "Imported {{count}}, skipped {{skipped}}",
+        "referenced": "still referenced by {{count}} hosts"
       }
     },
     "hostSettings": {
@@ -132,18 +192,20 @@
       "ingressClass": "IngressClass",
       "certificate": "TLS certificate",
       "certNone": "No certificate",
+      "certAutoMatch": "ALB matches account certificates automatically",
+      "certUncovered": "Certificate does not cover: {{host}}",
       "save": "Save",
       "cancel": "Cancel"
     },
     "toast": {
       "published": "Published {{host}}",
       "certSynced": "Certificate synced for {{host}}",
+      "offlined": "Took {{host}} offline",
       "routeDeleted": "Deleted {{path}} on {{host}}",
       "routeSaved": "Saved {{path}} on {{host}}",
       "hostCreated": "Created {{host}} — add routes on its card",
       "annotationsSaved": "Updated annotations for {{host}}",
-      "hostSettingsSaved": "Updated host settings for {{host}}",
-      "mockOnly": "Demo mode: this action is not implemented"
+      "hostSettingsSaved": "Updated host settings for {{host}}"
     }
   }
 }

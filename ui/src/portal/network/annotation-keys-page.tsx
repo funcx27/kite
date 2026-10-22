@@ -1,13 +1,13 @@
 import { useState } from 'react'
 import { ActionTable } from '@/portal/components/action-table'
 import {
-  addAnnotationKey,
-  importAnnotationKeys,
-  removeAnnotationKey,
-  updateAnnotationKey,
+  NetworkApiError,
+  useAddAnnotationKeyMutation,
   useAnnotationKeys,
-} from '@/portal/network/annotation-key-store'
-import { mockIngressClasses } from '@/portal/network/mock'
+  useDeleteAnnotationKeyMutation,
+  useImportAnnotationKeysMutation,
+  useUpdateAnnotationKeyMutation,
+} from '@/portal/network/api'
 import { type NetworkAnnotationKey } from '@/portal/network/types'
 import { ColumnDef } from '@tanstack/react-table'
 import { ArrowLeft, Plus, Upload } from 'lucide-react'
@@ -28,40 +28,42 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 
 interface KeyForm {
   key: string
   ingressClass: string
   description: string
+  defaultValue: string
 }
 
 const EMPTY_FORM: KeyForm = {
   key: '',
-  ingressClass: mockIngressClasses[0],
+  ingressClass: '',
   description: '',
+  defaultValue: '',
 }
 
 // Settings sub-page (global — no space dimension): the platform annotation
 // key catalog. The network page's annotation dialog picks keys from this
-// list, filtered by the host's IngressClass.
+// list, filtered by the host's IngressClass. Writes go through the admin
+// API; the IngressClass is free-form because the catalog is not tied to any
+// single cluster's class list.
 export function AnnotationKeysPage() {
   const { t } = useTranslation()
-  const keys = useAnnotationKeys()
+  const { data: keysData, isLoading } = useAnnotationKeys()
+  const keys = keysData ?? []
+  const addMutation = useAddAnnotationKeyMutation()
+  const updateMutation = useUpdateAnnotationKeyMutation()
+  const deleteMutation = useDeleteAnnotationKeyMutation()
+  const importMutation = useImportAnnotationKeysMutation()
   usePageTitle(t('network.annotationKeys.title'))
 
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<NetworkAnnotationKey | null>(null)
   const [form, setForm] = useState<KeyForm>(EMPTY_FORM)
   const [importOpen, setImportOpen] = useState(false)
-  const [importClass, setImportClass] = useState(mockIngressClasses[0])
+  const [importClass, setImportClass] = useState('')
   const [importText, setImportText] = useState('')
 
   const openCreate = () => {
@@ -76,60 +78,108 @@ export function AnnotationKeysPage() {
       key: entry.key,
       ingressClass: entry.ingressClass,
       description: entry.description,
+      defaultValue: entry.defaultValue,
     })
     setDialogOpen(true)
   }
 
   const keyName = form.key.trim()
+  const className = form.ingressClass.trim()
   const duplicate =
     editing === null && keyName !== '' && keys.some((k) => k.key === keyName)
-  const invalid = keyName === '' || form.description.trim() === '' || duplicate
+  const invalid =
+    keyName === '' ||
+    className === '' ||
+    form.description.trim() === '' ||
+    duplicate
 
   const submit = () => {
     if (invalid) return
     if (editing) {
-      updateAnnotationKey(editing.key, {
-        description: form.description.trim(),
-        ingressClass: form.ingressClass,
-      })
-      toast.success(
-        t('network.annotationKeys.toast.updated', { key: editing.key })
+      updateMutation.mutate(
+        {
+          id: editing.id,
+          req: {
+            description: form.description.trim(),
+            ingressClass: className,
+            defaultValue: form.defaultValue.trim(),
+          },
+        },
+        {
+          onSuccess: () => {
+            toast.success(
+              t('network.annotationKeys.toast.updated', { key: editing.key })
+            )
+            setDialogOpen(false)
+          },
+          onError: (err) => toast.error(err.message),
+        }
       )
     } else {
-      addAnnotationKey({
-        key: keyName,
-        ingressClass: form.ingressClass,
-        description: form.description.trim(),
-      })
-      toast.success(t('network.annotationKeys.toast.added', { key: keyName }))
+      addMutation.mutate(
+        {
+          key: keyName,
+          description: form.description.trim(),
+          ingressClass: className,
+          defaultValue: form.defaultValue.trim(),
+        },
+        {
+          onSuccess: () => {
+            toast.success(
+              t('network.annotationKeys.toast.added', { key: keyName })
+            )
+            setDialogOpen(false)
+          },
+          onError: (err) => toast.error(err.message),
+        }
+      )
     }
-    setDialogOpen(false)
   }
 
+  const importClassName = importClass.trim()
   const submitImport = () => {
-    const entries: NetworkAnnotationKey[] = []
-    let malformed = 0
-    for (const line of importText.split('\n')) {
-      const trimmed = line.trim()
-      if (trimmed === '') continue
-      const sep = trimmed.search(/[,\t]/)
-      const key = sep > 0 ? trimmed.slice(0, sep).trim() : ''
-      const description = sep > 0 ? trimmed.slice(sep + 1).trim() : ''
-      if (key === '' || description === '') {
-        malformed++
-        continue
+    if (importClassName === '' || importText.trim() === '') return
+    importMutation.mutate(
+      { ingressClass: importClassName, text: importText },
+      {
+        onSuccess: ({ imported, skipped }) => {
+          setImportOpen(false)
+          setImportText('')
+          toast.success(
+            t('network.annotationKeys.toast.imported', {
+              count: imported,
+              skipped,
+            })
+          )
+        },
+        onError: (err) => toast.error(err.message),
       }
-      entries.push({ key, description, ingressClass: importClass })
-    }
-    const { imported, skipped } = importAnnotationKeys(entries)
-    setImportOpen(false)
-    setImportText('')
-    toast.success(
-      t('network.annotationKeys.toast.imported', {
-        count: imported,
-        skipped: skipped + malformed,
-      })
     )
+  }
+
+  const remove = (entry: NetworkAnnotationKey) => {
+    deleteMutation.mutate(entry.id, {
+      onSuccess: () =>
+        toast.success(
+          t('network.annotationKeys.toast.deleted', { key: entry.key })
+        ),
+      onError: (err) => {
+        // A 409 delete carries the reference count; appending it makes the
+        // "still in use" reason actionable.
+        if (
+          err instanceof NetworkApiError &&
+          typeof err.payload.references === 'number'
+        ) {
+          toast.error(
+            `${err.message} (${t('network.annotationKeys.toast.referenced', {
+              count: err.payload.references,
+            })})`
+          )
+          return
+        }
+        toast.error(err.message)
+      },
+    })
   }
 
   const columns: ColumnDef<NetworkAnnotationKey>[] = [
@@ -145,6 +195,15 @@ export function AnnotationKeysPage() {
       header: t('network.annotationKeys.columns.class'),
       cell: ({ row }) => (
         <Badge variant="outline">{row.original.ingressClass}</Badge>
+      ),
+    },
+    {
+      accessorKey: 'defaultValue',
+      header: t('network.annotationKeys.columns.defaultValue'),
+      cell: ({ row }) => (
+        <span className="font-mono text-xs">
+          {row.original.defaultValue || '-'}
+        </span>
       ),
     },
     {
@@ -189,22 +248,23 @@ export function AnnotationKeysPage() {
         </div>
       </div>
 
-      <ActionTable<NetworkAnnotationKey>
-        data={keys}
-        columns={columns}
-        actions={[
-          { label: t('network.actions.edit'), onClick: openEdit },
-          {
-            label: t('network.actions.delete'),
-            onClick: (entry) => {
-              removeAnnotationKey(entry.key)
-              toast.success(
-                t('network.annotationKeys.toast.deleted', { key: entry.key })
-              )
+      {isLoading ? (
+        <div className="py-6 text-center text-sm text-muted-foreground">
+          {t('network.annotationKeys.loading')}
+        </div>
+      ) : (
+        <ActionTable<NetworkAnnotationKey>
+          data={keys}
+          columns={columns}
+          actions={[
+            { label: t('network.actions.edit'), onClick: openEdit },
+            {
+              label: t('network.actions.delete'),
+              onClick: remove,
             },
-          },
-        ]}
-      />
+          ]}
+        />
+      )}
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="sm:max-w-md">
@@ -238,23 +298,19 @@ export function AnnotationKeysPage() {
             </div>
             <div className="space-y-1.5">
               <Label>{t('network.annotationKeys.dialog.class')}</Label>
-              <Select
+              <Input
                 value={form.ingressClass}
-                onValueChange={(value) =>
-                  setForm((prev) => ({ ...prev, ingressClass: value }))
+                onChange={(event) =>
+                  setForm((prev) => ({
+                    ...prev,
+                    ingressClass: event.target.value,
+                  }))
                 }
-              >
-                <SelectTrigger className="w-full font-mono">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {mockIngressClasses.map((name) => (
-                    <SelectItem key={name} value={name} className="font-mono">
-                      {name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                placeholder={t(
+                  'network.annotationKeys.dialog.classPlaceholder'
+                )}
+                className="font-mono"
+              />
             </div>
             <div className="space-y-1.5">
               <Label>
@@ -273,9 +329,29 @@ export function AnnotationKeysPage() {
                 )}
               />
             </div>
+            <div className="space-y-1.5">
+              <Label>
+                {t('network.annotationKeys.dialog.defaultValueLabel')}
+              </Label>
+              <Input
+                value={form.defaultValue}
+                onChange={(event) =>
+                  setForm((prev) => ({
+                    ...prev,
+                    defaultValue: event.target.value,
+                  }))
+                }
+                placeholder={t(
+                  'network.annotationKeys.dialog.defaultValuePlaceholder'
+                )}
+                className="font-mono"
+              />
+            </div>
           </div>
           <DialogFooter>
-            {(keyName === '' || form.description.trim() === '') &&
+            {(keyName === '' ||
+              className === '' ||
+              form.description.trim() === '') &&
               !duplicate && (
                 <p className="mr-auto text-xs text-destructive">
                   {t('network.annotationKeys.dialog.invalid')}
@@ -284,7 +360,12 @@ export function AnnotationKeysPage() {
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               {t('network.annotationKeys.dialog.cancel')}
             </Button>
-            <Button disabled={invalid} onClick={submit}>
+            <Button
+              disabled={
+                invalid || addMutation.isPending || updateMutation.isPending
+              }
+              onClick={submit}
+            >
               {editing
                 ? t('network.annotationKeys.dialog.save')
                 : t('network.annotationKeys.dialog.create')}
@@ -306,18 +387,14 @@ export function AnnotationKeysPage() {
           <div className="space-y-3">
             <div className="space-y-1.5">
               <Label>{t('network.annotationKeys.importDialog.class')}</Label>
-              <Select value={importClass} onValueChange={setImportClass}>
-                <SelectTrigger className="w-full font-mono">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {mockIngressClasses.map((name) => (
-                    <SelectItem key={name} value={name} className="font-mono">
-                      {name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Input
+                value={importClass}
+                onChange={(event) => setImportClass(event.target.value)}
+                placeholder={t(
+                  'network.annotationKeys.importDialog.classPlaceholder'
+                )}
+                className="font-mono"
+              />
             </div>
             <div className="space-y-1.5">
               <Label>{t('network.annotationKeys.importDialog.lines')}</Label>
@@ -335,7 +412,14 @@ export function AnnotationKeysPage() {
             <Button variant="outline" onClick={() => setImportOpen(false)}>
               {t('network.annotationKeys.importDialog.cancel')}
             </Button>
-            <Button disabled={importText.trim() === ''} onClick={submitImport}>
+            <Button
+              disabled={
+                importClassName === '' ||
+                importText.trim() === '' ||
+                importMutation.isPending
+              }
+              onClick={submitImport}
+            >
               {t('network.annotationKeys.importDialog.import')}
             </Button>
           </DialogFooter>

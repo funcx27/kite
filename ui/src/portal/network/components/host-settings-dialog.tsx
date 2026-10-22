@@ -1,11 +1,16 @@
 import { useState } from 'react'
-import { mockCertCatalog, mockIngressClasses } from '@/portal/network/mock'
+import { useCertificates } from '@/portal/application/api'
 import {
-  type NetworkCertificate,
-  type NetworkHostOverview,
-} from '@/portal/network/types'
+  useNetworkIngressClasses,
+  useUpdateHostSettingsMutation,
+} from '@/portal/network/api'
+import { familyOf } from '@/portal/network/ingress-family'
+import { type NetworkHostOverview } from '@/portal/network/types'
+import { format } from 'date-fns'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 
+import { hostCovered } from '@/lib/cert-coverage'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -30,36 +35,60 @@ const CERT_NONE = '__none__'
 interface HostSettingsDialogProps {
   host: NetworkHostOverview
   onClose: () => void
-  onSave: (
-    host: string,
-    changes: {
-      ingressClass: string
-      tlsCertificate: NetworkCertificate | null
-    }
-  ) => void
 }
 
 // Host-level settings: a class change rewrites the Ingress spec (needs
 // republish), a cert change only swaps secret content (needs cert resync).
 // The cluster binding is fixed at creation and shown read-only.
-export function HostSettingsDialog({
-  host,
-  onClose,
-  onSave,
-}: HostSettingsDialogProps) {
+export function HostSettingsDialog({ host, onClose }: HostSettingsDialogProps) {
   const { t } = useTranslation()
+  const updateMutation = useUpdateHostSettingsMutation()
+  const { data: ingressClasses } = useNetworkIngressClasses(host.cluster)
+  const { data: certificates } = useCertificates()
   const [ingressClass, setIngressClass] = useState(host.ingressClass)
   const [cert, setCert] = useState(host.tlsCertificate?.name ?? CERT_NONE)
 
+  const classOptions = ingressClasses ?? []
+  // Echo trick: a stored class (or cert) that the cluster (or cert store) no
+  // longer lists still renders instead of a blank select.
+  const classEchoed =
+    ingressClass !== '' &&
+    !classOptions.some((entry) => entry.name === ingressClass)
+  const certEchoed =
+    cert !== CERT_NONE && !(certificates ?? []).some((c) => c.name === cert)
+  // Advisory only, mirroring the application wizard: the pair still saves.
+  // ALB matches account certificates automatically, so no coverage warning.
+  const selectedCert = (certificates ?? []).find(
+    (certificate) => certificate.name === cert
+  )
+  const albAutoMatch = familyOf(ingressClass, classOptions) === 'alb'
+  const certUncovered =
+    !albAutoMatch &&
+    selectedCert !== undefined &&
+    !hostCovered(host.host.toLowerCase(), selectedCert)
+
   const save = () => {
-    onSave(host.host, {
-      ingressClass,
-      tlsCertificate:
-        cert === CERT_NONE
-          ? null
-          : { name: cert, expiresAt: mockCertCatalog[cert] ?? '' },
-    })
-    onClose()
+    if (ingressClass === '') return
+    updateMutation.mutate(
+      {
+        space: host.space,
+        cluster: host.cluster,
+        host: host.host,
+        req: {
+          ingressClass,
+          tlsCertificate: cert === CERT_NONE ? null : cert,
+        },
+      },
+      {
+        onSuccess: () => {
+          toast.success(
+            t('network.toast.hostSettingsSaved', { host: host.host })
+          )
+          onClose()
+        },
+        onError: (err) => toast.error(err.message),
+      }
+    )
   }
 
   return (
@@ -90,11 +119,20 @@ export function HostSettingsDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {mockIngressClasses.map((name) => (
-                  <SelectItem key={name} value={name} className="font-mono">
-                    {name}
+                {classOptions.map((entry) => (
+                  <SelectItem
+                    key={entry.name}
+                    value={entry.name}
+                    className="font-mono"
+                  >
+                    {entry.name}
                   </SelectItem>
                 ))}
+                {classEchoed && (
+                  <SelectItem value={ingressClass} className="font-mono">
+                    {ingressClass}
+                  </SelectItem>
+                )}
               </SelectContent>
             </Select>
           </div>
@@ -108,20 +146,34 @@ export function HostSettingsDialog({
                 <SelectItem value={CERT_NONE}>
                   {t('network.hostSettings.certNone')}
                 </SelectItem>
-                {Object.keys(mockCertCatalog).map((name) => (
-                  <SelectItem key={name} value={name} className="font-mono">
-                    {name}
+                {(certificates ?? []).map((certificate) => (
+                  <SelectItem key={certificate.name} value={certificate.name}>
+                    {certificate.name} ·{' '}
+                    {format(new Date(certificate.notAfter), 'yyyy-MM-dd')}
                   </SelectItem>
                 ))}
+                {certEchoed && <SelectItem value={cert}>{cert}</SelectItem>}
               </SelectContent>
             </Select>
+            {albAutoMatch && (
+              <p className="text-xs text-muted-foreground">
+                {t('network.hostSettings.certAutoMatch')}
+              </p>
+            )}
+            {certUncovered && (
+              <p className="text-xs text-amber-600 dark:text-amber-400">
+                {t('network.hostSettings.certUncovered', { host: host.host })}
+              </p>
+            )}
           </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
             {t('network.hostSettings.cancel')}
           </Button>
-          <Button onClick={save}>{t('network.hostSettings.save')}</Button>
+          <Button disabled={updateMutation.isPending} onClick={save}>
+            {t('network.hostSettings.save')}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

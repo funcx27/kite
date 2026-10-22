@@ -10,6 +10,7 @@ require (
 	github.com/funcx27/kite/modules/application v0.0.0-00010101000000-000000000000
 	github.com/funcx27/kite/modules/buildfleet v0.0.0-00010101000000-000000000000
 	github.com/funcx27/kite/modules/credentials v0.0.0-00010101000000-000000000000
+	github.com/funcx27/kite/modules/network v0.0.0-00010101000000-000000000000
 	github.com/funcx27/kite/modules/workflow v0.0.0-00010101000000-000000000000
 	github.com/gin-contrib/gzip v1.2.6
 	github.com/gin-gonic/gin v1.12.0
@@ -57,6 +58,8 @@ replace github.com/funcx27/kite/modules/buildfleet => ./modules/buildfleet
 replace github.com/funcx27/kite/modules/workflow => ./modules/workflow
 
 replace github.com/funcx27/kite/modules/credentials => ./modules/credentials
+
+replace github.com/funcx27/kite/modules/network => ./modules/network
 
 require (
 	github.com/Microsoft/go-winio v0.6.3-0.20251027160822-ad3df93bed29 // indirect

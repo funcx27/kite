@@ -1,10 +1,13 @@
 {
   "network": {
     "title": "网络",
-    "description": "域名与路由独立于应用发布，每个域名一张路由表（当前为演示数据）",
+    "description": "域名与路由独立于应用发布，每个域名一张路由表",
     "searchPlaceholder": "搜索域名或应用",
     "newHost": "新建域名",
     "emptyRoutes": "暂无路由",
+    "loading": "正在加载域名...",
+    "loadFailed": "域名加载失败",
+    "needSpace": "请先在顶部选择一个空间",
     "summary": {
       "hosts": "个域名",
       "routes": "条路由",
@@ -13,8 +16,12 @@
     },
     "columns": {
       "path": "路径",
-      "app": "应用",
-      "port": "端口"
+      "service": "服务"
+    },
+    "issues": {
+      "service-missing": "服务不存在",
+      "port-missing": "端口不存在",
+      "path-drift": "路径与实际环境不一致"
     },
     "status": {
       "synced": "已同步",
@@ -37,11 +44,48 @@
       "addRoute": "添加路由",
       "editHost": "编辑域名",
       "editAnnotations": "编辑注解",
+      "exportYaml": "导出 YAML",
       "offline": "下线"
     },
     "lb": "LB",
     "emptyTitle": "没有匹配的域名",
     "emptyDescription": "调整搜索条件，或新建一条路由",
+    "offlineDialog": {
+      "title": "下线",
+      "description": "选择 {{host}} 的下线方式",
+      "clusterTitle": "仅下线集群配置",
+      "clusterHint": "保留数据库配置，可重新发布",
+      "allTitle": "下线并删除配置",
+      "allHint": "删除集群配置与数据库配置",
+      "cancel": "取消"
+    },
+    "import": {
+      "action": "导入",
+      "title": "导入域名",
+      "description": "粘贴 Ingress YAML，每个 rules[].host 生成一个域名及其路由表；不导入 TLS 段，证书在下方统一选择",
+      "contentPlaceholder": "apiVersion: networking.k8s.io/v1\nkind: Ingress\n...",
+      "fileReadError": "文件读取失败",
+      "routeCount": "{{count}} 条路由",
+      "skippedAnnotations": "目录外注解已跳过：{{keys}}",
+      "cluster": "集群",
+      "certificate": "TLS 证书（可选）",
+      "certNone": "不使用证书",
+      "resultCreated": "已创建",
+      "import": "导入",
+      "importing": "导入中...",
+      "cancel": "取消",
+      "reason": {
+        "invalidYaml": "YAML 解析失败",
+        "noDocs": "未找到文档",
+        "invalidKind": "缺少 apiVersion 或 kind 不是 Ingress",
+        "invalidName": "缺少 metadata.name",
+        "invalidClass": "缺少 spec.ingressClassName",
+        "invalidRules": "rules 为空或格式无效",
+        "invalidHost": "缺少 rule.host",
+        "invalidPath": "路径须以 / 开头",
+        "invalidBackend": "缺少 backend.service.name 或 port.number"
+      }
+    },
     "hostCreate": {
       "title": "新建域名",
       "description": "域名绑定当前集群（创建后不可改），创建后在卡片内添加路由",
@@ -49,26 +93,35 @@
       "hostPlaceholder": "api.example.com",
       "cluster": "集群",
       "ingressClass": "IngressClass",
+      "classPlaceholder": "选择 IngressClass",
       "certificate": "TLS 证书（可选）",
       "certNone": "不使用证书",
+      "certAutoMatch": "ALB 从账号证书自动匹配",
       "create": "创建",
       "cancel": "取消",
       "invalid": "请填写域名",
-      "duplicate": "该集群下域名已存在"
+      "duplicate": "该集群下域名已存在",
+      "hostInvalid": "须为小写 DNS 名称：字母、数字和“-”，以点分隔，最长 253 个字符",
+      "certUncovered": "证书未覆盖：{{host}}"
     },
     "routeDialog": {
       "titleAdd": "添加路由",
       "titleEdit": "编辑路由",
-      "description": "{{host}}：路径 → 应用端口",
+      "description": "{{host}}：路径 → 服务端口",
       "path": "路径",
       "pathPlaceholder": "/",
-      "app": "应用",
-      "appPlaceholder": "如 web-console",
+      "service": "服务",
+      "servicePlaceholder": "选择或输入服务名",
+      "servicePickerSearch": "搜索服务...",
+      "servicePickerEmpty": "当前空间暂无服务，可直接输入服务名",
+      "servicePickerCustom": "采用",
+      "serviceNameInvalid": "小写字母、数字和“-”，最长 63 个字符",
       "port": "端口",
       "portPlaceholder": "80",
+      "serviceAnnotations": "服务注解",
       "save": "保存",
       "cancel": "取消",
-      "invalid": "请填写应用与端口（1-65535）",
+      "invalid": "请填写服务与端口（1-65535）",
       "duplicate": "该域名下路径已存在"
     },
     "annotationsDialog": {
@@ -89,9 +142,11 @@
       "backToSettings": "返回设置",
       "add": "新建键",
       "import": "批量导入",
+      "loading": "正在加载注解目录...",
       "columns": {
         "key": "键",
         "class": "IngressClass",
+        "defaultValue": "默认值",
         "description": "说明"
       },
       "dialog": {
@@ -101,18 +156,22 @@
         "key": "键",
         "keyPlaceholder": "nginx.ingress.kubernetes.io/proxy-body-size",
         "class": "IngressClass",
+        "classPlaceholder": "如 nginx",
         "descriptionLabel": "说明",
         "descriptionPlaceholder": "请求体大小上限，控制器默认 1m",
+        "defaultValueLabel": "默认值",
+        "defaultValuePlaceholder": "如 8m（选中键时自动预填）",
         "create": "创建",
         "save": "保存",
         "cancel": "取消",
-        "invalid": "请填写键与说明",
+        "invalid": "请填写键、IngressClass 与说明",
         "duplicate": "该键已存在"
       },
       "importDialog": {
         "title": "批量导入注解键",
         "description": "每行一条「键,说明」（逗号或制表符分隔）；IngressClass 对整批生效，已存在或格式无效的行自动跳过",
         "class": "IngressClass",
+        "classPlaceholder": "如 nginx",
         "lines": "键列表",
         "linesPlaceholder": "nginx.ingress.kubernetes.io/proxy-read-timeout,后端读超时（秒），默认 60\nnginx.ingress.kubernetes.io/proxy-send-timeout,发送超时（秒），默认 60",
         "import": "导入",
@@ -122,7 +181,8 @@
         "added": "已新增注解键 {{key}}",
         "updated": "已更新注解键 {{key}}",
         "deleted": "已删除注解键 {{key}}",
-        "imported": "导入 {{count}} 条，跳过 {{skipped}} 条"
+        "imported": "导入 {{count}} 条，跳过 {{skipped}} 条",
+        "referenced": "仍被 {{count}} 个域名引用"
       }
     },
     "hostSettings": {
@@ -132,18 +192,20 @@
       "ingressClass": "IngressClass",
       "certificate": "TLS 证书",
       "certNone": "不使用证书",
+      "certAutoMatch": "ALB 从账号证书自动匹配",
+      "certUncovered": "证书未覆盖：{{host}}",
       "save": "保存",
       "cancel": "取消"
     },
     "toast": {
       "published": "已发布 {{host}}",
       "certSynced": "已同步 {{host}} 的证书",
+      "offlined": "已下线 {{host}}",
       "routeDeleted": "已删除 {{host}} 的路由 {{path}}",
       "routeSaved": "已保存 {{host}} 的路由 {{path}}",
       "hostCreated": "已创建 {{host}}，可在卡片内添加路由",
       "annotationsSaved": "已保存 {{host}} 的注解",
-      "hostSettingsSaved": "已保存 {{host}} 的域名设置",
-      "mockOnly": "演示模式：该动作未实现"
+      "hostSettingsSaved": "已保存 {{host}} 的域名设置"
     }
   }
 }

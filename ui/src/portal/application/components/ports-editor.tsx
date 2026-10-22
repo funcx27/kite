@@ -1,12 +1,10 @@
 import { useState } from 'react'
 import { useCertificates } from '@/portal/application/api'
-import {
-  ApplicationPortSpec,
-  CertificateMeta,
-} from '@/portal/application/types'
+import { ApplicationPortSpec } from '@/portal/application/types'
 import { format } from 'date-fns'
 import { useTranslation } from 'react-i18next'
 
+import { hostCovered } from '@/lib/cert-coverage'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -34,19 +32,6 @@ const PORT_TYPES = ['clusterip', 'nodeport', 'loadbalancer'] as const
 // shadcn Select rejects an empty-string item, so "disabled" rides a sentinel
 // value (same trick as the deploy dialog's pull-credential picker).
 const tlsCertificateNone = '__none__'
-
-// Wildcard-aware, case-insensitive match against the certificate's CommonName
-// + DNSNames: *.example.com covers every host ending in .example.com.
-function hostCovered(host: string, cert: CertificateMeta): boolean {
-  const domains = [cert.commonName, ...cert.dnsNames]
-    .filter(Boolean)
-    .map((domain) => domain.toLowerCase())
-  return domains.some(
-    (domain) =>
-      host === domain ||
-      (domain.startsWith('*.') && host.endsWith(domain.slice(1)))
-  )
-}
 
 // Wizard step 4 (design §8): one row per port — port + Service type + optional
 // external host/path. Service port names are auto-generated server side
