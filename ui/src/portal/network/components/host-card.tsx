@@ -261,24 +261,27 @@ export function NetworkHostCard({
                   )}
                 </TooltipContent>
               </Tooltip>
-              <span className="font-mono font-semibold">{host.host}</span>
-              <a
-                href={`${cert ? 'https' : 'http'}://${host.host}`}
-                target="_blank"
-                rel="noreferrer"
-                aria-label={host.host}
-                className="text-muted-foreground hover:text-foreground"
-              >
-                <ExternalLink className="h-3.5 w-3.5" />
-              </a>
+              {/* Preceding icon = the host's ingress class (kind/ownership);
+                  the trailing space stays free for the link affordance. */}
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <span className="cursor-default">
+                  <span className="mr-1 cursor-default opacity-80">
                     <FamilyIcon className="h-4 w-4" />
                   </span>
                 </TooltipTrigger>
                 <TooltipContent>{host.ingressClass}</TooltipContent>
               </Tooltip>
+              {/* The name itself is the jump link: idle state shows only the
+                  domain, hover reveals the external-link glyph in place. */}
+              <a
+                href={`${cert ? 'https' : 'http'}://${host.host}`}
+                target="_blank"
+                rel="noreferrer"
+                className="group font-mono font-semibold hover:underline"
+              >
+                {host.host}
+                <ExternalLink className="ml-1 inline h-3 w-3 align-baseline text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+              </a>
             </div>
             {cert ? (
               <div className="flex flex-wrap items-center gap-2 text-xs">
